@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Kotlin/Native
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Android
+local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Xcode
+iosApp/*.xcodeproj/project.xcworkspace/xcuserdata/
+iosApp/*.xcodeproj/xcuserdata/
+iosApp/iosApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+DerivedData/
+*.xcuserstate
+
+# macOS
+*.hprof
+
+# 测试密钥 / 临时文件
+/tmp/mssh_test/
