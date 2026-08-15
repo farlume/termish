@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标前景：翠绿圆角描边 + 白色 >_ 终端提示符（108dp 画布，图形收在 66dp 安全区内） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 翠绿圆角描边 #34D399 -->
+    <path
+        android:pathData="M 43,30 H 65 A 13,13 0 0 1 78,43 V 65 A 13,13 0 0 1 65,78 H 43 A 13,13 0 0 1 30,65 V 43 A 13,13 0 0 1 43,30 Z"
+        android:strokeColor="#34D399"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round" />
+    <!-- 白色 > 提示符 -->
+    <path
+        android:pathData="M 45,41 L 63,51 L 45,61"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <!-- 白色 _ 光标 -->
+    <path
+        android:pathData="M 48,65 L 64,65"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round" />
+</vector>
