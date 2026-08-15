@@ -126,10 +126,10 @@ fun TerminalScreen(
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 
-    // OSC 52：远端程序（nvim/yazi/tmux）写系统剪贴板
+    // OSC 52：远端程序（nvim/yazi/tmux）写系统剪贴板（静默写入，不弹提示，
+    // 避免 herdr 拖拽/滚动误触复制时反复打扰）
     controller.onRemoteClipboard = { text ->
         clipboard.setText(AnnotatedString(text))
-        scope.launch { snackbar.showSnackbar("远端已写入剪贴板") }
     }
 
     // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、

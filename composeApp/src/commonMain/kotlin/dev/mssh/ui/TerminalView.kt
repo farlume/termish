@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -32,6 +33,9 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import dev.mssh.term.CellAttr
 import dev.mssh.term.CharWidth
 import dev.mssh.term.DEFAULT_BG
@@ -99,6 +103,8 @@ fun TerminalView(
     // 首次量到有效画布尺寸后置位（用真实行列建连）
     var readySent by remember { mutableStateOf(false) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    // 惯性滚轮动画作用域（随组合销毁自动取消）
+    val inertiaScope = rememberCoroutineScope()
 
     val fontFamily = monospaceFontFamily()
     // 目标列数模式：字形宽度与字号成线性关系，用 12sp 参考测量反算所需字号
@@ -198,7 +204,10 @@ fun TerminalView(
             //   - 单指纵向拖拽 → 滚轮（手指下滑=回看=滚轮上 64，上滑=向下=65），落点跟随手指
             //   - 单指横向拖拽 / 双指拖拽 → 鼠标拖拽 motion（1002/1003，选字、拖分割线、pane 内拖拽）
             .pointerInput(Unit) {
+                // 纵向滚轮手势的惯性：手指抬起后按速度持续发衰减滚轮，直到停下
+                var inertiaJob: Job? = null
                 awaitEachGesture {
+                    inertiaJob?.cancel()
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (buffer.mouseTracking <= 0) return@awaitEachGesture
                     down.consume()
@@ -228,6 +237,9 @@ fun TerminalView(
                     var scrollAccumY = 0f
                     var prevX = down.position.x
                     var prevY = down.position.y
+                    var lastPos = down.position
+                    // 最近事件时间/位置窗口，用于估算手指抬起时的速度
+                    val recent = ArrayDeque<Pair<Long, Float>>()
                     var movedCell = false
                     var multiTouch = false
                     while (true) {
@@ -248,6 +260,39 @@ fun TerminalView(
                                 val (uc, ur) = pointerCell(down.position)
                                 sendMouseEvent(0, uc, ur, release = false)
                                 sendMouseEvent(0, uc, ur, release = true)
+                            } else {
+                                // 纵向滚轮手势：按手指抬起速度补惯性滚轮（衰减），
+                                // 方向与滑动一致，落点固定在手最后位置（钳到第 1 行起）
+                                val velocityY = if (recent.size >= 2) {
+                                    val newest = recent.last()
+                                    val oldest = recent.first()
+                                    val dtMs = (newest.first - oldest.first).coerceAtLeast(16L)
+                                    (newest.second - oldest.second) * 1000f / dtMs
+                                } else 0f
+                                if (kotlin.math.abs(velocityY) >= 250f) {
+                                    val btn = if (velocityY > 0f) 64 else 65
+                                    val (wc, wr) = pointerCell(lastPos)
+                                    val wheelRow = maxOf(wr, 1)
+                                    val startV = kotlin.math.abs(velocityY)
+                                    inertiaJob?.cancel()
+                                    inertiaJob = inertiaScope.launch {
+                                        var vel = startV
+                                        var accum = 0f
+                                        while (vel > 50f) {
+                                            val dt = 16f
+                                            accum += vel * dt / 1000f
+                                            val notches = (accum / cellH).toInt()
+                                            if (notches != 0) {
+                                                repeat(kotlin.math.abs(notches)) {
+                                                    sendMouseEvent(btn, wc, wheelRow, release = false)
+                                                }
+                                                accum -= notches * cellH
+                                            }
+                                            vel *= 0.93f
+                                            delay(16)
+                                        }
+                                    }
+                                }
                             }
                             break
                         }
@@ -256,6 +301,9 @@ fun TerminalView(
                         val dy = change.position.y - prevY
                         prevX = change.position.x
                         prevY = change.position.y
+                        lastPos = change.position
+                        recent.addLast(change.uptimeMillis to change.position.y)
+                        if (recent.size > 8) recent.removeFirst()
                         totalDx += dx
                         totalDy += dy
                         // 位移超过一格后判定方向并锁定（横向抖动不改变纵向手势）
