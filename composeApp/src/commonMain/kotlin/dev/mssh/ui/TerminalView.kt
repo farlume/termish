@@ -43,6 +43,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import dev.mssh.term.CellAttr
 import dev.mssh.term.CharWidth
+import dev.mssh.term.DEFAULT_CURSOR
 import dev.mssh.term.DEFAULT_BG
 import dev.mssh.term.DEFAULT_FG
 import dev.mssh.term.TerminalBuffer
@@ -50,6 +51,7 @@ import dev.mssh.term.TerminalCell
 import dev.mssh.term.TerminalLine
 import dev.mssh.term.TerminalPalette
 import dev.mssh.ui.theme.TerminalTheme
+import dev.mssh.util.cjkFontFamily
 import dev.mssh.util.monospaceFontFamily
 
 private fun cellColor(c: Int, theme: TerminalTheme): Color {
@@ -143,6 +145,10 @@ fun TerminalView(
 
     val fontSize = effectiveFontSizeSp.sp
     val style = TextStyle(fontFamily = fontFamily, fontSize = fontSize)
+    // JetBrains Mono 不含 CJK 字形：宽字符（中文/日韩/全角/emoji）改用 cjkFontFamily()
+    // （iOS 显式加载 PingFang SC，其他平台走系统回退），避免缺字显示成豆腐块/乱码。
+    // 格宽仍按 JetBrains Mono 度量，宽字符天然占 2 格。
+    val wideStyle = style.copy(fontFamily = cjkFontFamily())
     // 用较长采样串测单格宽度：避免小字号下单字符宽度像素取整带来的累积误差
     val sample = remember(effectiveFontSizeSp, fontFamily) { textMeasurer.measure("0".repeat(16), style) }
     val cellW = (sample.size.width.toFloat() / 16f).coerceAtLeast(1f)
@@ -164,7 +170,10 @@ fun TerminalView(
     fun sendMouseEvent(btn: Int, col: Int, row: Int, release: Boolean) {
         val c = (col + 1).coerceIn(1, buffer.cols)
         val r = (row + 1).coerceIn(1, buffer.rows)
-        if (buffer.mouseSgr) {
+        if (buffer.mouseUrxvt) {
+            // urxvt 1015：CSI b;x;y M/m，无私有前缀
+            controller.sendBytes("\u001b[$btn;$c;$r${if (release) "m" else "M"}".encodeToByteArray())
+        } else if (buffer.mouseSgr) {
             controller.sendText("\u001b[<$btn;$c;$r${if (release) "m" else "M"}")
         } else {
             // X10：按下发按钮号，释放发 3；坐标 32 偏移字节，上限 223
@@ -420,6 +429,20 @@ fun TerminalView(
                     // TUI 鼠标模式：手势由上面的鼠标 handler 全权处理（避免拖拽既发
                     // drag-motion 又发滚轮的混合序列），本地滚动只在非鼠标模式生效
                     if (buffer.mouseTracking > 0) return@rememberScrollableState delta
+                    // DECSET 1007 alternate scroll：备用屏里没有回看可滚，
+                    // 滚动手势转成方向键交给远端全屏程序（less/vim 等）
+                    if (buffer.altScreen && buffer.alternateScroll) {
+                        scrollAccum += delta
+                        val rows = (scrollAccum / cellH).toInt()
+                        if (rows != 0) {
+                            val key = if (rows > 0) "\u001b[B" else "\u001b[A"
+                            repeat(kotlin.math.abs(rows)) {
+                                controller.sendBytes(key.encodeToByteArray())
+                            }
+                            scrollAccum -= rows * cellH
+                        }
+                        return@rememberScrollableState delta
+                    }
                     scrollAccum += delta
                     val rows = (scrollAccum / cellH).toInt()
                     if (rows != 0) {
@@ -533,7 +556,7 @@ fun TerminalView(
                     drawTextInBounds(
                         codePointToString(wide.codePoint),
                         Offset(j * cellW, y + textTop),
-                        style.copy(color = cellColors(wide, theme).first, fontWeight = runFontWeight(wide.attrs)),
+                        wideStyle.copy(color = cellColors(wide, theme).first, fontWeight = runFontWeight(wide.attrs)),
                     )
                     j += 2
                 }
@@ -554,6 +577,27 @@ fun TerminalView(
                     val (fgColor, _) = cellColors(cell, theme)
                     drawRect(
                         color = fgColor,
+                        topLeft = Offset(i * cellW, y + cellH - 2f),
+                        size = Size((j - i) * cellW, 1.5f),
+                    )
+                    i = j
+                } else i++
+            }
+        }
+
+        // OSC 8 超链接下划线（与 SGR 下划线分开画，避免依赖属性位）
+        for (r in lines.indices) {
+            val line = lines[r]
+            val y = r * cellH
+            var i = 0
+            while (i < buffer.cols) {
+                val cell = line.cells[i]
+                if (cell.link != null && !cell.isWideTail) {
+                    var j = i
+                    while (j < buffer.cols && line.cells[j].link == cell.link && !line.cells[j].isWideTail) j++
+                    val (fgColor, _) = cellColors(cell, theme)
+                    drawRect(
+                        color = fgColor.copy(alpha = 0.65f),
                         topLeft = Offset(i * cellW, y + cellH - 2f),
                         size = Size((j - i) * cellW, 1.5f),
                     )
@@ -591,23 +635,44 @@ fun TerminalView(
         val cursorAbs = buffer.absCursorRow()
         val cursorScreenRow = cursorAbs - startAbs
         if (buffer.cursorVisible && cursorScreenRow in 0 until buffer.rows) {
-            drawRect(
-                color = theme.cursor(),
-                topLeft = Offset(buffer.cursorCol * cellW, cursorScreenRow * cellH),
-                size = Size(cellW, cellH),
-            )
-            // 光标下的字符反色显示
-            if (cursorAbs in 0 until totalLines) {
-                val line = buffer.absLine(cursorAbs)
-                if (buffer.cursorCol < buffer.cols) {
-                    val cell = line.cells[buffer.cursorCol]
-                    if (!cell.isWideTail && cell.codePoint != ' '.code) {
-                        val (fg, bg) = cellColors(cell, theme)
-                        drawTextInBounds(
-                            codePointToString(cell.codePoint),
-                            Offset(buffer.cursorCol * cellW, cursorScreenRow * cellH + textTop),
-                            style.copy(color = bg, fontWeight = runFontWeight(cell.attrs)),
-                        )
+            val cursorColor = if (buffer.cursorColor != DEFAULT_CURSOR) {
+                Color(0xFF000000.toInt() or buffer.cursorColor)
+            } else theme.cursor()
+            val cursorColPx = buffer.cursorCol * cellW
+            val cursorRowPx = cursorScreenRow * cellH
+            when (buffer.cursorStyle) {
+                // DECSCUSR：下划线 / 竖线光标
+                3, 4 -> drawRect(
+                    color = cursorColor,
+                    topLeft = Offset(cursorColPx, cursorRowPx + cellH - 2f),
+                    size = Size(cellW, 2f),
+                )
+                5, 6 -> drawRect(
+                    color = cursorColor,
+                    topLeft = Offset(cursorColPx, cursorRowPx),
+                    size = Size(2f, cellH),
+                )
+                else -> {
+                    drawRect(
+                        color = cursorColor,
+                        topLeft = Offset(cursorColPx, cursorRowPx),
+                        size = Size(cellW, cellH),
+                    )
+                    // 块状光标下的字符反色显示（下划线/竖线光标不遮挡字符）
+                    if (cursorAbs in 0 until totalLines) {
+                        val line = buffer.absLine(cursorAbs)
+                        if (buffer.cursorCol < buffer.cols) {
+                            val cell = line.cells[buffer.cursorCol]
+                            if (!cell.isWideTail && cell.codePoint != ' '.code) {
+                                val (fg, bg) = cellColors(cell, theme)
+                                drawTextInBounds(
+                                    codePointToString(cell.codePoint),
+                                    Offset(cursorColPx, cursorRowPx + textTop),
+                                    (if (CharWidth.wcwidth(cell.codePoint) == 2) wideStyle else style)
+                                        .copy(color = bg, fontWeight = runFontWeight(cell.attrs)),
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -204,7 +204,9 @@ class TerminalController(
                 client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
             }
             frame++
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            println("MSSH-MOSH-ERROR ${e::class.simpleName}: ${e.message}")
+            e.printStackTrace()
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
                 errorMessage = e.message
@@ -329,6 +331,8 @@ class TerminalController(
 
     /** 光标闪烁：切换可见性并触发重绘。 */
     fun blinkCursor() {
+        // DECSCUSR 稳态样式（2/4/6）不闪烁
+        if (buffer.cursorStyle == 2 || buffer.cursorStyle == 4 || buffer.cursorStyle == 6) return
         buffer.cursorVisible = !buffer.cursorVisible
         frame++
     }

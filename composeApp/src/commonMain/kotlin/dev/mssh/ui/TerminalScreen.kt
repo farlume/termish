@@ -376,7 +376,16 @@ fun TerminalScreen(
                         }
                         // 兜底：焦点真正到手后再 show()，解决部分机型 requestFocus
                         // 后立即 show 被忽略（键盘拉不起来）的问题
-                        .onFocusChanged { if (it.isFocused) keyboardController?.show() },
+                        .onFocusChanged {
+                            // DECSET 1004：聚焦/失焦事件（vim/tmux 据此刷新界面状态）
+                            if (controller.buffer.focusEvents) {
+                                controller.sendBytes(
+                                    if (it.isFocused) "\u001b[I".encodeToByteArray()
+                                    else "\u001b[O".encodeToByteArray()
+                                )
+                            }
+                            if (it.isFocused) keyboardController?.show()
+                        },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = theme.foreground()),
                     cursorBrush = SolidColor(Color.Transparent),
                     keyboardOptions = KeyboardOptions(

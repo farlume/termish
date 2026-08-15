@@ -166,7 +166,7 @@ class TerminalEmulator(
         when {
             cp in 0x30..0x3F -> { params.append(cp.toChar()); state = State.CSI_PARAM }
             cp in 0x20..0x2F -> { intermediates.append(cp.toChar()); state = State.CSI_INTERMEDIATE }
-            cp in 0x40..0x7E -> { executeCsi(cp); state = State.GROUND }
+            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
             else -> state = State.GROUND
         }
     }
@@ -175,7 +175,7 @@ class TerminalEmulator(
         when {
             cp in 0x30..0x3F -> params.append(cp.toChar())
             cp in 0x20..0x2F -> { intermediates.append(cp.toChar()); state = State.CSI_INTERMEDIATE }
-            cp in 0x40..0x7E -> { executeCsi(cp); state = State.GROUND }
+            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
             else -> state = State.GROUND
         }
     }
@@ -183,7 +183,7 @@ class TerminalEmulator(
     private fun csiIntermediate(cp: Int) {
         when {
             cp in 0x20..0x2F -> intermediates.append(cp.toChar())
-            cp in 0x40..0x7E -> { executeCsi(cp); state = State.GROUND }
+            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
             else -> state = State.GROUND
         }
     }
@@ -203,17 +203,21 @@ class TerminalEmulator(
     private fun dcs(cp: Int) {
         when {
             cp == 0x1B -> state = State.DCS_ESC
-            else -> {} // 忽略 DCS 内容（如 tmux passthrough）
+            // 只关心短查询（DECRQSS）；sixel/tmux passthrough 等大块内容忽略且限长防内存膨胀
+            else -> if (dcsBuf.length < 65536) dcsBuf.append(codePointToString(cp))
         }
     }
 
     private fun dcsEsc(cp: Int) {
-        if (cp == '\\'.code) state = State.GROUND else state = State.DCS
+        if (cp == '\\'.code) {
+            finishDcs()
+            state = State.GROUND
+        } else state = State.DCS
     }
 
     // ---------- CSI 执行 ----------
 
-    private fun executeCsi(finalByte: Int) {
+    private fun executeCsi(finalByte: Int, intermediates: String) {
         val isPrivate = params.isNotEmpty() && params[0] in setOf('?', '<', '=', '>')
         val p = parseParams(params.toString(), isPrivate)
 
@@ -246,7 +250,16 @@ class TerminalEmulator(
             'h'.code -> setModes(p, true, isPrivate)
             'l'.code -> setModes(p, false, isPrivate)
             'n'.code -> respondToDsr(p.getOrNull(0) ?: 0, isPrivate)
-            'c'.code -> if (!isPrivate) onResponse("\u001b[?1;2c".encodeToByteArray())
+            'c'.code -> {
+                if (isPrivate) onResponse("\u001b[>1;2;0c".encodeToByteArray())
+                else onResponse("\u001b[?1;2c".encodeToByteArray())
+            }
+            'b'.code -> buffer.repeatChar(p.getOrNull(0) ?: 1)
+            'q'.code -> {
+                val v = p.getOrNull(0) ?: 0
+                buffer.cursorStyle = if (v in 1..6) v else 0
+            }
+            'p'.code -> if (intermediates.contains('$')) respondToDecrqm(p, isPrivate)
             else -> {}
         }
     }
@@ -356,7 +369,16 @@ class TerminalEmulator(
                 }
                 private && p == 2004 -> buffer.bracketedPaste = set
                 private && (p == 1000 || p == 1002 || p == 1003) -> buffer.mouseTracking = if (set) p else 0
-                private && p == 1006 -> buffer.mouseSgr = set
+                private && p == 1006 -> {
+                    buffer.mouseSgr = set
+                    if (set) buffer.mouseUrxvt = false
+                }
+                private && p == 1004 -> buffer.focusEvents = set
+                private && p == 1007 -> buffer.alternateScroll = set
+                private && p == 1015 -> {
+                    buffer.mouseUrxvt = set
+                    if (set) buffer.mouseSgr = false
+                }
             }
         }
     }
@@ -390,8 +412,15 @@ class TerminalEmulator(
         buffer.cursorVisible = true
         buffer.mouseTracking = 0
         buffer.mouseSgr = false
+        buffer.mouseUrxvt = false
+        buffer.focusEvents = false
+        buffer.alternateScroll = false
+        buffer.cursorStyle = 0
+        buffer.cursorColor = DEFAULT_CURSOR
+        buffer.currentLink = null
         buffer.setScrollRegion(0, buffer.rows - 1)
         buffer.resetTabStops()
+        buffer.lastPrintedCodePoint = 0
         g0Charset = TerminalBuffer.Charset.ASCII
         g1Charset = TerminalBuffer.Charset.ASCII
         shiftedOut = false
@@ -418,6 +447,54 @@ class TerminalEmulator(
         onResponse(resp.encodeToByteArray())
     }
 
+    /** DCS $ q Pt ST（DECRQSS）：应答当前状态，无效查询回 DCS 0$r ST。 */
+    private fun finishDcs() {
+        val content = dcsBuf.toString()
+        dcsBuf.clear()
+        if (!content.startsWith("\$q")) return // tmux passthrough 等其它 DCS 忽略
+        val query = content.removePrefix("\$q").trim()
+        val resp = when {
+            query.endsWith("r") -> { // DECSTBM
+                "\u001bP1\$r${buffer.scrollTop + 1};${buffer.scrollBottom + 1}r\u001b\\"
+            }
+            query.endsWith("m") -> "\u001bP1\$r0m\u001b\\" // SGR：仅应答默认态
+            query.endsWith("q") -> "\u001bP1\$r${buffer.cursorStyle} q\u001b\\" // DECSCUSR
+            else -> "\u001bP0\$r\u001b\\"
+        }
+        onResponse(resp.encodeToByteArray())
+    }
+
+    /** CSI Ps $ p / CSI ? Ps $ p（DECRQM）：应答模式状态。 */
+    private fun respondToDecrqm(params: List<Int>, isPrivate: Boolean) {
+        val p = params.getOrNull(0) ?: return
+        val state = if (isPrivate) {
+            when (p) {
+                1 -> if (buffer.applicationCursorKeys) 1 else 2
+                6 -> if (buffer.originMode) 1 else 2
+                7 -> if (buffer.autoWrap) 1 else 2
+                25 -> if (buffer.cursorVisible) 1 else 2
+                47, 1047, 1049 -> if (buffer.altScreen) 1 else 2
+                1000 -> if (buffer.mouseTracking == 1000) 1 else 2
+                1002 -> if (buffer.mouseTracking == 1002) 1 else 2
+                1003 -> if (buffer.mouseTracking == 1003) 1 else 2
+                1004 -> if (buffer.focusEvents) 1 else 2
+                1006 -> if (buffer.mouseSgr) 1 else 2
+                1007 -> if (buffer.alternateScroll) 1 else 2
+                1015 -> if (buffer.mouseUrxvt) 1 else 2
+                2004 -> if (buffer.bracketedPaste) 1 else 2
+                else -> 0
+            }
+        } else {
+            when (p) {
+                4 -> if (buffer.insertMode) 1 else 2
+                20 -> 2
+                else -> 0
+            }
+        }
+        if (state == 0) return
+        onResponse("\u001b[${if (isPrivate) "?" else ""}$p;$state\$y".encodeToByteArray())
+    }
+
     private fun finishOsc() {
         val content = oscBuf.toString()
         oscBuf.clear()
@@ -429,8 +506,31 @@ class TerminalEmulator(
             0, 1, 2 -> onTitleChange(pt)
             4 -> handleOsc4Query(pt)
             10, 11 -> handleOscColorQuery(ps, pt)
+            12 -> handleOsc12(pt)
             52 -> handleOsc52(pt)
-            else -> {} // 忽略其它 OSC（如 8 超链接）
+            8 -> handleOsc8(pt)
+            else -> {} // 忽略其它 OSC
+        }
+    }
+
+    /** OSC 8 ; params ; URI —— 超链接开始/结束（URI 为空时结束）。 */
+    private fun handleOsc8(pt: String) {
+        val semi = pt.indexOf(';')
+        val uri = if (semi >= 0) pt.substring(semi + 1) else pt
+        buffer.currentLink = uri.ifEmpty { null }
+    }
+
+    /** OSC 12：查询/设置光标颜色。仅支持 #RRGGBB 与查询。 */
+    private fun handleOsc12(pt: String) {
+        val value = pt.trim()
+        if (value == "?") {
+            val rgb = if (buffer.cursorColor != DEFAULT_CURSOR) buffer.cursorColor else buffer.defaultCursorRgb
+            onResponse("\u001b]12;${rgbToXTerm(rgb)}\u001b\\".encodeToByteArray())
+            return
+        }
+        if (value.startsWith("#") && value.length == 7) {
+            val hex = value.substring(1).toIntOrNull(16)
+            if (hex != null) buffer.cursorColor = hex
         }
     }
 

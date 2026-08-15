@@ -3,6 +3,8 @@ package dev.mssh.term
 /** 终端颜色：以 0xRRGGBB 编码的 Int。默认前景/背景用负哨兵值。 */
 const val DEFAULT_FG = -1
 const val DEFAULT_BG = -2
+/** 光标颜色未设置（用主题默认色）的哨兵值。 */
+const val DEFAULT_CURSOR = -3
 
 object TerminalPalette {
 

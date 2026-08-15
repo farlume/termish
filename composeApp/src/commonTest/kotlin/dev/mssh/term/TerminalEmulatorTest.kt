@@ -3,6 +3,7 @@ package dev.mssh.term
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TerminalEmulatorTest {
@@ -239,5 +240,143 @@ class TerminalEmulatorTest {
         e.writeText("\u001b8") // restore
         assertEquals(3, b.cursorRow)
         assertEquals(4, b.cursorCol)
+    }
+
+    @Test
+    fun repeatCharacter() {
+        val (e, b) = emu()
+        e.writeText("a\u001b[3b")
+        assertEquals("aaaa", b.lineText(0))
+    }
+
+    @Test
+    fun cursorStyleSequences() {
+        val (e, b) = emu()
+        e.writeText("\u001b[2 q")
+        assertEquals(2, b.cursorStyle)
+        e.writeText("\u001b[4 q")
+        assertEquals(4, b.cursorStyle)
+        e.writeText("\u001b[6 q")
+        assertEquals(6, b.cursorStyle)
+        e.writeText("\u001b[0 q")
+        assertEquals(0, b.cursorStyle)
+        e.writeText("\u001b[ q") // 无参数 → 默认
+        assertEquals(0, b.cursorStyle)
+        e.writeText("\u001b[9 q") // 非法值 → 默认
+        assertEquals(0, b.cursorStyle)
+    }
+
+    @Test
+    fun osc8Hyperlinks() {
+        val (e, b) = emu()
+        e.writeText("\u001b]8;;https://example.com\u0007link\u001b]8;;\u0007end")
+        assertEquals("https://example.com", b.lineAt(0).cells[0].link)
+        assertEquals("https://example.com", b.lineAt(0).cells[3].link)
+        assertNull(b.lineAt(0).cells[4].link)
+    }
+
+    @Test
+    fun osc8HyperlinkParamsIgnoredAndWideTailInherits() {
+        val (e, b) = emu()
+        // params 段（id=...）应忽略，URI 取第二个分号后
+        e.writeText("\u001b]8;id=42;https://x.dev\u0007中文\u001b]8;;\u0007")
+        assertEquals("https://x.dev", b.lineAt(0).cells[0].link)
+        assertEquals("https://x.dev", b.lineAt(0).cells[1].link) // 宽字符尾巴继承链接
+    }
+
+    @Test
+    fun osc12CursorColorQueryAndSet() {
+        val (e, _) = emu()
+        val responses = StringBuilder()
+        e.onResponse = { responses.append(it.decodeToString()) }
+        e.writeText("\u001b]12;?\u0007")
+        assertTrue(responses.toString().startsWith("\u001b]12;rgb:"), responses.toString())
+        responses.clear()
+        e.writeText("\u001b]12;#ff0000\u0007\u001b]12;?\u0007")
+        assertTrue(responses.toString().contains("rgb:ffff/0000/0000"), responses.toString())
+    }
+
+    @Test
+    fun decrqmModes() {
+        val (e, _) = emu()
+        val responses = StringBuilder()
+        e.onResponse = { responses.append(it.decodeToString()) }
+        e.writeText("\u001b[?2004h\u001b[?2004\$p")
+        assertEquals("\u001b[?2004;1\$y", responses.toString())
+        responses.clear()
+        e.writeText("\u001b[?2004l\u001b[?2004\$p")
+        assertEquals("\u001b[?2004;2\$y", responses.toString())
+        responses.clear()
+        // 未知模式不应答
+        e.writeText("\u001b[?9999\$p")
+        assertEquals("", responses.toString())
+        responses.clear()
+        // 标准模式：插入模式
+        e.writeText("\u001b[4h\u001b[4\$p")
+        assertEquals("\u001b[4;1\$y", responses.toString())
+    }
+
+    @Test
+    fun decrqssResponses() {
+        val (e, _) = emu()
+        val responses = StringBuilder()
+        e.onResponse = { responses.append(it.decodeToString()) }
+        e.writeText("\u001bP\$qr\u001b\\") // DECSTBM
+        assertEquals("\u001bP1\$r1;5r\u001b\\", responses.toString())
+        responses.clear()
+        e.writeText("\u001bP\$qm\u001b\\") // SGR（应答默认态）
+        assertEquals("\u001bP1\$r0m\u001b\\", responses.toString())
+        responses.clear()
+        e.writeText("\u001b[2 q\u001bP\$qq\u001b\\") // DECSCUSR
+        assertEquals("\u001bP1\$r2 q\u001b\\", responses.toString())
+        responses.clear()
+        e.writeText("\u001bP\$qz\u001b\\") // 未知查询 → 无效
+        assertEquals("\u001bP0\$r\u001b\\", responses.toString())
+    }
+
+    @Test
+    fun da2Response() {
+        val (e, _) = emu()
+        val responses = StringBuilder()
+        e.onResponse = { responses.append(it.decodeToString()) }
+        e.writeText("\u001b[>c")
+        assertEquals("\u001b[>1;2;0c", responses.toString())
+    }
+
+    @Test
+    fun focusAlternateScrollAndUrxvtModes() {
+        val (e, b) = emu()
+        e.writeText("\u001b[?1004h\u001b[?1007h\u001b[?1015h")
+        assertTrue(b.focusEvents)
+        assertTrue(b.alternateScroll)
+        assertTrue(b.mouseUrxvt)
+        assertFalse(b.mouseSgr)
+        // 1006 与 1015 互斥
+        e.writeText("\u001b[?1006h")
+        assertTrue(b.mouseSgr)
+        assertFalse(b.mouseUrxvt)
+        e.writeText("\u001b[?1015h")
+        assertTrue(b.mouseUrxvt)
+        assertFalse(b.mouseSgr)
+        e.writeText("\u001b[?1004l\u001b[?1007l")
+        assertFalse(b.focusEvents)
+        assertFalse(b.alternateScroll)
+    }
+
+    @Test
+    fun fullResetClearsNewState() {
+        val (e, b) = emu()
+        e.writeText("\u001b[?1004h\u001b[?1007h\u001b[?1015h\u001b[2 q")
+        e.writeText("\u001b]12;#00ff00\u0007")
+        e.writeText("\u001b]8;;https://x\u0007a\u001b]8;;\u0007")
+        assertTrue(b.focusEvents && b.alternateScroll && b.mouseUrxvt)
+        e.writeText("\u001bc") // RIS
+        assertFalse(b.focusEvents)
+        assertFalse(b.alternateScroll)
+        assertFalse(b.mouseUrxvt)
+        assertEquals(0, b.cursorStyle)
+        assertEquals(DEFAULT_CURSOR, b.cursorColor)
+        assertNull(b.currentLink)
+        assertEquals(0, b.lastPrintedCodePoint)
     }
 }

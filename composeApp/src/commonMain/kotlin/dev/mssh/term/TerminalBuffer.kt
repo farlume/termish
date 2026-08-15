@@ -10,6 +10,9 @@ class TerminalCell {
     /** 该单元是前一个宽字符（占 2 列）的“尾巴”。 */
     var isWideTail: Boolean = false
 
+    /** OSC 8 超链接目标；非超链接单元为 null。 */
+    var link: String? = null
+
     val isWide: Boolean get() = CharWidth.wcwidth(codePoint) > 1
 
     fun clear() {
@@ -18,6 +21,7 @@ class TerminalCell {
         fg = DEFAULT_FG
         bg = DEFAULT_BG
         isWideTail = false
+        link = null
     }
 
     fun copyFrom(o: TerminalCell) {
@@ -26,6 +30,7 @@ class TerminalCell {
         fg = o.fg
         bg = o.bg
         isWideTail = o.isWideTail
+        link = o.link
     }
 }
 
@@ -92,9 +97,28 @@ class TerminalBuffer(
     /** 默认前景/背景（RGB），由 UI 按当前主题设置，用于应答 OSC 10/11 颜色查询。 */
     var defaultFgRgb: Int = 0xd5d8de
     var defaultBgRgb: Int = 0x0e0f13
+    /** 默认光标色（RGB），用于应答 OSC 12 查询；OSC 12 设置后覆盖。 */
+    var defaultCursorRgb: Int = 0x58a6ff
     var applicationKeypad: Boolean = false
 
+    /** DECSCUSR 光标样式：0=默认闪烁块，1=闪烁块，2=稳态块，3=闪烁下划线，4=稳态下划线，5=闪烁竖线，6=稳态竖线。 */
+    var cursorStyle: Int = 0
+    /** OSC 12 设置的光标颜色；DEFAULT_CURSOR 表示用主题默认色。 */
+    var cursorColor: Int = DEFAULT_CURSOR
+
+    /** DECSET 1004：聚焦/失焦事件（CSI I / CSI O）上报。 */
+    var focusEvents: Boolean = false
+    /** DECSET 1007：备用屏下滚轮转方向键（alternate scroll）。 */
+    var alternateScroll: Boolean = false
+    /** DECSET 1015：urxvt 鼠标坐标格式（与 SGR 1006 互斥）。 */
+    var mouseUrxvt: Boolean = false
+
+    /** OSC 8 当前超链接目标；OSC 8;; 结束链接时置 null。 */
+    var currentLink: String? = null
+
     var tabStops: BooleanArray = defaultTabStops(cols)
+    /** 最近写入的图形字符，供 CSI Ps b（REP）重复。 */
+    var lastPrintedCodePoint: Int = 0
 
     /** 当前显示使用的字符集（DEC 特殊图形等）。 */
     var currentCharset: Charset = Charset.ASCII
@@ -187,12 +211,14 @@ class TerminalBuffer(
                 putChar(cp)
                 return
             }
+            lastPrintedCodePoint = cp
             val c = line.cells[col]
             c.clear()
             c.codePoint = cp
             c.attrs = currentAttrs
             c.fg = currentFg
             c.bg = currentBg
+            c.link = currentLink
             val tail = line.cells[col + 1]
             tail.clear()
             // 尾巴必须继承头的颜色/属性：否则宽字符右半格露出默认背景，
@@ -201,6 +227,7 @@ class TerminalBuffer(
             tail.fg = currentFg
             tail.bg = currentBg
             tail.isWideTail = true
+            tail.link = currentLink
             // 尾巴盖掉了原宽字符的头：清掉它原来尾巴的标记，避免越雷悬空
             if (col + 2 < cols && line.cells[col + 2].isWideTail) line.cells[col + 2].isWideTail = false
             cursorCol = col + 2
@@ -218,12 +245,14 @@ class TerminalBuffer(
         val line = lineAt(cursorRow)
         // 落点在宽字符尾巴上：先清掉头
         if (cursorCol > 0 && line.cells[cursorCol].isWideTail) line.cells[cursorCol - 1].clear()
+        lastPrintedCodePoint = cp
         val c = line.cells[cursorCol]
         c.clear()
         c.codePoint = cp
         c.attrs = currentAttrs
         c.fg = currentFg
         c.bg = currentBg
+        c.link = currentLink
         // 覆盖宽字符头时清掉尾巴标记
         if (cursorCol + 1 < cols && line.cells[cursorCol + 1].isWideTail) {
             line.cells[cursorCol + 1].isWideTail = false
@@ -236,6 +265,12 @@ class TerminalBuffer(
             cursorCol++
         }
         markChanged()
+    }
+
+    /** CSI Ps b（REP）：在当前光标处重复最近写入的图形字符 Ps 次。 */
+    fun repeatChar(n: Int) {
+        if (lastPrintedCodePoint == 0) return
+        repeat(n.coerceIn(1, 1024)) { putChar(lastPrintedCodePoint) }
     }
 
     var pendingWrap: Boolean = false

@@ -25,3 +25,13 @@ fun monospaceFontFamily(): FontFamily = FontFamily(
     Font(Res.font.jetbrains_mono_regular, FontWeight.Normal),
     Font(Res.font.jetbrains_mono_bold, FontWeight.Bold),
 )
+
+/**
+ * 宽字符（中文等 CJK）使用的字体族。
+ *
+ * JetBrains Mono 不含 CJK 字形。Android/桌面端系统会自动回退，返回默认族即可；
+ * iOS 上 CMP 对自定义字体的缺字回退不可靠（FontFamily.Default/SansSerif 都无效），
+ * 必须显式加载内置的 Noto Sans SC 才能渲染中文。
+ */
+@Composable
+expect fun cjkFontFamily(): FontFamily
