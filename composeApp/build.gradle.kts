@@ -1,4 +1,6 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import java.nio.file.Files
 import java.util.Properties
 
 plugins {
@@ -101,6 +103,45 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.slf4j.nop)
         }
+    }
+}
+
+// 桌面（开发/测试 harness）运行与打包入口
+compose.desktop.application {
+    mainClass = "dev.mssh.MainKt"
+    nativeDistributions {
+        targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+        packageName = "MSSH"
+        packageVersion = "1.0.0"
+        macOS {
+            iconFile.set(project.file("src/desktopMain/resources/icon.icns"))
+        }
+        windows {
+            iconFile.set(project.file("src/desktopMain/resources/icon.ico"))
+        }
+        linux {
+            iconFile.set(project.file("src/desktopMain/resources/icon.png"))
+        }
+    }
+}
+
+// 开发态 `./gradlew run` 时 macOS Dock 悬停名显示 "MSSH" 而不是 "java"：
+// macOS 的 Dock 悬停名取进程名，-Xdock:name 只能改菜单栏（JDK-8077172），
+// 所以用一个名为 MSSH 的符号链接指向 java 来启动，进程名即为 MSSH。
+afterEvaluate {
+    tasks.named<JavaExec>("run") {
+        doFirst {
+            val javaBin = File(System.getProperty("java.home"), "bin/java")
+            val linkDir = File(System.getProperty("user.home"), ".mssh/bin")
+            val link = File(linkDir, "MSSH")
+            if (!link.exists()) {
+                linkDir.mkdirs()
+                Files.createSymbolicLink(link.toPath(), javaBin.toPath())
+            }
+            executable = link.absolutePath
+        }
+        // 菜单栏应用名（Dock 名由上面的符号链接决定）
+        jvmArgs("-Xdock:name=MSSH")
     }
 }
 
