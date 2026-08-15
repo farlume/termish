@@ -107,7 +107,22 @@ fun TerminalView(
             val ref = textMeasurer.measure("0".repeat(16), TextStyle(fontFamily = fontFamily, fontSize = 12.sp))
             val refCellW = ref.size.width.toFloat() / 16f
             val desiredCellW = canvasSize.width.toFloat() / targetCols
-            (12f * desiredCellW / refCellW).coerceIn(4f, 32f)
+            var font = (12f * desiredCellW / refCellW).coerceIn(4f, 32f)
+            // 文字测量按整数像素取整，直接反算的 cellW 可能偏大导致实际列数比目标少 1
+            // （屏幕右侧留一条空白）。逐次实测校正：列数不足就按比例调小字号并留余量。
+            var guard = 0
+            while (guard < 5) {
+                val sample = textMeasurer.measure(
+                    "0".repeat(16),
+                    TextStyle(fontFamily = fontFamily, fontSize = font.sp),
+                )
+                val measuredCellW = sample.size.width.toFloat() / 16f
+                val cols = (canvasSize.width / measuredCellW).toInt().coerceAtLeast(1)
+                if (cols >= targetCols || font <= 4f) break
+                font = (font * (desiredCellW / measuredCellW) * 0.99f).coerceIn(4f, 32f)
+                guard++
+            }
+            font
         } else fontSizeSp
     }
 
