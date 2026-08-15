@@ -2,6 +2,7 @@ package dev.mssh.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.mssh.data.Host
@@ -76,12 +78,10 @@ fun HostListScreen(
                 singleLine = true,
             )
             if (filtered.isEmpty()) {
-                Column(
-                    Modifier.fillMaxSize().padding(24.dp),
-                    verticalArrangement = Arrangement.Center,
-                ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        s.hostsEmpty,
+                        if (hosts.isEmpty()) s.hostsEmpty else s.hostsNoMatch,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }

@@ -23,6 +23,7 @@ data class AppStrings(
     val hostsAdd: String,
     val hostsSearch: String,
     val hostsEmpty: String,
+    val hostsNoMatch: String,
     val hostsEdit: String,
     val hostsDelete: String,
     // 主机编辑
@@ -126,6 +127,7 @@ private val EnStrings = AppStrings(
     hostsAdd = "Add host",
     hostsSearch = "Search hosts / tags / users",
     hostsEmpty = "No hosts yet.\nTap + to add your first server.",
+    hostsNoMatch = "No matching hosts",
     hostsEdit = "Edit",
     hostsDelete = "Delete",
     editAddTitle = "Add host",
@@ -217,6 +219,7 @@ private val ZhStrings = AppStrings(
     hostsAdd = "添加主机",
     hostsSearch = "搜索主机 / 标签 / 用户",
     hostsEmpty = "还没有主机。\n点击右下角 + 添加第一台服务器。",
+    hostsNoMatch = "没有匹配的主机",
     hostsEdit = "编辑",
     hostsDelete = "删除",
     editAddTitle = "添加主机",

@@ -23,6 +23,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,6 +42,7 @@ import dev.mssh.data.secretAccountFor
 import dev.mssh.ui.theme.MsshTheme
 import dev.mssh.ui.theme.TerminalThemes
 import dev.mssh.util.monospaceFontFamily
+import dev.mssh.util.observeAppLifecycle
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
 
@@ -93,6 +95,19 @@ fun AppRoot(repository: HostRepository) {
     if (!sessionsRestored) {
         sessionManager.restoreRecent(hosts, settings.autoReconnect)
         sessionsRestored = true
+    }
+
+    // iOS：退到桌面后系统挂起进程、掐断 socket；回前台时自动重连活跃会话（缓冲保留）。
+    // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
+    DisposableEffect(Unit) {
+        val dispose = observeAppLifecycle { foreground ->
+            if (foreground) {
+                sessionManager.reconnectDroppedSessions()
+            } else {
+                sessionManager.noteBackgrounded()
+            }
+        }
+        onDispose { dispose() }
     }
 
     // 全局返回栈：非主页 → 回主页；主页非主机 tab → 回主机 tab；否则交给系统退出
