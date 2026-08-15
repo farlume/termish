@@ -232,14 +232,13 @@ fun TerminalScreen(
             QuickCommandsBar(controller)
         }
 
-        // 终端画布 + 悬浮工具栏：键盘弹起时不挤压画布（adjustNothing），避免 vim/tmux
-        // 等全屏程序随键盘弹收反复 SIGWINCH 重排；由 TerminalView 向上平移保证光标可见。
-        // 末尾的 8dp 是光标与工具栏之间的视觉间距余量。
+        // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
+        // 键盘弹起时不挤压画布（adjustNothing），工具栏上移会遮住画布底部，
+        // 由 TerminalView 向上平移保证光标可见；键盘收起即归位，顶部（herdr
+        // 菜单等）始终可见。末尾 12dp 是画布与工具栏之间的视觉间距余量。
         val density = LocalDensity.current
-        val coveredBottomPx = maxOf(
-            WindowInsets.ime.getBottom(density).toFloat(),
-            WindowInsets.navigationBars.getBottom(density).toFloat(),
-        ) + toolbarHeightPx + with(density) { 12.dp.toPx() }
+        val coveredBottomPx =
+            WindowInsets.ime.getBottom(density).toFloat() + with(density) { 12.dp.toPx() }
         // 画布四周留出小间距，文字不贴屏幕边缘；行列按内缩后宽度自动重算
         Box(Modifier.weight(1f).clipToBounds().background(theme.background())) {
             TerminalView(
@@ -250,7 +249,9 @@ fun TerminalScreen(
                 coveredBottomPx = coveredBottomPx,
                 keyboardVisible = imeVisible,
                 onReady = { cols, rows ->
-                    if (!connectSent) {
+                    // 等工具栏高度量到后再建连：画布尺寸已扣除工具栏区域，
+                    // 避免先用"含被盖住区域"的错误行数起 PTY
+                    if (!connectSent && toolbarHeightPx > 0f) {
                         connectSent = true
                         controller.connect(cols, rows)
                     }
@@ -259,7 +260,9 @@ fun TerminalScreen(
                     clipboard.setText(AnnotatedString(text))
                     scope.launch { snackbar.showSnackbar("已复制") }
                 },
-                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxSize()
+                    .padding(horizontal = 6.dp, vertical = 4.dp)
+                    .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
             )
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
