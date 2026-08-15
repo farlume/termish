@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.kotlin.gradle.plugin.mpp.apple.XCFramework
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -18,22 +17,52 @@ kotlin {
 
     jvm("desktop")
 
-    val xcfName = "Mssh"
-    val xcf = XCFramework(xcfName)
+    val nativeRoot = rootProject.file("iosApp/native")
+    val libssh2Def = project.file("src/nativeInterop/cinterop/libssh2.def")
+
+    val iosArm64 = iosArm64()
+    val iosSimulatorArm64 = iosSimulatorArm64()
+
     listOf(
-        iosArm64(),
-        iosSimulatorArm64(),
-    ).forEach { iosTarget ->
-        iosTarget.binaries.framework {
-            baseName = xcfName
+        iosArm64 to nativeRoot.resolve("lib/device"),
+        iosSimulatorArm64 to nativeRoot.resolve("lib/sim"),
+    ).forEach { (target, libDir) ->
+        target.binaries.framework {
+            baseName = "Mssh"
             isStatic = true
             binaryOption("bundleId", "dev.mssh.app.Mssh")
-            xcf.add(this)
+            linkerOpts(
+                "-L$libDir",
+                "-lssh2", "-lssl", "-lcrypto", "-lz",
+                "-framework", "Security",
+            )
+        }
+        target.compilations.getByName("main").cinterops.create("libssh2") {
+            defFile(libssh2Def)
+            compilerOpts("-I${nativeRoot.resolve("include")}")
         }
     }
 
     sourceSets {
         val desktopMain by getting
+        val androidMain by getting
+
+        // Android 与 desktop 共享的 JVM SSH 引擎（sshj）
+        val jvmSharedMain by creating {
+            dependsOn(commonMain.get())
+            dependencies {
+                implementation(libs.sshj)
+            }
+        }
+        desktopMain.dependsOn(jvmSharedMain)
+        androidMain.dependsOn(jvmSharedMain)
+
+        // iOS 共享源集（默认层级模板因上面的显式 dependsOn 被禁用，需手动创建）
+        val iosMain by creating {
+            dependsOn(commonMain.get())
+        }
+        getByName("iosArm64Main").dependsOn(iosMain)
+        getByName("iosSimulatorArm64Main").dependsOn(iosMain)
 
         commonMain.dependencies {
             implementation(compose.runtime)
@@ -53,6 +82,8 @@ kotlin {
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.bouncycastle.prov)
+            implementation(libs.bouncycastle.pkix)
         }
 
         commonTest.dependencies {
@@ -62,6 +93,7 @@ kotlin {
 
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
+            implementation(libs.slf4j.nop)
         }
     }
 }
@@ -80,6 +112,11 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/META-INF/versions/**"
+            excludes += "/META-INF/*.MF"
+            excludes += "/META-INF/*.SF"
+            excludes += "/META-INF/*.RSA"
+            excludes += "/META-INF/DEPENDENCIES"
         }
     }
     buildTypes {

@@ -1,4 +1,4 @@
-package dev.mssh.ssh
+package dev.mssh.util
 
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers

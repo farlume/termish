@@ -13,3 +13,13 @@
 
 # Compose
 -dontwarn androidx.compose.**
+
+# sshj / BouncyCastle（JVM SSH 引擎）
+-dontwarn org.bouncycastle.**
+-dontwarn com.hierynomus.**
+-dontwarn net.schmizz.**
+-dontwarn org.slf4j.**
+-keep class org.bouncycastle.** { *; }
+-keep class net.schmizz.** { *; }
+-keep class com.hierynomus.** { *; }
+-keep class org.slf4j.** { *; }

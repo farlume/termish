@@ -6,14 +6,15 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
-        android:allowBackup="true"
+        android:name="dev.mssh.MsshApplication"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="MSSH"
         android:supportsRtl="true"
         android:theme="@style/Theme.Mssh"
         android:usesCleartextTraffic="true">
         <activity
-            android:name=".MainActivity"
+            android:name="dev.mssh.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustResize">

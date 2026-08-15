@@ -1,6 +1,6 @@
-package dev.mssh.ssh
+package dev.mssh.util
 
 import kotlinx.coroutines.CoroutineDispatcher
 
-/** IO dispatcher for blocking socket work. */
+/** 阻塞 socket/SSH 工作的调度器。 */
 expect fun ioDispatcher(): CoroutineDispatcher
