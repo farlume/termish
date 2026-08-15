@@ -22,6 +22,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
@@ -122,6 +123,29 @@ fun TerminalView(
     // frame 每次输出自增，读取它以在输出后重算平移。
     @Suppress("UNUSED_VARIABLE")
     val frame = controller.frame
+    // 触摸 → 终端鼠标事件（X10/SGR）：herdr/vim/htop 等 TUI 开启鼠标上报后，
+    // 触摸映射为左键按下/拖拽/释放，滚动手势映射为滚轮。坐标为 1-based 格坐标。
+    fun sendMouseEvent(btn: Int, col: Int, row: Int, release: Boolean) {
+        val c = (col + 1).coerceIn(1, buffer.cols)
+        val r = (row + 1).coerceIn(1, buffer.rows)
+        if (buffer.mouseSgr) {
+            controller.sendText("\u001b[<$btn;$c;$r${if (release) "m" else "M"}")
+        } else {
+            // X10：按下发按钮号，释放发 3；坐标 32 偏移字节，上限 223
+            if (c > 223 || r > 223) return
+            val b = if (release) 3 else btn
+            controller.sendBytes(
+                byteArrayOf(0x1b, '['.code.toByte(), 'M'.code.toByte(), (32 + b).toByte(), (32 + c).toByte(), (32 + r).toByte())
+            )
+        }
+    }
+    fun pointerCell(pos: Offset): Pair<Int, Int> =
+        ((pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)) to
+            ((pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1))
+
+    // 最近指针位置（鼠标模式下滚轮事件的落点）
+    var lastPointer by remember { mutableStateOf(Offset.Zero) }
+
     val panUp = run {
         if (scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
         val cursorBottomY = (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
@@ -144,9 +168,38 @@ fun TerminalView(
             .onSizeChanged { size ->
                 canvasSize = size
             }
+            // 触摸 → 鼠标事件：TUI 开启上报（1000/1002/1003）时接管手势，
+            // 否则不消费事件，保持聚焦键盘/选择/滚动回看的默认行为
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (buffer.mouseTracking <= 0) return@awaitEachGesture
+                    down.consume()
+                    var (col, row) = pointerCell(down.position)
+                    sendMouseEvent(0, col, row, release = false)
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.first()
+                        change.consume()
+                        lastPointer = change.position
+                        val (nc, nr) = pointerCell(change.position)
+                        if (nc != col || nr != row) {
+                            col = nc; row = nr
+                            // 拖拽移动（1002/1003 才上报移动）
+                            if (buffer.mouseTracking >= 1002) {
+                                sendMouseEvent(32, col, row, release = false)
+                            }
+                        }
+                        if (change.changedToUp()) {
+                            sendMouseEvent(0, col, row, release = true)
+                            break
+                        }
+                    }
+                }
+            }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { onFocusKeyboard() },
+                    // 点击不再拉起键盘（统一走工具栏 ⌨ 按钮，避免与 TUI 鼠标点击冲突）
                     onDoubleTap = { pos ->
                         // 双击选词并复制
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
@@ -188,23 +241,33 @@ fun TerminalView(
                 )
             }
             // 滚动回看：scrollable 自带 fling 惯性衰减；
-            // delta 语义与手指方向一致（手指上推 delta>0 → 看更新内容 → scrollOffset 减小）
+            // delta 为手指拖动方向（下滑 delta>0 → 内容跟手下移 → 看历史 → scrollOffset 增大）
             .scrollable(
                 orientation = Orientation.Vertical,
                 state = rememberScrollableState { delta ->
                     scrollAccum += delta
                     val rows = (scrollAccum / cellH).toInt()
                     if (rows != 0) {
-                        scrollOffset = (scrollOffset - rows).coerceIn(0, buffer.scrollbackSize())
+                        if (buffer.mouseTracking > 0) {
+                            // TUI 鼠标模式：滚动映射为滚轮事件（64=上 65=下）
+                            val btn = if (rows > 0) 65 else 64
+                            val (wc, wr) = pointerCell(lastPointer)
+                            repeat(kotlin.math.abs(rows)) { sendMouseEvent(btn, wc, wr, release = false) }
+                        } else {
+                            scrollOffset = (scrollOffset + rows).coerceIn(0, buffer.scrollbackSize())
+                        }
                         scrollAccum -= rows * cellH
                     }
                     delta
                 },
             )
-            // 滚动条拖动：仅右边缘命中时消费事件，其余交给 scrollable
+            // 滚动条拖动：仅右边缘命中时消费事件，其余交给 scrollable。
+            // 鼠标模式下让位（TUI 的 UI 元素可能在右边缘，如 herdr 的 tab 按钮）；
+            // 默认 requireUnconsumed=true：上游鼠标处理已消费的事件不再触发。
             .pointerInput(Unit) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val down = awaitFirstDown()
+                    if (buffer.mouseTracking > 0) return@awaitEachGesture
                     val barZone = size.width - 24.dp.toPx()
                     if (down.position.x >= barZone && buffer.scrollbackSize() > 0) {
                         drag(down.id) { change ->

@@ -83,6 +83,15 @@ class TerminalBuffer(
     var applicationCursorKeys: Boolean = false
     /** bracketed paste（DECSET 2004）：开启时粘贴内容需包在 ESC[200~ ... ESC[201~ 中。 */
     var bracketedPaste: Boolean = false
+
+    /** 鼠标上报模式：0=关闭，1000=X10 点击，1002=按钮事件拖拽，1003=全事件。 */
+    var mouseTracking: Int = 0
+    /** 鼠标坐标格式：true=SGR(1006)，false=X10 字节偏移。 */
+    var mouseSgr: Boolean = false
+
+    /** 默认前景/背景（RGB），由 UI 按当前主题设置，用于应答 OSC 10/11 颜色查询。 */
+    var defaultFgRgb: Int = 0xd5d8de
+    var defaultBgRgb: Int = 0x0e0f13
     var applicationKeypad: Boolean = false
 
     var tabStops: BooleanArray = defaultTabStops(cols)

@@ -355,6 +355,8 @@ class TerminalEmulator(
                     else { buffer.leaveAltScreen(); buffer.restoreCursor() }
                 }
                 private && p == 2004 -> buffer.bracketedPaste = set
+                private && (p == 1000 || p == 1002 || p == 1003) -> buffer.mouseTracking = if (set) p else 0
+                private && p == 1006 -> buffer.mouseSgr = set
             }
         }
     }
@@ -386,6 +388,8 @@ class TerminalEmulator(
         buffer.applicationCursorKeys = false
         buffer.applicationKeypad = false
         buffer.cursorVisible = true
+        buffer.mouseTracking = 0
+        buffer.mouseSgr = false
         buffer.setScrollRegion(0, buffer.rows - 1)
         buffer.resetTabStops()
         g0Charset = TerminalBuffer.Charset.ASCII
@@ -423,8 +427,36 @@ class TerminalEmulator(
         val pt = if (semi >= 0) content.substring(semi + 1) else ""
         when (ps) {
             0, 1, 2 -> onTitleChange(pt)
+            4 -> handleOsc4Query(pt)
+            10, 11 -> handleOscColorQuery(ps, pt)
             52 -> handleOsc52(pt)
-            else -> {} // 忽略其它 OSC（如 4 调色板、8 超链接）
+            else -> {} // 忽略其它 OSC（如 8 超链接）
+        }
+    }
+
+    /** xterm 颜色格式：rgb:rrrr/gggg/bbbb（16 位/通道）。 */
+    private fun rgbToXTerm(c: Int): String {
+        fun ch(v: Int) = (v * 257).toString(16).padStart(4, '0')
+        return "rgb:${ch(TerminalPalette.red(c))}/${ch(TerminalPalette.green(c))}/${ch(TerminalPalette.blue(c))}"
+    }
+
+    /** OSC 10/11 查询默认前景/背景色：TUI（如 herdr）据此决定对比色，必须应答。 */
+    private fun handleOscColorQuery(ps: Int, pt: String) {
+        if (pt.trimEnd() != "?") return // 暂不支持设置颜色
+        val rgb = if (ps == 10) buffer.defaultFgRgb else buffer.defaultBgRgb
+        onResponse("\u001b]$ps;${rgbToXTerm(rgb)}\u001b\\".encodeToByteArray())
+    }
+
+    /** OSC 4 ; i ; ? 调色板查询（可多对 i;?）。 */
+    private fun handleOsc4Query(pt: String) {
+        val parts = pt.split(';')
+        var i = 0
+        while (i + 1 < parts.size) {
+            val idx = parts[i].toIntOrNull()
+            if (idx != null && parts[i + 1] == "?" && idx in 0..255) {
+                onResponse("\u001b]4;$idx;${rgbToXTerm(TerminalPalette.PALETTE_256[idx])}\u001b\\".encodeToByteArray())
+            }
+            i += 2
         }
     }
 

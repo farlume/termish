@@ -105,4 +105,17 @@ class TerminalBufferTest {
         e.writeText("]52;c;aGk=")
         assertEquals("hi", clip)
     }
+
+    @Test
+    fun mouseTrackingModesNegotiated() {
+        // herdr 实际发送的协商序列：先 reset 再 enable 1000/1002/1003/1015/1006
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("\u001b[?1006l\u001b[?1000l")
+        assertEquals(0, b.mouseTracking)
+        assertFalse(b.mouseSgr)
+        e.writeText("\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1015h\u001b[?1006h")
+        assertEquals(1003, b.mouseTracking)
+        assertTrue(b.mouseSgr)
+    }
 }

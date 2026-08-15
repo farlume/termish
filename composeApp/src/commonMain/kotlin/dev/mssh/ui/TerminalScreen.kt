@@ -197,6 +197,7 @@ fun TerminalScreen(
             contentColor = theme.foreground(),
             statusBarPadding = false,
         ) {
+            MouseModeIndicator(controller)
             ConnectionStatusIndicator(
                 status = controller.status,
                 reconnecting = controller.status == ConnStatus.CONNECTING && controller.errorMessage != null,
@@ -404,6 +405,16 @@ private fun LeavePolicyOption(title: String, subtitle: String, onClick: () -> Un
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
         )
+    }
+}
+
+/** 头部鼠标模式指示：TUI 开启鼠标上报时显示，提示触摸已映射为鼠标事件。 */
+@Composable
+private fun MouseModeIndicator(controller: TerminalController) {
+    // buffer 非 Compose 状态，读取 frame 让模式切换随输出帧重组
+    @Suppress("UNUSED_VARIABLE") val f = controller.frame
+    if (controller.buffer.mouseTracking > 0) {
+        Text("\ud83d\uddb1", modifier = Modifier.padding(end = 12.dp))
     }
 }
 
