@@ -1,7 +1,6 @@
 package dev.mssh.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,11 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -47,10 +46,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -260,31 +261,28 @@ fun TerminalScreen(
                         theme = theme,
                     )
                 }
-                // 常驻输入框：组合态（拼音等）只更新视图不发送；提交时按已提交基线 diff。
+                // 隐藏输入字段：仅作为输入法接入口，不渲染可见 UI。
+                // 打字内容以终端回显为准（远端 echo 才是真实状态，本地显示反而重复干扰）。
                 BasicTextField(
                     value = inputValue,
                     onValueChange = { new ->
                         if (new.composition != null) {
+                            // 输入法组合中（拼音等）：只更新视图，不发送
                             inputValue = new
                             return@BasicTextField
                         }
                         val oldText = committedText
                         val newText = new.text
-                        when {
-                            newText.length > oldText.length && newText.startsWith(oldText) -> {
-                                sendTyped(controller, newText.substring(oldText.length), ctrlActive, altActive)
-                                ctrlActive = false
-                                altActive = false
-                            }
-                            newText.length < oldText.length && oldText.startsWith(newText) -> {
-                                repeat(oldText.length - newText.length) {
-                                    controller.sendBytes(byteArrayOf(0x7f))
-                                }
-                            }
-                            newText != oldText -> {
-                                // 非尾部编辑（如粘贴覆盖选区）：删旧发新
-                                repeat(oldText.length) { controller.sendBytes(byteArrayOf(0x7f)) }
-                                sendTyped(controller, newText, ctrlActive, altActive)
+                        if (newText != oldText) {
+                            // 公共前缀 diff：纯尾部增删是精确操作；
+                            // 中间编辑无法映射到远端光标，按删尾重发处理
+                            var p = 0
+                            val maxP = minOf(oldText.length, newText.length)
+                            while (p < maxP && oldText[p] == newText[p]) p++
+                            repeat(oldText.length - p) { controller.sendBytes(byteArrayOf(0x7f)) }
+                            val added = newText.substring(p)
+                            if (added.isNotEmpty()) {
+                                sendTyped(controller, added, ctrlActive, altActive)
                                 ctrlActive = false
                                 altActive = false
                             }
@@ -298,20 +296,17 @@ fun TerminalScreen(
                             inputValue = new
                         }
                     },
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp).padding(4.dp)
+                    modifier = Modifier.size(1.dp).alpha(0f)
                         .focusRequester(inputFocusRequester)
-                        // 退格作为按键事件统一处理：输入框为空时（Enter 后/快速命令后）
-                        // 也要向远端发 0x7f，否则远端行有内容却删不掉。
+                        // 退格：输入框有内容时不拦截（平台删除 → onValueChange diff 发送，
+                        // 光标/选区由系统维护，不会错乱）；仅输入框为空时（Enter 后/快速命令后）
+                        // 拦截并直接发 0x7f，否则远端行有内容却删不掉。
                         // 输入法组合态除外：组合文本尚未发给远端，让 IME 自己删。
                         .onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown && ev.key == Key.Backspace &&
-                                inputValue.composition == null
+                                inputValue.composition == null && committedText.isEmpty()
                             ) {
                                 controller.sendBytes(byteArrayOf(0x7f))
-                                if (committedText.isNotEmpty()) {
-                                    committedText = committedText.dropLast(1)
-                                    inputValue = TextFieldValue(committedText)
-                                }
                                 true
                             } else false
                         }
@@ -319,29 +314,15 @@ fun TerminalScreen(
                         // 后立即 show 被忽略（键盘拉不起来）的问题
                         .onFocusChanged { if (it.isFocused) keyboardController?.show() },
                     textStyle = MaterialTheme.typography.bodyMedium.copy(color = theme.foreground()),
-                    cursorBrush = SolidColor(theme.cursor()),
+                    cursorBrush = SolidColor(Color.Transparent),
                     keyboardOptions = KeyboardOptions(
                         // 用 Text 而不是 Ascii：Ascii 会让输入法禁用中文候选
                         keyboardType = KeyboardType.Text,
                         capitalization = KeyboardCapitalization.None,
                         autoCorrectEnabled = false,
                     ),
-                    // 多行模式以捕获输入法 Enter（\n → CR）；高度被 heightIn 限制，
-                    // 长粘贴/长命令不会把工具栏顶出屏幕
+                    // 多行模式以捕获输入法 Enter（\n → CR）
                     singleLine = false,
-                    decorationBox = { innerTextField ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, theme.foreground().copy(alpha = 0.4f), MaterialTheme.shapes.small)
-                                .padding(12.dp),
-                        ) {
-                            if (inputValue.text.isEmpty()) {
-                                Text("输入命令…", color = theme.foreground().copy(alpha = 0.5f))
-                            }
-                            innerTextField()
-                        }
-                    },
                 )
                 }
             }
