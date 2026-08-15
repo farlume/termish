@@ -164,10 +164,6 @@ fun TerminalScreen(
                         showLeaveDialog = false
                         onBackWithPolicy(SessionKeepPolicy.KEEP_ALIVE)
                     }
-                    LeavePolicyOption("保留 10 分钟", "超时后自动断开") {
-                        showLeaveDialog = false
-                        onBackWithPolicy(SessionKeepPolicy.KEEP_10_MIN)
-                    }
                     LeavePolicyOption("立即断开", "关闭会话") {
                         showLeaveDialog = false
                         onBackWithPolicy(SessionKeepPolicy.DISCONNECT)
