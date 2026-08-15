@@ -27,6 +27,7 @@ kotlin {
 
     val nativeRoot = rootProject.file("iosApp/native")
     val libssh2Def = project.file("src/nativeInterop/cinterop/libssh2.def")
+    val moshptyDef = project.file("src/nativeInterop/cinterop/moshpty.def")
 
     val iosArm64 = iosArm64()
     val iosSimulatorArm64 = iosSimulatorArm64()
@@ -41,12 +42,16 @@ kotlin {
             binaryOption("bundleId", "dev.mssh.app.Mssh")
             linkerOpts(
                 "-L$libDir",
-                "-lssh2", "-lssl", "-lcrypto", "-lz",
+                "-lssh2", "-lssl", "-lcrypto", "-lmoshpty", "-lz",
                 "-framework", "Security",
             )
         }
         target.compilations.getByName("main").cinterops.create("libssh2") {
             defFile(libssh2Def)
+            compilerOpts("-I${nativeRoot.resolve("include")}")
+        }
+        target.compilations.getByName("main").cinterops.create("moshpty") {
+            defFile(moshptyDef)
             compilerOpts("-I${nativeRoot.resolve("include")}")
         }
     }
@@ -102,6 +107,7 @@ kotlin {
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.slf4j.nop)
+            implementation(libs.pty4j)
         }
     }
 }

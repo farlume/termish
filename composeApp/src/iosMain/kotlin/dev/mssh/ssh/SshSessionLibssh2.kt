@@ -26,6 +26,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Clock
 import libssh2.LIBSSH2_ERROR_EAGAIN
 import libssh2.LIBSSH2_HOSTKEY_TYPE_DSS
 import libssh2.LIBSSH2_HOSTKEY_TYPE_ECDSA_256
@@ -125,6 +126,8 @@ class SshSessionLibssh2(
     @Volatile
     private var closed = false
 
+    private var hostKeyInfo: HostKeyInfo? = null
+
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     companion object {
@@ -134,23 +137,7 @@ class SshSessionLibssh2(
     }
 
     override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
-        sock = tcpConnect(connection.host, connection.port)
-        val s = libssh2_session_init_ex(null, null, null, null) ?: throw SshException("libssh2 初始化失败")
-        session = s
-        if (libssh2_session_handshake(s, sock) != 0) {
-            throw SshException("SSH 握手失败: ${lastError(s)}")
-        }
-        val banner = libssh2_session_banner_get(s)?.toKString() ?: ""
-
-        val hostKey = computeHostKey(s)
-        if (!callbacks.verifyHostKey(hostKey)) {
-            cleanup()
-            throw SshException("主机密钥验证未通过")
-        }
-        if (!authenticate(s)) {
-            cleanup()
-            throw SshException("认证失败")
-        }
+        val (s, banner) = connectAndAuthenticate()
 
         val ch = libssh2_channel_open_ex(s, "session", 7u, (2u * 1024u * 1024u), 32768u, null, 0u)
             ?: run { cleanup(); throw SshException("打开会话通道失败") }
@@ -165,7 +152,31 @@ class SshSessionLibssh2(
             throw SshException("启动 shell 失败")
         }
         startReader(ch)
-        return SessionInfo(banner, hostKey, hostKey.algorithm)
+        val hk = hostKeyInfo
+        return SessionInfo(banner, hk, hk?.algorithm ?: "")
+    }
+
+    /** 建立 TCP + SSH 握手 + 主机密钥校验 + 认证，返回会话与 banner。 */
+    private fun connectAndAuthenticate(): Pair<CPointer<LIBSSH2_SESSION>?, String> {
+        sock = tcpConnect(connection.host, connection.port)
+        val s = libssh2_session_init_ex(null, null, null, null) ?: throw SshException("libssh2 初始化失败")
+        session = s
+        if (libssh2_session_handshake(s, sock) != 0) {
+            throw SshException("SSH 握手失败: ${lastError(s)}")
+        }
+        val banner = libssh2_session_banner_get(s)?.toKString() ?: ""
+
+        val hostKey = computeHostKey(s)
+        hostKeyInfo = hostKey
+        if (!callbacks.verifyHostKey(hostKey)) {
+            cleanup()
+            throw SshException("主机密钥验证未通过")
+        }
+        if (!authenticate(s)) {
+            cleanup()
+            throw SshException("认证失败")
+        }
+        return s to banner
     }
 
     // ---------- 认证 ----------
@@ -239,8 +250,43 @@ class SshSessionLibssh2(
     }
 
     override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {
-        // iOS Mosh 集成待完成；exec 通道实现留给 mosh 集成时补充。
-        throw UnsupportedOperationException("iOS exec 通道尚未实现")
+        // 非交互 exec 通道：用于 mosh-server 引导等一次性命令
+        return try {
+            val (s, _) = connectAndAuthenticate()
+            val ch = libssh2_channel_open_ex(s, "session", 7u, (2u * 1024u * 1024u), 32768u, null, 0u)
+                ?: throw SshException("打开 exec 通道失败")
+            if (libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()) != 0) {
+                libssh2_channel_close(ch)
+                libssh2_channel_free(ch)
+                throw SshException("启动命令失败: ${lastError(s)}")
+            }
+            val chunks = ArrayList<ByteArray>()
+            val buf = ByteArray(64 * 1024)
+            val deadline = Clock.System.now().toEpochMilliseconds() + timeoutMs
+            while (Clock.System.now().toEpochMilliseconds() < deadline) {
+                val n = buf.usePinned { pinned ->
+                    libssh2_channel_read_ex(ch, 0, pinned.addressOf(0), buf.size.toULong())
+                }
+                when {
+                    n > 0L -> chunks.add(buf.copyOf(n.toInt()))
+                    n == 0L -> break
+                    n.toInt() == LIBSSH2_ERROR_EAGAIN -> continue
+                    else -> break
+                }
+            }
+            libssh2_channel_close(ch)
+            libssh2_channel_free(ch)
+            val total = chunks.sumOf { it.size }
+            val all = ByteArray(total)
+            var off = 0
+            for (c in chunks) {
+                c.copyInto(all, off)
+                off += c.size
+            }
+            CommandResult(all.decodeToString(), hostKeyInfo)
+        } finally {
+            cleanup()
+        }
     }
 
     override fun close() {

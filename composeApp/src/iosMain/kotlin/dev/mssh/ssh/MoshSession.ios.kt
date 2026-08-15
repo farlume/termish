@@ -1,9 +1,50 @@
+@file:OptIn(ExperimentalForeignApi::class, ExperimentalAtomicApi::class)
+
 package dev.mssh.ssh
 
-/**
- * iOS Mosh 集成待完成：需要先交叉编译 iOS 版 mosh-client 并走 posix_spawn + openpty。
- * 目前占位，选择 Mosh 模式时抛出明确错误。
- */
+import dev.mssh.generated.resources.Res
+import kotlinx.cinterop.ByteVar
+import kotlinx.cinterop.CPointerVar
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.IntVar
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.allocArray
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.get
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.set
+import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import moshpty.mssh_close
+import moshpty.mssh_openpty
+import moshpty.mssh_read
+import moshpty.mssh_resize
+import moshpty.mssh_spawn
+import moshpty.mssh_write
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSBundle
+import platform.Foundation.NSProcessInfo
+import platform.Foundation.NSTemporaryDirectory
+import platform.posix.O_CREAT
+import platform.posix.O_RDWR
+import platform.posix.O_TRUNC
+import platform.posix.SIGTERM
+import platform.posix.chmod
+import platform.posix.close
+import platform.posix.kill
+import platform.posix.open
+import platform.posix.pid_t
+import platform.posix.waitpid
+import platform.posix.write
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.concurrent.atomics.AtomicBoolean
+
 suspend actual fun createMoshClient(
     ip: String,
     port: Int,
@@ -12,4 +53,170 @@ suspend actual fun createMoshClient(
     rows: Int,
     onOutput: (ByteArray) -> Unit,
     onExit: () -> Unit,
-): MoshSession = throw UnsupportedOperationException("iOS Mosh 尚未集成（需要 iOS 版 mosh-client）")
+): MoshSession = IosMoshSession(ip, port, key, columns, rows, onOutput, onExit)
+
+/**
+ * iOS 实现：从 app bundle 取出交叉编译的 mosh-client（sim/device 各一份），
+ * 用 C 桥接（moshpty_ios.c）创建 PTY 并 posix_spawn，app 通过 master fd 读写。
+ * 代码签名由 Xcode 对 bundle 内二进制统一处理，运行前复制到 tmp 并保持签名。
+ */
+private class IosMoshSession(
+    private val ip: String,
+    private val port: Int,
+    private val key: String,
+    columns: Int,
+    rows: Int,
+    private val onOutput: (ByteArray) -> Unit,
+    private val onExit: () -> Unit,
+) : MoshSession {
+
+    private val active = AtomicBoolean(true)
+    private var masterFd = -1
+    private var slaveFd = -1
+    private var pid: pid_t = -1
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    init {
+        val binName = if (isSimulator()) "mosh-client-sim" else "mosh-client-device"
+        val workDir = setupRuntime(binName)
+        val binPath = "$workDir/$binName"
+
+        memScoped {
+            val fdsC = allocArray<IntVar>(2)
+            if (mssh_openpty(fdsC, rows, columns) != 0) {
+                throw SshException("openpty 失败")
+            }
+            masterFd = fdsC[0]
+            slaveFd = fdsC[1]
+
+            val argStrs = listOf(binPath, ip, port.toString())
+            val argv = allocArray<CPointerVar<ByteVar>>(argStrs.size + 1)
+            argStrs.forEachIndexed { i, s -> argv[i] = s.cstr.ptr }
+
+            val envStrs = listOf(
+                "MOSH_KEY=$key",
+                "TERM=xterm-256color",
+                "TERMINFO=$workDir/terminfo",
+                "LC_CTYPE=en_US.UTF-8",
+                "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
+            )
+            val envp = allocArray<CPointerVar<ByteVar>>(envStrs.size + 1)
+            envStrs.forEachIndexed { i, s -> envp[i] = s.cstr.ptr }
+
+            val spawned = mssh_spawn(binPath, argv, envp, masterFd, slaveFd)
+            if (spawned <= 0) {
+                mssh_close(masterFd, slaveFd)
+                masterFd = -1
+                slaveFd = -1
+                throw SshException("posix_spawn mosh-client 失败 (pid=$spawned)")
+            }
+            pid = spawned
+        }
+
+        scope.launch {
+            val buf = ByteArray(64 * 1024)
+            try {
+                while (active.load()) {
+                    val n = buf.usePinned { pinned ->
+                        mssh_read(masterFd, pinned.addressOf(0), buf.size.toULong())
+                    }
+                    if (n <= 0L) break
+                    onOutput(buf.copyOf(n.toInt()))
+                }
+            } catch (_: Exception) {
+            } finally {
+                if (active.compareAndSet(expectedValue = true, newValue = false)) onExit()
+            }
+        }
+    }
+
+    /** 把 bundle 里的 mosh-client 与 terminfo 复制到 tmp，并保证可执行。 */
+    private fun setupRuntime(binName: String): String {
+        val base = NSTemporaryDirectory() ?: throw SshException("无临时目录")
+        val dir = "$base/mssh-${ip}-$port"
+        NSFileManager.defaultManager.createDirectoryAtPath(
+            dir, withIntermediateDirectories = true, attributes = null, error = null,
+        )
+        val src = NSBundle.mainBundle.URLForResource(binName, withExtension = null)?.path
+            ?: throw SshException("bundle 中缺少 $binName")
+        val dst = "$dir/$binName"
+        if (!NSFileManager.defaultManager.fileExistsAtPath(dst)) {
+            NSFileManager.defaultManager.copyItemAtPath(src, toPath = dst, error = null)
+        }
+        chmod(dst, 0x1EDu) // 0755
+
+        val terminfoRoot = "$dir/terminfo"
+        val entries = listOf("x/xterm-256color", "x/xterm", "s/screen", "v/vt100")
+        for (path in entries) {
+            val out = "$terminfoRoot/$path"
+            if (NSFileManager.defaultManager.fileExistsAtPath(out)) continue
+            try {
+                val bytes = runBlocking { Res.readBytes("files/terminfo/$path") }
+                val sub = out.substringBeforeLast('/')
+                NSFileManager.defaultManager.createDirectoryAtPath(
+                    sub, withIntermediateDirectories = true, attributes = null, error = null,
+                )
+                writeFileBytes(out, bytes)
+            } catch (_: Exception) {
+            }
+        }
+        return dir
+    }
+
+    private fun writeFileBytes(path: String, bytes: ByteArray) {
+        val fd = open(path, O_CREAT or O_TRUNC or O_RDWR, 0x1A4u) // 0644
+        if (fd < 0) return
+        try {
+            var off = 0
+            while (off < bytes.size) {
+                val n = bytes.usePinned { pinned ->
+                    write(fd, pinned.addressOf(off), (bytes.size - off).toULong())
+                }
+                if (n <= 0L) break
+                off += n.toInt()
+            }
+        } finally {
+            close(fd)
+        }
+    }
+
+    /** 模拟器运行时由系统注入 SIMULATOR_DEVICE_NAME 环境变量。 */
+    private fun isSimulator(): Boolean =
+        NSProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] != null
+
+    override fun isActive(): Boolean = active.load()
+
+    override fun resize(columns: Int, rows: Int) {
+        if (masterFd >= 0) mssh_resize(masterFd, rows, columns)
+    }
+
+    override fun sendData(data: ByteArray) {
+        try {
+            if (masterFd < 0 || data.isEmpty()) return
+            data.usePinned { pinned ->
+                mssh_write(masterFd, pinned.addressOf(0), data.size.toULong())
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    override fun close() {
+        if (!active.compareAndSet(expectedValue = true, newValue = false)) return
+        if (pid > 0) {
+            try {
+                kill(pid, SIGTERM)
+            } catch (_: Exception) {
+            }
+            try {
+                waitpid(pid, null, 0)
+            } catch (_: Exception) {
+            }
+        }
+        if (masterFd >= 0 || slaveFd >= 0) {
+            mssh_close(masterFd, slaveFd)
+            masterFd = -1
+            slaveFd = -1
+        }
+        onExit()
+    }
+}

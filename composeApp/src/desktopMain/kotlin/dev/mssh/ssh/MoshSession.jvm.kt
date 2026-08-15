@@ -1,5 +1,8 @@
 package dev.mssh.ssh
 
+import com.pty4j.PtyProcess
+import com.pty4j.PtyProcessBuilder
+import com.pty4j.WinSize
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -14,9 +17,8 @@ suspend actual fun createMoshClient(
 ): MoshSession = JvmMoshSession(ip, port, key, columns, rows, onOutput, onExit)
 
 /**
- * JVM 实现（桌面）：直接 exec 系统 mosh-client（brew/apt 安装的 mosh）。
- * 用 `script -q /dev/null` 包一层提供 PTY（macOS/Linux 自带），
- * app 通过管道读写。
+ * JVM 实现（桌面）：用 pty4j 创建真正的 PTY 并启动系统 mosh-client
+ * （brew/apt 安装的 mosh）。支持实时 resize（pty4j 会向 mosh-client 触发 SIGWINCH）。
  */
 private class JvmMoshSession(
     ip: String,
@@ -29,23 +31,21 @@ private class JvmMoshSession(
 ) : MoshSession {
 
     private val active = AtomicBoolean(true)
-    private var process: Process? = null
+    private var process: PtyProcess? = null
 
     init {
-        val cmd = listOf(
-            "script", "-q", "/dev/null", "-c",
-            "stty rows $rows cols $columns; mosh-client $ip $port",
-        )
-        val pb = ProcessBuilder(cmd)
-        pb.environment()["MOSH_KEY"] = key
-        pb.environment()["TERM"] = "xterm-256color"
-        process = pb.start()
+        val p = PtyProcessBuilder(arrayOf(findMoshClient(), ip, port.toString()))
+            .setInitialColumns(columns)
+            .setInitialRows(rows)
+            .setEnvironment(moshEnv(key))
+            .start()
+        process = p
 
         Thread({
             val buf = ByteArray(64 * 1024)
             try {
                 while (active.get()) {
-                    val n = process?.inputStream?.read(buf) ?: -1
+                    val n = p.inputStream.read(buf)
                     if (n <= 0) break
                     onOutput(buf.copyOf(n))
                 }
@@ -59,8 +59,10 @@ private class JvmMoshSession(
     override fun isActive(): Boolean = active.get() && (process?.isAlive ?: false)
 
     override fun resize(columns: Int, rows: Int) {
-        // script 包装下无法直接改 PTY 尺寸；通过向 tty 发送 SIGWINCH 的方式不可行，
-        // 桌面端保持初始尺寸（mosh 会话内可由远端 resize 处理）。
+        try {
+            process?.setWinSize(WinSize(columns, rows))
+        } catch (_: Exception) {
+        }
     }
 
     override fun sendData(data: ByteArray) {
@@ -73,7 +75,30 @@ private class JvmMoshSession(
 
     override fun close() {
         if (!active.getAndSet(false)) return
-        process?.destroy()
+        try {
+            process?.destroy()
+        } catch (_: Exception) {
+        }
+        process = null
         onExit()
+    }
+
+    private fun moshEnv(key: String): Map<String, String> {
+        val env = HashMap<String, String>()
+        System.getenv().forEach { (k, v) -> env[k] = v }
+        env["MOSH_KEY"] = key
+        env["TERM"] = "xterm-256color"
+        return env
+    }
+
+    private fun findMoshClient(): String {
+        for (candidate in listOf(
+            "/opt/homebrew/bin/mosh-client",
+            "/usr/local/bin/mosh-client",
+            "/usr/bin/mosh-client",
+        )) {
+            if (File(candidate).canExecute()) return candidate
+        }
+        return "mosh-client"
     }
 }
