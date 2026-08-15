@@ -290,7 +290,10 @@ fun TerminalView(
             .pointerInput(Unit) {
                 detectTapGestures(
                     // 点击不再拉起键盘（统一走工具栏 ⌨ 按钮，避免与 TUI 鼠标点击冲突）
-                    onDoubleTap = { pos ->
+                    onDoubleTap = tap@{ pos ->
+                        // TUI 鼠标模式（herdr/vim 等）：选区由远端自己管理，
+                        // 本地双击选词会与远端选区冲突，且长按/慢滑误触会整行复制
+                        if (buffer.mouseTracking > 0) return@tap
                         // 双击选词并复制
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
                         val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
@@ -316,7 +319,9 @@ fun TerminalView(
                             }
                         }
                     },
-                    onLongPress = { pos ->
+                    onLongPress = longPress@{ pos ->
+                        // 同上：鼠标模式下本地长按选词禁用（用户长按后滑动会误触整行复制）
+                        if (buffer.mouseTracking > 0) return@longPress
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
                         val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
                         val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
