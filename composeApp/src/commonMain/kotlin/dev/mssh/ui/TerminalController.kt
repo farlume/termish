@@ -189,8 +189,11 @@ class TerminalController(
         }
 
         override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-            // 已知指纹：严格比对
-            val known = host.knownHostFingerprint
+            // 优先读仓库里最新保存的指纹：连接成功后 touchConnected 只写了仓库，
+            // 内存中的 Host（AppRoot hosts 状态/本控制器）不会刷新，直接读 host 的
+            // 话同一进程内首次连接后每次重连都会看到 null 而重复弹信任窗。
+            val known = repository.getHost(host.id)?.knownHostFingerprint
+                ?: host.knownHostFingerprint
             if (known != null) {
                 if (known == hostKey.fingerprintSha256) return true
                 // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
