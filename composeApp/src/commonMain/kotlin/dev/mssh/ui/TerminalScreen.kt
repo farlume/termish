@@ -122,6 +122,12 @@ fun TerminalScreen(
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 
+    // OSC 52：远端程序（nvim/yazi/tmux）写系统剪贴板
+    controller.onRemoteClipboard = { text ->
+        clipboard.setText(AnnotatedString(text))
+        scope.launch { snackbar.showSnackbar("远端已写入剪贴板") }
+    }
+
     LaunchedEffect(Unit) {
         controller.connect(80, 24)
     }
@@ -257,7 +263,12 @@ fun TerminalScreen(
                         onPaste = {
                             val text = clipboard.getText()?.text
                             if (!text.isNullOrEmpty()) {
-                                controller.sendText(text)
+                                // bracketed paste：远端开启 2004 时包裹转义序列，
+                                // vim/nvim 等不会把粘贴内容当手打（避免自动缩进错乱）
+                                val payload = if (controller.buffer.bracketedPaste) {
+                                    "\u001b[200~$text\u001b[201~"
+                                } else text
+                                controller.sendText(payload)
                                 scope.launch { snackbar.showSnackbar("已粘贴") }
                             }
                             ctrlActive = false

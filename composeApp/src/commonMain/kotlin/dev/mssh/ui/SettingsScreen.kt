@@ -42,6 +42,7 @@ fun SettingsScreen(
     var targetCols by remember { mutableStateOf(settings.terminalTargetCols.toFloat()) }
     var keyboardToolbar by remember { mutableStateOf(settings.keyboardToolbarVisible) }
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
+    var autoReconnect by remember { mutableStateOf(settings.autoReconnect) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
 
     Scaffold(
@@ -59,6 +60,7 @@ fun SettingsScreen(
                                 terminalTargetCols = targetCols.toInt(),
                                 keyboardToolbarVisible = keyboardToolbar,
                                 hapticFeedback = haptics,
+                                autoReconnect = autoReconnect,
                                 verifyHostKeyOnFirstUse = verifyHostKey,
                             )
                         )
@@ -113,6 +115,10 @@ fun SettingsScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("触感反馈")
                 Switch(haptics, { haptics = it })
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("断线自动重连")
+                Switch(autoReconnect, { autoReconnect = it })
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("首次连接确认主机指纹")

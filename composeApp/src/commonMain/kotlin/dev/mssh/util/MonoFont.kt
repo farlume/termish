@@ -2,7 +2,9 @@ package dev.mssh.util
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import dev.mssh.generated.resources.Res
+import dev.mssh.generated.resources.jetbrains_mono_bold
 import dev.mssh.generated.resources.jetbrains_mono_regular
 import org.jetbrains.compose.resources.Font
 
@@ -19,4 +21,7 @@ import org.jetbrains.compose.resources.Font
  * 内置字体后，测量（行列计算）与绘制用的是同一个字体文件，三端行为一致。
  */
 @Composable
-fun monospaceFontFamily(): FontFamily = FontFamily(Font(Res.font.jetbrains_mono_regular))
+fun monospaceFontFamily(): FontFamily = FontFamily(
+    Font(Res.font.jetbrains_mono_regular, FontWeight.Normal),
+    Font(Res.font.jetbrains_mono_bold, FontWeight.Bold),
+)

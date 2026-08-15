@@ -81,6 +81,8 @@ class TerminalBuffer(
     var originMode: Boolean = false
     var insertMode: Boolean = false
     var applicationCursorKeys: Boolean = false
+    /** bracketed paste（DECSET 2004）：开启时粘贴内容需包在 ESC[200~ ... ESC[201~ 中。 */
+    var bracketedPaste: Boolean = false
     var applicationKeypad: Boolean = false
 
     var tabStops: BooleanArray = defaultTabStops(cols)

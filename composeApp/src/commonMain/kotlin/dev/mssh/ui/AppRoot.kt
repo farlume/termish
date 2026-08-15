@@ -73,7 +73,7 @@ fun AppRoot(repository: HostRepository) {
                     screen = Screen.HostList
                 } else {
                     val controller = remember(s.hostId) {
-                        TerminalController(host, s.password, s.privateKey, repository)
+                        TerminalController(host, s.password, s.privateKey, repository, settings.autoReconnect)
                     }
                     TerminalScreen(
                         controller = controller,

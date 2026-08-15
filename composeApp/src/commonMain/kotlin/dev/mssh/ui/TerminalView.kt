@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
@@ -41,10 +42,15 @@ private fun cellColor(c: Int, theme: TerminalTheme): Color {
 }
 
 private fun cellColors(cell: TerminalCell, theme: TerminalTheme): Pair<Color, Color> {
-    val fg = if (cell.fg == DEFAULT_FG) theme.foreground() else cellColor(cell.fg, theme)
+    // xterm 惯例：BOLD + 基本 8 色 → 提亮到 8-15
+    val fgIdx = if (cell.attrs and CellAttr.BOLD != 0 && cell.fg in 0..7) cell.fg + 8 else cell.fg
+    val fg = if (cell.fg == DEFAULT_FG) theme.foreground() else cellColor(fgIdx, theme)
     val bg = if (cell.bg == DEFAULT_BG) theme.background() else cellColor(cell.bg, theme)
     return if (cell.attrs and CellAttr.INVERSE != 0) Pair(bg, fg) else Pair(fg, bg)
 }
+
+private fun runFontWeight(attrs: Int): FontWeight? =
+    if (attrs and CellAttr.BOLD != 0) FontWeight.Bold else null
 
 private fun StringBuilder.appendCodePoint(cp: Int) {
     if (cp <= 0xFFFF) append(cp.toChar())
@@ -132,6 +138,32 @@ fun TerminalView(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onFocusKeyboard() },
+                    onDoubleTap = { pos ->
+                        // 双击选词并复制
+                        val startAbsNow = currentStartAbs(buffer, scrollOffset)
+                        val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
+                        val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
+                        val absRow = startAbsNow + row
+                        if (absRow < buffer.totalLines()) {
+                            val line = buffer.absLine(absRow)
+                            fun isWordCell(idx: Int): Boolean {
+                                val c = line.cells[idx]
+                                if (c.isWideTail) return false
+                                val cp = c.codePoint
+                                return cp < 128 && (cp.toChar().isLetterOrDigit() || cp.toChar() in "._-~/:@%")
+                            }
+                            if (isWordCell(col)) {
+                                var s = col
+                                while (s > 0 && isWordCell(s - 1)) s--
+                                var e = col
+                                while (e < buffer.cols - 1 && isWordCell(e + 1)) e++
+                                controller.selection.start(absRow, s)
+                                controller.selection.extend(absRow, e)
+                                val text = controller.selection.selectedText()
+                                if (text.isNotEmpty()) onCopy(text)
+                            }
+                        }
+                    },
                     onLongPress = { pos ->
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
                         val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
@@ -234,7 +266,7 @@ fun TerminalView(
                 if (cell.codePoint == ' '.code && cell.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) { i++; continue }
 
                 val (fgColor, _) = cellColors(cell, theme)
-                val runStyle = style.copy(color = fgColor)
+                val runStyle = style.copy(color = fgColor, fontWeight = runFontWeight(cell.attrs))
                 var j = i
                 val sb = StringBuilder()
                 while (j < buffer.cols) {
@@ -254,7 +286,7 @@ fun TerminalView(
                     drawTextInBounds(
                         codePointToString(wide.codePoint),
                         Offset(j * cellW, y + textTop),
-                        style.copy(color = cellColors(wide, theme).first),
+                        style.copy(color = cellColors(wide, theme).first, fontWeight = runFontWeight(wide.attrs)),
                     )
                     j += 2
                 }
@@ -327,7 +359,7 @@ fun TerminalView(
                         drawTextInBounds(
                             codePointToString(cell.codePoint),
                             Offset(buffer.cursorCol * cellW, cursorScreenRow * cellH + textTop),
-                            style.copy(color = bg),
+                            style.copy(color = bg, fontWeight = runFontWeight(cell.attrs)),
                         )
                     }
                 }

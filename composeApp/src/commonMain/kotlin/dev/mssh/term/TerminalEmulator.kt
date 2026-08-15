@@ -10,6 +10,8 @@ package dev.mssh.term
 class TerminalEmulator(
     private val buffer: TerminalBuffer,
     var onTitleChange: (String) -> Unit = {},
+    /** OSC 52：远端程序请求写系统剪贴板。 */
+    var onClipboardWrite: (String) -> Unit = {},
     /** 终端需要向远端回写数据（如 DSR 应答）时调用。 */
     var onResponse: (ByteArray) -> Unit = {},
 ) {
@@ -352,7 +354,7 @@ class TerminalEmulator(
                     if (set) { buffer.saveCursor(); buffer.enterAltScreen() }
                     else { buffer.leaveAltScreen(); buffer.restoreCursor() }
                 }
-                private && p == 2004 -> {} // bracketed paste，跟踪但不实现
+                private && p == 2004 -> buffer.bracketedPaste = set
             }
         }
     }
@@ -421,7 +423,22 @@ class TerminalEmulator(
         val pt = if (semi >= 0) content.substring(semi + 1) else ""
         when (ps) {
             0, 1, 2 -> onTitleChange(pt)
+            52 -> handleOsc52(pt)
             else -> {} // 忽略其它 OSC（如 4 调色板、8 超链接）
+        }
+    }
+
+    /** OSC 52 ; Pc ; Pd —— Pd 为 base64 编码的剪贴板内容；Pd 为 "?" 时是查询（回空）。 */
+    private fun handleOsc52(pt: String) {
+        val semi = pt.indexOf(';')
+        val pd = if (semi >= 0) pt.substring(semi + 1) else return
+        if (pd == "?") {
+            onResponse("\u001b]52;c;\u0007".encodeToByteArray())
+            return
+        }
+        val bytes = dev.mssh.util.base64Decode(pd)
+        if (bytes.isNotEmpty()) {
+            onClipboardWrite(bytes.decodeToString())
         }
     }
 

@@ -47,6 +47,8 @@ data class AppSettings(
     /** 目标终端列数：>0 时忽略 terminalFontSize，按屏幕宽度自动反算字号（对齐桌面终端 120×30 这类体验）。 */
     val terminalTargetCols: Int = 0,
     val keyboardToolbarVisible: Boolean = true,
+    /** 意外断线时自动重连（指数退避，最多 3 次）。 */
+    val autoReconnect: Boolean = true,
     val keepaliveSeconds: Int = 30,
     val cursorBlink: Boolean = true,
     val hapticFeedback: Boolean = true,

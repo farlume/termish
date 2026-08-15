@@ -39,6 +39,8 @@ class TerminalController(
     private val password: String?,
     private val privateKeyPem: String?,
     private val repository: HostRepository,
+    /** 意外断线时自动重连（指数退避，最多 3 次）。 */
+    private val autoReconnect: Boolean = true,
 ) {
     val buffer = TerminalBuffer(80, 24, maxScrollbackLines = 10_000)
     val emulator = TerminalEmulator(buffer)
@@ -61,16 +63,31 @@ class TerminalController(
     var frame by mutableStateOf(0L)
         private set
 
+    /** OSC 52：远端程序写剪贴板时回调（由 UI 层接入系统剪贴板）。 */
+    var onRemoteClipboard: ((String) -> Unit)? = null
+
     private var session: SshSession? = null
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
+    private var lastCols = 80
+    private var lastRows = 24
+    private var reconnectAttempts = 0
+    private var keepAliveActive = false
 
     init {
         emulator.onTitleChange = { t -> title = t }
         emulator.onResponse = { bytes -> session?.sendData(bytes) }
+        emulator.onClipboardWrite = { text -> onRemoteClipboard?.invoke(text) }
     }
 
     fun connect(columns: Int, rows: Int) {
         if (status != ConnStatus.IDLE) return
+        lastCols = columns
+        lastRows = rows
+        reconnectAttempts = 0
+        doConnect()
+    }
+
+    private fun doConnect() {
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
@@ -85,10 +102,12 @@ class TerminalController(
                     callbacks(),
                 )
                 session = s
-                val info = s.connectAndStart(columns, rows)
+                val info = s.connectAndStart(lastCols, lastRows)
                 // TOFU：记录主机指纹
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
                 status = ConnStatus.CONNECTED
+                reconnectAttempts = 0
+                startKeepAlive()
                 frame++
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
@@ -96,6 +115,20 @@ class TerminalController(
                     errorMessage = e.message ?: "连接失败"
                 }
             }
+        }
+    }
+
+    private fun startKeepAlive() {
+        if (!keepAliveActive) {
+            keepAliveActive = true
+            dev.mssh.util.SessionKeepAlive.onSessionStart()
+        }
+    }
+
+    private fun stopKeepAlive() {
+        if (keepAliveActive) {
+            keepAliveActive = false
+            dev.mssh.util.SessionKeepAlive.onSessionEnd()
         }
     }
 
@@ -115,7 +148,22 @@ class TerminalController(
         }
 
         override fun onClosed(reason: String?) {
+            if (status == ConnStatus.CLOSED) return // 用户主动断开
+            // 意外断线：指数退避自动重连，终端缓冲保留
+            val wasConnected = status == ConnStatus.CONNECTED || status == ConnStatus.AUTH
+            if (autoReconnect && wasConnected && reconnectAttempts < 3) {
+                reconnectAttempts++
+                session = null
+                status = ConnStatus.CONNECTING
+                errorMessage = "连接中断，正在重连（第 $reconnectAttempts 次）…"
+                scope.launch {
+                    kotlinx.coroutines.delay(2000L * reconnectAttempts)
+                    if (status != ConnStatus.CLOSED) doConnect()
+                }
+                return
+            }
             status = ConnStatus.CLOSED
+            stopKeepAlive()
             if (reason != null) errorMessage = reason
         }
 
@@ -167,6 +215,8 @@ class TerminalController(
 
     fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
         if (columns <= 0 || rows <= 0) return
+        lastCols = columns
+        lastRows = rows
         if (columns != buffer.cols || rows != buffer.rows) {
             buffer.resize(columns, rows)
             frame++
@@ -182,6 +232,7 @@ class TerminalController(
 
     fun close() {
         status = ConnStatus.CLOSED
+        stopKeepAlive()
         session?.close()
         session = null
     }
