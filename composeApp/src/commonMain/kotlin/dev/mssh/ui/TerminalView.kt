@@ -190,7 +190,20 @@ fun TerminalView(
                     val downId = down.id
                     val downCell = pointerCell(down.position)
                     var (col, row) = downCell
-                    sendMouseEvent(0, col, row, release = false)
+                    // 延迟到手势意图明确后再发 Down：
+                    //   - 轻点 → 按下+抬起同格（点击）
+                    //   - 单指纵向拖拽 → 只发滚轮（不按下/抬起）：herdr 对"按下后在其他格抬起"
+                    //     会判成拖拽选区并复制 → OSC 52 → app 反复弹「远端已写入剪贴板」
+                    //   - 横向/多指拖拽 → 补发 Down + drag-motion + Up
+                    var downSent = false
+                    var sentMotion = false
+                    var sentWheel = false
+                    fun sendDownIfNeeded() {
+                        if (!downSent) {
+                            downSent = true
+                            sendMouseEvent(0, downCell.first, downCell.second, release = false)
+                        }
+                    }
                     var scrollAccumY = 0f
                     var prevY = down.position.y
                     var movedCell = false
@@ -204,9 +217,16 @@ fun TerminalView(
                         // 合并为单帧（down+up 同帧时 previousPressed=false，changedToUp 永不成立），
                         // 否则释放事件丢失、手势循环卡死，后续点击全被吞。
                         if (!change.pressed) {
-                            val upPos = if (movedCell) change.position else down.position
-                            val (uc, ur) = pointerCell(upPos)
-                            sendMouseEvent(0, uc, ur, release = true)
+                            if (downSent) {
+                                val upPos = if (movedCell && sentMotion) change.position else down.position
+                                val (uc, ur) = pointerCell(upPos)
+                                sendMouseEvent(0, uc, ur, release = true)
+                            } else if (!sentWheel) {
+                                // 纯轻点（无位移、无滚轮）：补发同格按下+抬起，保证点击语义
+                                val (uc, ur) = pointerCell(down.position)
+                                sendMouseEvent(0, uc, ur, release = false)
+                                sendMouseEvent(0, uc, ur, release = true)
+                            }
                             break
                         }
                         change.consume()
@@ -218,10 +238,12 @@ fun TerminalView(
                             row = nr
                             movedCell = true
                             // 横向单指（分割线/标签）或多指拖拽 → 鼠标拖拽；纵向单指已换算滚轮
-                            val sendMotion = buffer.mouseTracking >= 1002 &&
+                            val wantMotion = buffer.mouseTracking >= 1002 &&
                                 (multiTouch || (movedH && !movedV))
-                            if (sendMotion) {
+                            if (wantMotion) {
+                                sendDownIfNeeded()
                                 sendMouseEvent(32, col, row, release = false)
+                                sentMotion = true
                             }
                         }
                         // 单指纵向位移 → 滚轮（每 cellH 一档），落点跟随手指当前位置
@@ -239,6 +261,7 @@ fun TerminalView(
                                     sendMouseEvent(btn, wc, wr, release = false)
                                 }
                                 scrollAccumY -= notches * cellH
+                                sentWheel = true
                             }
                         }
                     }
