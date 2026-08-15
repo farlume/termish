@@ -11,6 +11,13 @@ enum class HostAuthMethod {
     KEY_OR_PASSWORD,
 }
 
+/** 连接方式：SSH 终端（默认）或 Mosh（需要远端安装 mosh-server）。 */
+@Serializable
+enum class ConnectionMode {
+    SSH,
+    MOSH,
+}
+
 @Serializable
 data class QuickCommand(
     val id: String,
@@ -33,6 +40,8 @@ data class Host(
     val createdAt: Long = 0L,
     val lastConnectedAt: Long = 0L,
     val knownHostFingerprint: String? = null,
+    /** SSH 终端 或 Mosh。 */
+    val connectionMode: ConnectionMode = ConnectionMode.SSH,
     /** 连接成功后自动执行的命令（如 `tmux new -A -s main` 实现会话现场恢复）。 */
     val startupCommand: String = "",
 )

@@ -24,6 +24,33 @@ class SessionManager(private val repository: HostRepository) {
 
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
     private val autoCloseJobs = HashMap<String, Job>()
+    /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
+    private val activeAtBackground = HashSet<String>()
+
+    /** 退到后台：记录当前活跃会话，供回前台恢复。 */
+    fun noteBackgrounded() {
+        activeAtBackground.clear()
+        sessions.forEach { controller ->
+            val st = controller.status
+            if (st == ConnStatus.CONNECTED || st == ConnStatus.AUTH || st == ConnStatus.CONNECTING) {
+                activeAtBackground.add(controller.host.id)
+            }
+        }
+    }
+
+    /** 回前台：把退后台期间掉线的活跃会话自动重连（保留缓冲）。 */
+    fun reconnectDroppedSessions() {
+        if (activeAtBackground.isEmpty()) return
+        val ids = activeAtBackground.toList()
+        activeAtBackground.clear()
+        sessions
+            .filter {
+                it.host.id in ids &&
+                    it.autoReconnectEnabled &&
+                    (it.status == ConnStatus.CLOSED || it.status == ConnStatus.ERROR)
+            }
+            .forEach { it.reconnect() }
+    }
 
     /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。 */
     fun restoreRecent(hosts: List<Host>, autoReconnect: Boolean) {
@@ -98,4 +125,4 @@ class SessionManager(private val repository: HostRepository) {
 
 /** 凭据/连接参数/启动命令签名：任一变化即视为旧会话过期（编辑主机后需重建会话）。 */
 internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String =
-    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem|${host.startupCommand}"
+    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem|${host.startupCommand}|${host.connectionMode}"

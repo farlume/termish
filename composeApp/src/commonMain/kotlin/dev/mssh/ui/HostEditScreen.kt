@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import dev.mssh.data.ConnectionMode
 import dev.mssh.data.Host
 import dev.mssh.data.HostAuthMethod
 import dev.mssh.data.QuickCommand
@@ -42,6 +43,7 @@ fun HostEditScreen(
     var port by remember { mutableStateOf((existing?.port ?: 22).toString()) }
     var username by remember { mutableStateOf(existing?.username ?: "root") }
     var authMethod by remember { mutableStateOf(existing?.authMethod ?: HostAuthMethod.PASSWORD) }
+    var connectionMode by remember { mutableStateOf(existing?.connectionMode ?: ConnectionMode.SSH) }
     var password by remember { mutableStateOf("") }
     var privateKey by remember { mutableStateOf("") }
     var tags by remember { mutableStateOf(existing?.tags?.joinToString(",") ?: "") }
@@ -65,6 +67,7 @@ fun HostEditScreen(
                             port = port.toIntOrNull() ?: 22,
                             username = username.ifBlank { "root" },
                             authMethod = authMethod,
+                            connectionMode = connectionMode,
                             tags = tags.split(",").map { it.trim() }.filter { it.isNotEmpty() },
                             quickCommands = parseQuickCommands(quickCommands),
                             createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
@@ -101,6 +104,16 @@ fun HostEditScreen(
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(authMethod == HostAuthMethod.KEY_OR_PASSWORD, { authMethod = HostAuthMethod.KEY_OR_PASSWORD })
                 Text(s.editAuthKeyOrPassword)
+            }
+
+            Text("连接方式", style = MaterialTheme.typography.labelLarge)
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                RadioButton(connectionMode == ConnectionMode.SSH, { connectionMode = ConnectionMode.SSH })
+                Text("SSH")
+            }
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                RadioButton(connectionMode == ConnectionMode.MOSH, { connectionMode = ConnectionMode.MOSH })
+                Text("Mosh（远端需安装 mosh-server）")
             }
 
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {

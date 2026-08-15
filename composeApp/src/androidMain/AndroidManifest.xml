@@ -12,6 +12,7 @@
     <application
         android:name="dev.mssh.MsshApplication"
         android:allowBackup="false"
+        android:extractNativeLibs="true"
         android:icon="@mipmap/ic_launcher"
         android:label="MSSH"
         android:supportsRtl="true"

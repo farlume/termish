@@ -238,6 +238,11 @@ class SshSessionLibssh2(
         }
     }
 
+    override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {
+        // iOS Mosh 集成待完成；exec 通道实现留给 mosh 集成时补充。
+        throw UnsupportedOperationException("iOS exec 通道尚未实现")
+    }
+
     override fun close() {
         if (closed) return
         closed = true

@@ -47,8 +47,31 @@ class SshSessionSshj(
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private var hostKeyInfo: HostKeyInfo? = null
+    private var serverVersion: String = ""
 
     override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
+        connectTransport()
+        val s = client.startSession()
+        session = s
+        s.allocatePTY("xterm-256color", columns, rows, 0, 0, emptyMap())
+        val sh = s.startShell()
+        shell = sh
+
+        // 空闲保活：30s 发送 keepalive
+        try {
+            client.connection.keepAlive.setKeepAliveInterval(30)
+        } catch (_: Exception) {
+        }
+
+        startReaders(sh)
+        return SessionInfo(
+            serverVersion = serverVersion,
+            hostKey = hostKeyInfo,
+            kexAlgorithm = hostKeyInfo?.algorithm ?: "",
+        )
+    }
+
+    private fun connectTransport() {
         client.addHostKeyVerifier(object : HostKeyVerifier {
             override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
                 val algorithm = keyTypeName(key)
@@ -68,28 +91,22 @@ class SshSessionSshj(
         client.setTimeout(0) // 交互会话不设读超时
 
         client.connect(connection.host, connection.port)
-        val serverVersion = client.transport.serverVersion
-
+        serverVersion = client.transport.serverVersion
         authenticate()
+    }
 
-        val s = client.startSession()
-        session = s
-        s.allocatePTY("xterm-256color", columns, rows, 0, 0, emptyMap())
-        val sh = s.startShell()
-        shell = sh
-
-        // 空闲保活：30s 发送 keepalive
-        try {
-            client.connection.keepAlive.setKeepAliveInterval(30)
-        } catch (_: Exception) {
+    override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {
+        connectTransport()
+        return try {
+            val s = client.startSession()
+            val cmd = s.exec(command)
+            val out = java.io.ByteArrayOutputStream()
+            cmd.inputStream.copyTo(out)
+            cmd.join(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            CommandResult(out.toString(Charsets.UTF_8), hostKeyInfo)
+        } finally {
+            close()
         }
-
-        startReaders(sh)
-        return SessionInfo(
-            serverVersion = serverVersion,
-            hostKey = hostKeyInfo,
-            kexAlgorithm = hostKeyInfo?.algorithm ?: "",
-        )
     }
 
     // ---------- 认证 ----------

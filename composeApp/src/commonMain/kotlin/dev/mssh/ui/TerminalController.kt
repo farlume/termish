@@ -7,10 +7,15 @@ import dev.mssh.data.Host
 import dev.mssh.data.HostRepository
 import dev.mssh.ssh.AuthPrompt
 import dev.mssh.ssh.HostKeyInfo
+import dev.mssh.ssh.MOSH_SERVER_BOOTSTRAP
+import dev.mssh.ssh.MoshSession
+import dev.mssh.ssh.SshException
 import dev.mssh.ssh.SshCallbacks
 import dev.mssh.ssh.SshConnection
 import dev.mssh.ssh.SshSession
+import dev.mssh.ssh.createMoshClient
 import dev.mssh.ssh.createSshSession
+import dev.mssh.ssh.parseMoshConnect
 import dev.mssh.term.TerminalBuffer
 import dev.mssh.term.TerminalEmulator
 import dev.mssh.term.TerminalSelection
@@ -78,6 +83,7 @@ class TerminalController(
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
     private var session: SshSession? = null
+    private var moshSession: MoshSession? = null
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
     private var lastCols = 80
     private var lastRows = 24
@@ -101,10 +107,23 @@ class TerminalController(
         doConnect()
     }
 
+    /** 按最近一次窗口尺寸重连（保留屏幕缓冲）；用于退到后台后回前台恢复会话。 */
+    fun reconnect() {
+        if (status != ConnStatus.IDLE && status != ConnStatus.CLOSED && status != ConnStatus.ERROR) return
+        connect(lastCols, lastRows)
+    }
+
+    /** 是否允许自动重连（由打开会话时的设置决定）。 */
+    val autoReconnectEnabled: Boolean get() = autoReconnect
+
     private fun doConnect() {
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
+                if (host.connectionMode == dev.mssh.data.ConnectionMode.MOSH) {
+                    doConnectMosh()
+                    return@launch
+                }
                 val s = createSshSession(
                     SshConnection(
                         host = host.hostname,
@@ -134,6 +153,61 @@ class TerminalController(
                     status = ConnStatus.ERROR
                     errorMessage = e.message
                 }
+            }
+        }
+    }
+
+    /** Mosh 模式：先 SSH 引导 mosh-server，再拉起 mosh-client。 */
+    private suspend fun doConnectMosh() {
+        try {
+            val callbacks = callbacks()
+            val ssh = createSshSession(
+                SshConnection(
+                    host = host.hostname,
+                    port = host.port,
+                    username = host.username,
+                    password = password,
+                    privateKeyPem = privateKeyPem,
+                ),
+                callbacks,
+            )
+            val result = ssh.connectAndRun(MOSH_SERVER_BOOTSTRAP)
+            result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
+            val (moshPort, moshKey) = parseMoshConnect(result.output)
+                ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
+
+            val client = createMoshClient(
+                ip = host.hostname,
+                port = moshPort,
+                key = moshKey,
+                columns = lastCols,
+                rows = lastRows,
+                onOutput = { data ->
+                    emulator.write(data)
+                    frame++
+                },
+                onExit = {
+                    if (status == ConnStatus.CONNECTED) {
+                        status = ConnStatus.CLOSED
+                        stopKeepAlive()
+                    }
+                },
+            )
+            moshSession = client
+            status = ConnStatus.CONNECTED
+            reconnectAttempts = 0
+            reconnectCount = 0
+            errorMessage = null
+            startKeepAlive()
+            // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
+            if (host.startupCommand.isNotBlank()) {
+                client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+            }
+            frame++
+        } catch (e: Exception) {
+            if (status != ConnStatus.CLOSED) {
+                status = ConnStatus.ERROR
+                errorMessage = e.message
             }
         }
     }
@@ -233,13 +307,13 @@ class TerminalController(
     }
 
     fun sendText(text: String) {
-        session?.sendData(text.encodeToByteArray())
+        moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
     }
 
     fun quickCommands(): List<dev.mssh.data.QuickCommand> = host.quickCommands
 
     fun sendBytes(bytes: ByteArray) {
-        session?.sendData(bytes)
+        moshSession?.sendData(bytes) ?: session?.sendData(bytes)
     }
 
     fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
@@ -250,7 +324,7 @@ class TerminalController(
             buffer.resize(columns, rows)
             frame++
         }
-        session?.resize(columns, rows, widthPx, heightPx)
+        moshSession?.resize(columns, rows) ?: session?.resize(columns, rows, widthPx, heightPx)
     }
 
     /** 光标闪烁：切换可见性并触发重绘。 */
@@ -262,6 +336,8 @@ class TerminalController(
     fun close() {
         status = ConnStatus.CLOSED
         stopKeepAlive()
+        moshSession?.close()
+        moshSession = null
         session?.close()
         session = null
     }

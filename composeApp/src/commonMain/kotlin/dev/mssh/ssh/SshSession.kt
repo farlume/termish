@@ -28,6 +28,12 @@ data class SessionInfo(
     val kexAlgorithm: String,
 )
 
+/** 单条命令执行结果（Mosh 引导等）。 */
+data class CommandResult(
+    val output: String,
+    val hostKey: HostKeyInfo?,
+)
+
 /** 一次连接所需的全部参数（不含回调）。 */
 data class SshConnection(
     val host: String,
@@ -69,6 +75,9 @@ interface SshSession {
 
     /** 向远端 shell 写入字节（键盘输入）。 */
     fun sendData(data: ByteArray)
+
+    /** 执行单条命令并等待退出（Mosh 引导等一次性调用；非交互 exec 通道）。 */
+    fun connectAndRun(command: String, timeoutMs: Long = 15_000): CommandResult
 
     /** 主动关闭会话。 */
     fun close()

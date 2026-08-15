@@ -174,6 +174,11 @@ android {
         versionName = "0.2.0"
     }
     packaging {
+        jniLibs {
+            // 强制解压原生库：否则 .so 留在 APK 内，app 无法执行 mosh-client
+            // （SELinux 禁止 untrusted_app 执行 app_data_file）
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/versions/**"
