@@ -8,6 +8,11 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
+// 终端内置等宽字体（composeResources/font）：固定 Res 生成类的包名
+compose.resources {
+    packageOfResClass = "dev.mssh.generated.resources"
+}
+
 kotlin {
     androidTarget {
         compilerOptions {

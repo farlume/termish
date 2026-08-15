@@ -169,6 +169,7 @@ fun TerminalScreen(
                 controller = controller,
                 theme = theme,
                 fontSizeSp = settings.terminalFontSize.toFloat(),
+                targetCols = settings.terminalTargetCols,
                 onFocusKeyboard = { inputFocusRequester.requestFocus() },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))

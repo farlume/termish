@@ -43,7 +43,9 @@ data class AppSettings(
     val theme: ThemeMode = ThemeMode.DARK,
     val terminalThemeIndex: Int = 0,
     val fontSize: Int = 14,
-    val terminalFontSize: Int = 12,
+    val terminalFontSize: Int = 8,
+    /** 目标终端列数：>0 时忽略 terminalFontSize，按屏幕宽度自动反算字号（对齐桌面终端 120×30 这类体验）。 */
+    val terminalTargetCols: Int = 0,
     val keyboardToolbarVisible: Boolean = true,
     val keepaliveSeconds: Int = 30,
     val cursorBlink: Boolean = true,

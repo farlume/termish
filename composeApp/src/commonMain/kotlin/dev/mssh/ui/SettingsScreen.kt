@@ -39,6 +39,7 @@ fun SettingsScreen(
     var theme by remember { mutableStateOf(settings.theme) }
     var terminalThemeIndex by remember { mutableStateOf(settings.terminalThemeIndex) }
     var fontSize by remember { mutableStateOf(settings.terminalFontSize.toFloat()) }
+    var targetCols by remember { mutableStateOf(settings.terminalTargetCols.toFloat()) }
     var keyboardToolbar by remember { mutableStateOf(settings.keyboardToolbarVisible) }
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
@@ -55,6 +56,7 @@ fun SettingsScreen(
                                 theme = theme,
                                 terminalThemeIndex = terminalThemeIndex,
                                 terminalFontSize = fontSize.toInt(),
+                                terminalTargetCols = targetCols.toInt(),
                                 keyboardToolbarVisible = keyboardToolbar,
                                 hapticFeedback = haptics,
                                 verifyHostKeyOnFirstUse = verifyHostKey,
@@ -90,11 +92,18 @@ fun SettingsScreen(
                 }
             }
 
-            Text("终端字号：${fontSize.toInt()}sp", style = MaterialTheme.typography.labelLarge)
+            Text("终端列数：${if (targetCols < 1f) "手动字号" else targetCols.toInt().toString()}（和电脑终端对齐就填 120）", style = MaterialTheme.typography.labelLarge)
+            Slider(
+                value = targetCols,
+                onValueChange = { targetCols = it },
+                valueRange = 0f..160f,
+            )
+
+            Text("终端字号：${fontSize.toInt()}sp${if (targetCols >= 1f) "（已设列数，此项不生效）" else ""}", style = MaterialTheme.typography.labelLarge)
             Slider(
                 value = fontSize,
                 onValueChange = { fontSize = it },
-                valueRange = 8f..32f,
+                valueRange = 6f..32f,
             )
 
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

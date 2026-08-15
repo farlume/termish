@@ -6,7 +6,6 @@ import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -68,6 +67,7 @@ fun TerminalView(
     controller: TerminalController,
     theme: TerminalTheme,
     fontSizeSp: Float,
+    targetCols: Int = 0,
     onFocusKeyboard: () -> Unit,
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -75,13 +75,24 @@ fun TerminalView(
     val textMeasurer = rememberTextMeasurer()
 
     var scrollOffset by remember { mutableStateOf(0) }
-    var fontSizeState by remember { mutableFloatStateOf(fontSizeSp) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
-    val fontSize = fontSizeState.sp
-    val style = TextStyle(fontFamily = monospaceFontFamily(), fontSize = fontSize)
-    val sample = remember(fontSizeState) { textMeasurer.measure("W", style) }
-    val cellW = sample.size.width.toFloat()
+    val fontFamily = monospaceFontFamily()
+    // 目标列数模式：字形宽度与字号成线性关系，用 12sp 参考测量反算所需字号
+    val effectiveFontSizeSp = remember(canvasSize.width, targetCols, fontSizeSp, fontFamily) {
+        if (targetCols > 0 && canvasSize.width > 0) {
+            val ref = textMeasurer.measure("0".repeat(16), TextStyle(fontFamily = fontFamily, fontSize = 12.sp))
+            val refCellW = ref.size.width.toFloat() / 16f
+            val desiredCellW = canvasSize.width.toFloat() / targetCols
+            (12f * desiredCellW / refCellW).coerceIn(4f, 32f)
+        } else fontSizeSp
+    }
+
+    val fontSize = effectiveFontSizeSp.sp
+    val style = TextStyle(fontFamily = fontFamily, fontSize = fontSize)
+    // 用较长采样串测单格宽度：避免小字号下单字符宽度像素取整带来的累积误差
+    val sample = remember(effectiveFontSizeSp, fontFamily) { textMeasurer.measure("0".repeat(16), style) }
+    val cellW = (sample.size.width.toFloat() / 16f).coerceAtLeast(1f)
     val cellH = (sample.size.height.toFloat() * 1.2f).coerceAtLeast(1f)
     val textTop = (cellH - sample.size.height) / 2f
 
@@ -89,7 +100,7 @@ fun TerminalView(
     val latestCanvasSize by rememberUpdatedState(canvasSize)
 
     // 尺寸或字号变化时重新计算行列并同步 PTY
-    LaunchedEffect(canvasSize, fontSizeState) {
+    LaunchedEffect(canvasSize, effectiveFontSizeSp) {
         val cols = (canvasSize.width / cellW).toInt().coerceAtLeast(1)
         val rows = (canvasSize.height / cellH).toInt().coerceAtLeast(1)
         controller.resize(cols, rows, canvasSize.width, canvasSize.height)
@@ -119,13 +130,10 @@ fun TerminalView(
             }
             .pointerInput(Unit) {
                 var accumulated = 0f
-                // 统一用 transform 手势：单指 pan 滚动回看，双指 zoom 缩放（避免多个 detector 互相抢事件）
+                // 单指拖动滚动回看（捏合缩放逐号已移除，避免行列反复 resize 导致渲染错乱）
                 detectTransformGestures(
                     panZoomLock = true,
-                    onGesture = { centroid, pan, zoom, _ ->
-                        if (zoom != 1f) {
-                            fontSizeState = (fontSizeState * zoom).coerceIn(6f, 40f)
-                        }
+                    onGesture = { centroid, pan, _, _ ->
                         if (centroid.x >= latestCanvasSize.width - 24f && buffer.scrollbackSize() > 0) {
                             // 滚动条拖动：手指位置映射到历史位置
                             val sb = buffer.scrollbackSize()
