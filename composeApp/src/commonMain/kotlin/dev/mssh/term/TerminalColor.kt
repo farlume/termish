@@ -6,6 +6,14 @@ const val DEFAULT_BG = -2
 /** 光标颜色未设置（用主题默认色）的哨兵值。 */
 const val DEFAULT_CURSOR = -3
 
+/** ARGB Long → 0xRRGGBB Int（终端协议应答用，如 OSC 10/11/12 的颜色查询）。 */
+fun argbToRgb(c: Long): Int {
+    val r = ((c shr 16) and 0xff).toInt()
+    val g = ((c shr 8) and 0xff).toInt()
+    val b = (c and 0xff).toInt()
+    return (r shl 16) or (g shl 8) or b
+}
+
 object TerminalPalette {
 
     /** 16 个基础 ANSI 颜色（VGA 标准）。 */

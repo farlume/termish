@@ -3,10 +3,66 @@ package dev.mssh.term
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /** TerminalBuffer 回归测试：覆盖 resize 收缩、宽字符尾巴颜色继承等已修 bug。 */
 class TerminalBufferTest {
+
+    @Test
+    fun lineVersionBumpsOnWriteNotOnCursorMove() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        val v0 = b.lineAt(0).version
+        // 光标移动 / 模式切换不改变内容，版本号不动
+        b.moveTo(2, 2)
+        b.setScrollRegion(0, 4)
+        assertEquals(v0, b.lineAt(0).version)
+        // 写入内容 → 版本递增
+        b.putChar('b'.code)
+        assertTrue(b.lineAt(0).version > v0)
+    }
+
+    @Test
+    fun lineVersionBumpsOnEraseAndResize() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('x'.code)
+        val v0 = b.lineAt(0).version
+        b.eraseLine()
+        assertTrue(b.lineAt(0).version > v0)
+        b.putChar('y'.code)
+        val v1 = b.lineAt(0).version
+        b.resize(6, 5)
+        assertTrue(b.lineAt(0).version > v1)
+    }
+
+    @Test
+    fun fullScreenScrollKeepsLineIdentityAndVersion() {
+        val b = TerminalBuffer(10, 5)
+        repeat(5) { r -> b.lineAt(r).let { it.cells[0].codePoint = 'a'.code + r; it.touch() } }
+        val first = b.lineAt(0)
+        val firstVersion = first.version
+        b.scrollUp(1)
+        // 旧首行进入回看，仍是同一实例、版本未变（内容未改写）
+        assertTrue(b.scrollbackSize() == 1)
+        assertTrue(b.absLine(0) === first)
+        assertEquals(firstVersion, b.absLine(0).version)
+        // 可见区首行是原第 2 行，实例未变
+        assertTrue(b.lineAt(0) !== first)
+    }
+
+    @Test
+    fun regionScrollBumpsDestinationLines() {
+        val b = TerminalBuffer(10, 5)
+        repeat(5) { r -> b.lineAt(r).touch() }
+        val versions = (0..4).map { b.lineAt(it).version }
+        b.setScrollRegion(1, 3)
+        b.scrollUp(1)
+        // 区域内的行内容被改写 → 版本递增；区域外不变
+        assertTrue(b.lineAt(1).version > versions[1])
+        assertTrue(b.lineAt(2).version > versions[2])
+        assertEquals(versions[4], b.lineAt(4).version)
+    }
 
     private fun TerminalBuffer.lineText(row: Int): String {
         val sb = StringBuilder()

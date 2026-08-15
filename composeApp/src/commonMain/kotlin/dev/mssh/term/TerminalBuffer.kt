@@ -41,9 +41,18 @@ class TerminalLine(val cols: Int) {
     /** 该行是否因自动换行而开始（用于选择 / 回看等）。 */
     var wrapped: Boolean = false
 
+    /** 行内容版本号：单元格实际被改写时递增，供渲染层做行级缓存失效。 */
+    var version: Long = 0
+        private set
+
+    fun touch() {
+        version++
+    }
+
     fun clear() {
         wrapped = false
         for (c in cells) c.clear()
+        touch()
     }
 
     /** 整行是否为默认空白（无字符/颜色/属性），resize 收缩时用于安全丢弃。 */
@@ -231,6 +240,7 @@ class TerminalBuffer(
             // 尾巴盖掉了原宽字符的头：清掉它原来尾巴的标记，避免越雷悬空
             if (col + 2 < cols && line.cells[col + 2].isWideTail) line.cells[col + 2].isWideTail = false
             cursorCol = col + 2
+            line.touch()
             markChanged()
             return
         }
@@ -264,6 +274,7 @@ class TerminalBuffer(
         } else {
             cursorCol++
         }
+        line.touch()
         markChanged()
     }
 
@@ -399,6 +410,7 @@ class TerminalBuffer(
             line.cells[i].copyFrom(line.cells[i - count])
         }
         for (i in cursorCol until cursorCol + count) line.cells[i].clear()
+        line.touch()
         markChanged()
     }
 
@@ -409,6 +421,7 @@ class TerminalBuffer(
             line.cells[i].copyFrom(line.cells[i + count])
         }
         for (i in cols - count until cols) line.cells[i].clear()
+        line.touch()
         markChanged()
     }
 
@@ -419,6 +432,7 @@ class TerminalBuffer(
             lineAt(r).cells.forEachIndexed { i, _ ->
                 lineAt(r).cells[i].copyFrom(lineAt(r - count).cells[i])
             }
+            lineAt(r).touch()
         }
         for (r in cursorRow until cursorRow + count) lineAt(r).clear()
         markChanged()
@@ -431,6 +445,7 @@ class TerminalBuffer(
             lineAt(r).cells.forEachIndexed { i, _ ->
                 lineAt(r).cells[i].copyFrom(lineAt(r + count).cells[i])
             }
+            lineAt(r).touch()
         }
         for (r in scrollBottom - count + 1..scrollBottom) lineAt(r).clear()
         markChanged()
@@ -488,6 +503,7 @@ class TerminalBuffer(
         val dst = lineAt(to)
         for (i in 0 until cols) dst.cells[i].copyFrom(src.cells[i])
         dst.wrapped = src.wrapped
+        dst.touch()
     }
 
     // ---------- 模式切换 ----------
@@ -595,6 +611,7 @@ class TerminalBuffer(
         }
         // 修正：若截断导致宽字符尾巴悬空，清掉
         line.cells = newCells
+        line.touch()
     }
 
     private fun copyInto(dst: TerminalLine, src: TerminalLine, n: Int) {

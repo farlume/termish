@@ -59,11 +59,23 @@ private fun cellColor(c: Int, theme: TerminalTheme): Color {
     return if (idx >= 0) theme.ansi(idx) else Color(0xFF000000.toInt() or c)
 }
 
+/** 按背景亮度取黑/白前景，保证「远端只设底色、留默认前景」时叠加场景可读。 */
+private fun contrastTextColor(bg: Color): Color {
+    val l = bg.red * 0.299f + bg.green * 0.587f + bg.blue * 0.114f
+    return if (l >= 0.5f) Color.Black else Color.White
+}
+
 private fun cellColors(cell: TerminalCell, theme: TerminalTheme): Pair<Color, Color> {
     // xterm 惯例：BOLD + 基本 8 色 → 提亮到 8-15
     val fgIdx = if (cell.attrs and CellAttr.BOLD != 0 && cell.fg in 0..7) cell.fg + 8 else cell.fg
-    val fg = if (cell.fg == DEFAULT_FG) theme.foreground() else cellColor(fgIdx, theme)
     val bg = if (cell.bg == DEFAULT_BG) theme.background() else cellColor(cell.bg, theme)
+    val fg = when {
+        cell.fg != DEFAULT_FG -> cellColor(fgIdx, theme)
+        // 远端只设了底色（代码块/高亮区），默认前景按底色亮度自动取黑/白，
+        // 避免浅色主题下深底+深字渲染成黑色块
+        cell.bg != DEFAULT_BG -> contrastTextColor(bg)
+        else -> theme.foreground()
+    }
     return if (cell.attrs and CellAttr.INVERSE != 0) Pair(bg, fg) else Pair(fg, bg)
 }
 
@@ -118,6 +130,7 @@ fun TerminalView(
     }
 
     val fontFamily = monospaceFontFamily()
+    val cjkFont = cjkFontFamily()
     // 目标列数模式：字形宽度与字号成线性关系，用 12sp 参考测量反算所需字号
     val effectiveFontSizeSp = remember(canvasSize.width, targetCols, fontSizeSp, fontFamily) {
         if (targetCols > 0 && canvasSize.width > 0) {
@@ -148,7 +161,7 @@ fun TerminalView(
     // JetBrains Mono 不含 CJK 字形：宽字符（中文/日韩/全角/emoji）改用 cjkFontFamily()
     // （iOS 显式加载 PingFang SC，其他平台走系统回退），避免缺字显示成豆腐块/乱码。
     // 格宽仍按 JetBrains Mono 度量，宽字符天然占 2 格。
-    val wideStyle = style.copy(fontFamily = cjkFontFamily())
+    val wideStyle = style.copy(fontFamily = cjkFont)
     // 用较长采样串测单格宽度：避免小字号下单字符宽度像素取整带来的累积误差
     val sample = remember(effectiveFontSizeSp, fontFamily) { textMeasurer.measure("0".repeat(16), style) }
     val cellW = (sample.size.width.toFloat() / 16f).coerceAtLeast(1f)
@@ -634,7 +647,12 @@ fun TerminalView(
         // 光标
         val cursorAbs = buffer.absCursorRow()
         val cursorScreenRow = cursorAbs - startAbs
-        if (buffer.cursorVisible && cursorScreenRow in 0 until buffer.rows) {
+        // 协议显隐（DECSET 25）与渲染闪烁相位叠加：
+        // 稳态样式（2/4/6）常亮，闪烁样式按相位交替
+        val steadyCursor = buffer.cursorStyle == 2 || buffer.cursorStyle == 4 || buffer.cursorStyle == 6
+        if (buffer.cursorVisible && cursorScreenRow in 0 until buffer.rows &&
+            (steadyCursor || controller.cursorBlinkPhase)
+        ) {
             val cursorColor = if (buffer.cursorColor != DEFAULT_CURSOR) {
                 Color(0xFF000000.toInt() or buffer.cursorColor)
             } else theme.cursor()

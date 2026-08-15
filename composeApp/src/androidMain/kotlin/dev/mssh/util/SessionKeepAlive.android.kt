@@ -1,5 +1,6 @@
 package dev.mssh.util
 
+import android.util.Log
 import dev.mssh.AppContext
 import dev.mssh.SessionService
 
@@ -7,15 +8,17 @@ actual object SessionKeepAlive {
     actual fun onSessionStart() {
         try {
             SessionService.start(AppContext.get())
-        } catch (_: Exception) {
-            // 前台服务启动失败（如后台限制）不阻断连接
+        } catch (e: Exception) {
+            // 前台服务启动失败（如后台限制）不阻断连接，但必须留痕以便排查
+            Log.e("MSSH-SessionKeepAlive", "onSessionStart failed", e)
         }
     }
 
     actual fun onSessionEnd() {
         try {
             SessionService.stop(AppContext.get())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e("MSSH-SessionKeepAlive", "onSessionEnd failed", e)
         }
     }
 }

@@ -71,6 +71,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import dev.mssh.ssh.AuthPrompt
+import dev.mssh.term.argbToRgb
 import dev.mssh.ui.theme.TerminalTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -110,6 +111,16 @@ fun TerminalScreen(
             delay(150)
             keyboardController?.show()
         }
+    }
+
+    // OSC 10/11/12 应答用的默认色跟随当前终端主题：
+    // herdr 等 TUI 会查询默认前景/背景色来决定自身配色，
+    // 若硬编码暗色值，浅色主题下会把整个界面渲染成黑色。
+    LaunchedEffect(theme) {
+        val b = controller.buffer
+        b.defaultFgRgb = argbToRgb(theme.foreground)
+        b.defaultBgRgb = argbToRgb(theme.background)
+        b.defaultCursorRgb = argbToRgb(theme.cursor)
     }
 
     // 返回：连接中的会话先弹保留策略（常驻/保留 10 分钟/断开）；其余直接回退

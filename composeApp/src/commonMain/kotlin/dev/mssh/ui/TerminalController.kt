@@ -76,6 +76,10 @@ class TerminalController(
     var frame by mutableStateOf(0L)
         private set
 
+    /** 光标闪烁相位：纯渲染层动画状态，与协议显隐（buffer.cursorVisible）分离。 */
+    var cursorBlinkPhase by mutableStateOf(true)
+        private set
+
     /** OSC 52：远端程序写剪贴板时回调（由 UI 层接入系统剪贴板）。 */
     var onRemoteClipboard: ((String) -> Unit)? = null
 
@@ -329,11 +333,11 @@ class TerminalController(
         moshSession?.resize(columns, rows) ?: session?.resize(columns, rows, widthPx, heightPx)
     }
 
-    /** 光标闪烁：切换可见性并触发重绘。 */
+    /** 光标闪烁：切换渲染相位并触发重绘；稳态样式（2/4/6）不闪。 */
     fun blinkCursor() {
-        // DECSCUSR 稳态样式（2/4/6）不闪烁
+        // DECSCUSR 稳态样式不闪烁，且不改变相位（绘制时稳态样式不读相位）
         if (buffer.cursorStyle == 2 || buffer.cursorStyle == 4 || buffer.cursorStyle == 6) return
-        buffer.cursorVisible = !buffer.cursorVisible
+        cursorBlinkPhase = !cursorBlinkPhase
         frame++
     }
 

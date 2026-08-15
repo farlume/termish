@@ -434,6 +434,7 @@ class TerminalEmulator(
                 c.clear()
                 c.codePoint = 'E'.code
             }
+            line.touch()
         }
     }
 
