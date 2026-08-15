@@ -106,14 +106,14 @@ fun HostEditScreen(
                 Text(s.editAuthKeyOrPassword)
             }
 
-            Text("连接方式", style = MaterialTheme.typography.labelLarge)
+            Text(s.editConnectionMode, style = MaterialTheme.typography.labelLarge)
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(connectionMode == ConnectionMode.SSH, { connectionMode = ConnectionMode.SSH })
-                Text("SSH")
+                Text(s.editModeSsh)
             }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(connectionMode == ConnectionMode.MOSH, { connectionMode = ConnectionMode.MOSH })
-                Text("Mosh（远端需安装 mosh-server）")
+                Text(s.editModeMosh)
             }
 
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {
