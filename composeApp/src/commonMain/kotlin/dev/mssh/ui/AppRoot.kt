@@ -1,17 +1,24 @@
 package dev.mssh.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,7 +26,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
 import dev.mssh.data.SECRET_SERVICE
 import dev.mssh.data.SecretStore
 import dev.mssh.data.Host
@@ -27,8 +39,39 @@ import dev.mssh.data.HostRepository
 import dev.mssh.data.secretAccountFor
 import dev.mssh.ui.theme.MsshTheme
 import dev.mssh.ui.theme.TerminalThemes
+import dev.mssh.util.monospaceFontFamily
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
+
+/** 极简底栏项：图标 + 等宽字体小标签，选中=主题绿，无胶囊指示器。 */
+@Composable
+private fun HomeTabItem(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    mono: FontFamily,
+    modifier: Modifier = Modifier,
+    badge: Int = 0,
+    onClick: () -> Unit,
+) {
+    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier.clickable(onClick = onClick).padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        BadgedBox(badge = {
+            if (badge > 0) Badge { Text("$badge", fontFamily = mono) }
+        }) {
+            Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(22.dp))
+        }
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = mono,
+            color = color,
+        )
+    }
+}
 
 private sealed interface Screen {
     data object Home : Screen
@@ -71,33 +114,25 @@ fun AppRoot(repository: HostRepository) {
                     // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
                     contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = homeTab == HomeTab.HOSTS,
-                                onClick = { homeTab = HomeTab.HOSTS },
-                                icon = { Icon(Icons.Default.Dns, contentDescription = "主机") },
-                                label = { Text("主机") },
-                            )
-                            NavigationBarItem(
-                                selected = homeTab == HomeTab.CONNECTIONS,
-                                onClick = { homeTab = HomeTab.CONNECTIONS },
-                                icon = {
-                                    BadgedBox(badge = {
-                                        if (sessionManager.sessions.isNotEmpty()) {
-                                            Badge { Text("${sessionManager.sessions.size}") }
-                                        }
-                                    }) {
-                                        Icon(Icons.Default.Cable, contentDescription = "连接")
-                                    }
-                                },
-                                label = { Text("连接") },
-                            )
-                            NavigationBarItem(
-                                selected = homeTab == HomeTab.SETTINGS,
-                                onClick = { homeTab = HomeTab.SETTINGS },
-                                icon = { Icon(Icons.Default.Settings, contentDescription = "设置") },
-                                label = { Text("设置") },
-                            )
+                        // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
+                        val mono = monospaceFontFamily()
+                        Column {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Row(
+                                Modifier.fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .navigationBarsPadding(),
+                            ) {
+                                HomeTabItem("主机", Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
+                                    homeTab = HomeTab.HOSTS
+                                }
+                                HomeTabItem("连接", Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
+                                    homeTab = HomeTab.CONNECTIONS
+                                }
+                                HomeTabItem("设置", Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
+                                    homeTab = HomeTab.SETTINGS
+                                }
+                            }
                         }
                     },
                 ) { padding ->

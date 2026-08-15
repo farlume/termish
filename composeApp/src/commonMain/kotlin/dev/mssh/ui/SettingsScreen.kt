@@ -124,6 +124,7 @@ fun SettingsScreen(
                     Text(
                         avatarLetter,
                         style = MaterialTheme.typography.headlineMedium,
+                        fontFamily = dev.mssh.util.monospaceFontFamily(),
                         color = Color.White,
                     )
                 }

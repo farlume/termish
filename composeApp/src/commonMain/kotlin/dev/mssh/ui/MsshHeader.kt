@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import dev.mssh.util.monospaceFontFamily
 
 /**
  * 全局通用紧凑页头（终端页同款风格，约 48dp + 底部分隔线）：
@@ -56,7 +57,12 @@ fun MsshHeader(
             } else {
                 Spacer(Modifier.width(16.dp))
             }
-            Text(title, style = MaterialTheme.typography.titleMedium, color = contentColor)
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = monospaceFontFamily(),
+                color = contentColor,
+            )
             Spacer(Modifier.weight(1f))
             CompositionLocalProvider(LocalContentColor provides contentColor) {
                 actions()
@@ -80,6 +86,7 @@ fun MsshLargeHeader(
         title,
         style = MaterialTheme.typography.headlineSmall,
         fontWeight = FontWeight.Bold,
+        fontFamily = monospaceFontFamily(),
         color = contentColor,
         modifier = modifier
             .fillMaxWidth()

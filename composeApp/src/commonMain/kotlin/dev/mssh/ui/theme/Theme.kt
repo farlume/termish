@@ -104,24 +104,60 @@ object TerminalThemes {
     val ALL = listOf(DEFAULT, SOLARIZED_DARK, DRACULA, LIGHT)
 }
 
+/**
+ * App 品牌色板：中性锌灰（zinc）底色 + 终端翠绿（emerald）点缀。
+ * 全槽位覆盖，避免 Material 默认紫/蓝调泄漏（导航条、选中胶囊、卡片等）。
+ */
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF58A6FF),
-    onPrimary = Color(0xFF001A33),
-    secondary = Color(0xFF7EE787),
-    background = Color(0xFF0E0F13),
-    surface = Color(0xFF16171C),
-    onBackground = Color(0xFFD5D8DE),
-    onSurface = Color(0xFFD5D8DE),
-    error = Color(0xFFF85149),
+    primary = Color(0xFF34D399),
+    onPrimary = Color(0xFF052E1B),
+    primaryContainer = Color(0xFF134E3A),
+    onPrimaryContainer = Color(0xFFA7F3D0),
+    secondary = Color(0xFF9CA3AF),
+    onSecondary = Color(0xFF111417),
+    secondaryContainer = Color(0xFF1E2A24),
+    onSecondaryContainer = Color(0xFFA7F3D0),
+    background = Color(0xFF0D0E11),
+    onBackground = Color(0xFFE4E4E7),
+    surface = Color(0xFF15161B),
+    onSurface = Color(0xFFE4E4E7),
+    surfaceVariant = Color(0xFF1D1F26),
+    onSurfaceVariant = Color(0xFF9CA3AF),
+    surfaceContainerLowest = Color(0xFF0A0B0E),
+    surfaceContainerLow = Color(0xFF121317),
+    surfaceContainer = Color(0xFF15161B),
+    surfaceContainerHigh = Color(0xFF1A1C22),
+    surfaceContainerHighest = Color(0xFF20222A),
+    outline = Color(0xFF2A2D34),
+    outlineVariant = Color(0xFF22242B),
+    error = Color(0xFFF87171),
+    onError = Color(0xFF450A0A),
 )
 
 private val LightColors = lightColorScheme(
-    primary = Color(0xFF0969DA),
-    secondary = Color(0xFF1A7F37),
-    background = Color(0xFFF6F8FA),
+    primary = Color(0xFF059669),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFD1FAE5),
+    onPrimaryContainer = Color(0xFF064E3B),
+    secondary = Color(0xFF6B7280),
+    onSecondary = Color(0xFFFFFFFF),
+    secondaryContainer = Color(0xFFD1FAE5),
+    onSecondaryContainer = Color(0xFF064E3B),
+    background = Color(0xFFF7F8FA),
+    onBackground = Color(0xFF18181B),
     surface = Color(0xFFFFFFFF),
-    onBackground = Color(0xFF1A1A1A),
-    onSurface = Color(0xFF1A1A1A),
+    onSurface = Color(0xFF18181B),
+    surfaceVariant = Color(0xFFEFF1F4),
+    onSurfaceVariant = Color(0xFF5F6368),
+    surfaceContainerLowest = Color(0xFFFFFFFF),
+    surfaceContainerLow = Color(0xFFF7F8FA),
+    surfaceContainer = Color(0xFFEFF1F4),
+    surfaceContainerHigh = Color(0xFFE7EAEE),
+    surfaceContainerHighest = Color(0xFFDFE2E8),
+    outline = Color(0xFFC7CBD1),
+    outlineVariant = Color(0xFFE3E6EA),
+    error = Color(0xFFDC2626),
+    onError = Color(0xFFFFFFFF),
 )
 
 @Composable
