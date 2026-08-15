@@ -45,7 +45,7 @@ data class AppSettings(
     val theme: ThemeMode = ThemeMode.DARK,
     val terminalThemeIndex: Int = 0,
     val fontSize: Int = 14,
-    val terminalFontSize: Int = 8,
+    val terminalFontSize: Int = 10,
     /** 头像字母/背景色：首次进入设置页随机生成后持久化，不再随切换变化。 */
     val avatarLetter: String = "",
     val avatarColorIndex: Int = -1,
