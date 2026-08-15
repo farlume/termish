@@ -1,11 +1,17 @@
 package dev.mssh.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.gestures.rememberScrollableState
+import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -24,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.mssh.term.CellAttr
 import dev.mssh.term.CharWidth
@@ -84,6 +91,8 @@ fun TerminalView(
     val textMeasurer = rememberTextMeasurer()
 
     var scrollOffset by remember { mutableStateOf(0) }
+    // 滚动小数累加器（按行换算）
+    var scrollAccum by remember { mutableFloatStateOf(0f) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
     val fontFamily = monospaceFontFamily()
@@ -178,33 +187,40 @@ fun TerminalView(
                     },
                 )
             }
+            // 滚动回看：scrollable 自带 fling 惯性衰减；
+            // delta 语义与手指方向一致（手指上推 delta>0 → 看更新内容 → scrollOffset 减小）
+            .scrollable(
+                orientation = Orientation.Vertical,
+                state = rememberScrollableState { delta ->
+                    scrollAccum += delta
+                    val rows = (scrollAccum / cellH).toInt()
+                    if (rows != 0) {
+                        scrollOffset = (scrollOffset - rows).coerceIn(0, buffer.scrollbackSize())
+                        scrollAccum -= rows * cellH
+                    }
+                    delta
+                },
+            )
+            // 滚动条拖动：仅右边缘命中时消费事件，其余交给 scrollable
             .pointerInput(Unit) {
-                var accumulated = 0f
-                // 单指拖动滚动回看（捏合缩放逐号已移除，避免行列反复 resize 导致渲染错乱）
-                detectTransformGestures(
-                    panZoomLock = true,
-                    onGesture = { centroid, pan, _, _ ->
-                        if (centroid.x >= latestCanvasSize.width - 24f && buffer.scrollbackSize() > 0) {
-                            // 滚动条拖动：手指位置映射到历史位置
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val barZone = size.width - 24.dp.toPx()
+                    if (down.position.x >= barZone && buffer.scrollbackSize() > 0) {
+                        drag(down.id) { change ->
                             val sb = buffer.scrollbackSize()
                             val h = latestCanvasSize.height
                             if (sb > 0 && h > 0) {
                                 val total = buffer.totalLines().toFloat()
                                 val trackH = h.toFloat()
                                 val thumbH = (buffer.rows / total * trackH).coerceAtLeast(24f)
-                                val ratio = (centroid.y / (trackH - thumbH)).coerceIn(0f, 1f)
+                                val ratio = (change.position.y / (trackH - thumbH)).coerceIn(0f, 1f)
                                 scrollOffset = (ratio * sb).toInt().coerceIn(0, sb)
                             }
-                        } else {
-                            accumulated += pan.y
-                            val rows = (accumulated / cellH).toInt()
-                            if (rows != 0) {
-                                scrollOffset = (scrollOffset - rows).coerceIn(0, buffer.scrollbackSize())
-                                accumulated -= rows * cellH
-                            }
+                            change.consume()
                         }
-                    },
-                )
+                    }
+                }
             },
     ) {
         // 观察重绘序号触发 redraw（否则 Compose 会因 draw 内容未变而跳过重绘）

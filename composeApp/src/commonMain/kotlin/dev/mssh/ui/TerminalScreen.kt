@@ -235,7 +235,8 @@ fun TerminalScreen(
             WindowInsets.ime.getBottom(density).toFloat(),
             WindowInsets.navigationBars.getBottom(density).toFloat(),
         ) + toolbarHeightPx + with(density) { 12.dp.toPx() }
-        Box(Modifier.weight(1f).clipToBounds()) {
+        // 画布四周留出小间距，文字不贴屏幕边缘；行列按内缩后宽度自动重算
+        Box(Modifier.weight(1f).clipToBounds().background(theme.background())) {
             TerminalView(
                 controller = controller,
                 theme = theme,
@@ -247,7 +248,7 @@ fun TerminalScreen(
                     clipboard.setText(AnnotatedString(text))
                     scope.launch { snackbar.showSnackbar("已复制") }
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp),
             )
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))

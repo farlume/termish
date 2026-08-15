@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,7 +52,7 @@ fun MsshHeader(
         ) {
             if (onBack != null) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = contentColor)
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "返回", tint = contentColor)
                 }
             } else {
                 Spacer(Modifier.width(16.dp))
