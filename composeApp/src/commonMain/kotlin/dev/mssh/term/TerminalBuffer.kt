@@ -40,6 +40,14 @@ class TerminalLine(val cols: Int) {
         wrapped = false
         for (c in cells) c.clear()
     }
+
+    /** 整行是否为默认空白（无字符/颜色/属性），resize 收缩时用于安全丢弃。 */
+    fun isBlank(): Boolean {
+        for (c in cells) {
+            if (c.codePoint != ' '.code || c.attrs != 0 || c.fg != DEFAULT_FG || c.bg != DEFAULT_BG) return false
+        }
+        return true
+    }
 }
 
 /**
@@ -485,8 +493,16 @@ class TerminalBuffer(
 
         // 调整行数
         if (newRows < rows) {
-            // 屏幕变小：把多余行推入回看
-            // （可见屏幕是末尾 newRows 行，之前的多余行自然成为回看）
+            // 屏幕变矮（如键盘弹出）：优先丢弃光标下方的空白行，保证光标与
+            // 提示符仍留在可视区（xterm 行为）；仍不够的收缩量由
+            // “可见屏幕 = normal 末尾 newRows 行”自然把顶部行挤入回看。
+            val cursorAbs = normal.size - rows + cursorRow
+            var toDrop = rows - newRows
+            while (toDrop > 0 && normal.size - 1 > cursorAbs && normal.last().isBlank()) {
+                normal.removeLast()
+                toDrop--
+            }
+            cursorRow = (cursorAbs - (normal.size - newRows)).coerceIn(0, newRows - 1)
         } else if (newRows > rows) {
             // 屏幕变大：从回看中取出或新建空行
             repeat(newRows - rows) {

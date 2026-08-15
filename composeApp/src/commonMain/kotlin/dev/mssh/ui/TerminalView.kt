@@ -176,6 +176,13 @@ fun TerminalView(
             lines.add(if (abs < totalLines) buffer.absLine(abs) else TerminalLine(buffer.cols))
         }
 
+        // 键盘弹起/字号变化时，canvas 尺寸与 buffer 行列数存在一帧的瞬态不一致，
+        // 越界绘制文本会导致 drawText 内部约束为负而崩溃，这里统一跳过越界文本。
+        fun drawTextInBounds(text: String, topLeft: Offset, textStyle: TextStyle) {
+            if (topLeft.x < 0f || topLeft.y < 0f || topLeft.x >= size.width || topLeft.y >= size.height) return
+            drawText(textMeasurer = textMeasurer, text = text, topLeft = topLeft, style = textStyle)
+        }
+
         // 背景色 run
         for (r in lines.indices) {
             val line = lines[r]
@@ -221,21 +228,15 @@ fun TerminalView(
                     j++
                 }
                 if (sb.isNotEmpty()) {
-                    drawText(
-                        textMeasurer = textMeasurer,
-                        text = sb.toString(),
-                        topLeft = Offset(i * cellW, y + textTop),
-                        style = runStyle,
-                    )
+                    drawTextInBounds(sb.toString(), Offset(i * cellW, y + textTop), runStyle)
                 }
                 // 宽字符单独绘制
                 if (j < buffer.cols && !line.cells[j].isWideTail && CharWidth.wcwidth(line.cells[j].codePoint) == 2) {
                     val wide = line.cells[j]
-                    drawText(
-                        textMeasurer = textMeasurer,
-                        text = codePointToString(wide.codePoint),
-                        topLeft = Offset(j * cellW, y + textTop),
-                        style = style.copy(color = cellColors(wide, theme).first),
+                    drawTextInBounds(
+                        codePointToString(wide.codePoint),
+                        Offset(j * cellW, y + textTop),
+                        style.copy(color = cellColors(wide, theme).first),
                     )
                     j += 2
                 }
@@ -305,11 +306,10 @@ fun TerminalView(
                     val cell = line.cells[buffer.cursorCol]
                     if (!cell.isWideTail && cell.codePoint != ' '.code) {
                         val (fg, bg) = cellColors(cell, theme)
-                        drawText(
-                            textMeasurer = textMeasurer,
-                            text = codePointToString(cell.codePoint),
-                            topLeft = Offset(buffer.cursorCol * cellW, cursorScreenRow * cellH + textTop),
-                            style = style.copy(color = bg),
+                        drawTextInBounds(
+                            codePointToString(cell.codePoint),
+                            Offset(buffer.cursorCol * cellW, cursorScreenRow * cellH + textTop),
+                            style.copy(color = bg),
                         )
                     }
                 }
