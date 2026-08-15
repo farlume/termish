@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -107,6 +108,23 @@ android {
     namespace = "dev.mssh.app"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
+    signingConfigs {
+        // release 签名：密钥放 ~/Documents/秘钥/，密码等参数在项目根 keystore.properties（不入库）。
+        // 该文件不存在时跳过签名配置，方便直接构建 debug。
+        val props = Properties().apply {
+            val f = rootProject.file("keystore.properties")
+            if (f.exists()) f.inputStream().use { load(it) }
+        }
+        create("release") {
+            if (props.containsKey("storeFile")) {
+                storeFile = file(props.getProperty("storeFile"))
+                storePassword = props.getProperty("storePassword")
+                keyAlias = props.getProperty("keyAlias")
+                keyPassword = props.getProperty("keyPassword")
+            }
+        }
+    }
+
     defaultConfig {
         applicationId = "dev.mssh.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
@@ -132,6 +150,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.findByName("release")?.takeIf { it.storeFile?.isFile == true }
         }
     }
     compileOptions {
