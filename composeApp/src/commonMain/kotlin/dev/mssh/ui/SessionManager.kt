@@ -45,7 +45,14 @@ class SessionManager(private val repository: HostRepository) {
         val existing = sessions.firstOrNull {
             it.host.id == host.id && it.status != ConnStatus.CLOSED && it.status != ConnStatus.ERROR
         }
-        if (existing != null) return existing
+        if (existing != null) {
+            val (pw, key) = resolveCredentials(host)
+            // 编辑主机后凭据/连接参数可能已变化：旧会话仍持有旧凭据，
+            // 直接复用会带着过期认证重连（如改密码后仍用旧私钥）。签名不同则重建。
+            if (existing.credentialKey == credentialSignature(host, pw, key)) return existing
+            existing.close()
+            sessions.remove(existing)
+        }
         val (pw, key) = resolveCredentials(host)
         val controller = TerminalController(host, pw, key, repository, autoReconnect)
         sessions.removeAll { it.host.id == host.id }
@@ -88,3 +95,7 @@ class SessionManager(private val repository: HostRepository) {
         persist()
     }
 }
+
+/** 凭据/连接参数签名：任一变化即视为旧会话凭据过期（编辑主机后需重建会话）。 */
+internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String =
+    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem"

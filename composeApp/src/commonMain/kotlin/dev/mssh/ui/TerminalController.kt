@@ -66,6 +66,9 @@ class TerminalController(
     /** OSC 52：远端程序写剪贴板时回调（由 UI 层接入系统剪贴板）。 */
     var onRemoteClipboard: ((String) -> Unit)? = null
 
+    /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
+    val credentialKey: String = credentialSignature(host, password, privateKeyPem)
+
     private var session: SshSession? = null
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
     private var lastCols = 80

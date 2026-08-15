@@ -132,9 +132,9 @@ fun TerminalScreen(
         scope.launch { snackbar.showSnackbar("远端已写入剪贴板") }
     }
 
-    LaunchedEffect(Unit) {
-        controller.connect(80, 24)
-    }
+    // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
+    // 让 herdr 等远端复用器附着瞬间按错误窗口尺寸布局。
+    var connectSent by remember { mutableStateOf(false) }
 
     // 光标闪烁：连接建立后周期性切换可见性并重绘
     LaunchedEffect(controller.status, settings.cursorBlink) {
@@ -244,7 +244,13 @@ fun TerminalScreen(
                 fontSizeSp = settings.terminalFontSize.toFloat(),
                 targetCols = settings.terminalTargetCols,
                 coveredBottomPx = coveredBottomPx,
-                onFocusKeyboard = { showKeyboard() },
+                keyboardVisible = imeVisible,
+                onReady = { cols, rows ->
+                    if (!connectSent) {
+                        connectSent = true
+                        controller.connect(cols, rows)
+                    }
+                },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))
                     scope.launch { snackbar.showSnackbar("已复制") }

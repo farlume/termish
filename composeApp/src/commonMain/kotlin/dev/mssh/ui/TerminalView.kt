@@ -22,7 +22,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
@@ -85,7 +84,10 @@ fun TerminalView(
     targetCols: Int = 0,
     /** 键盘/工具栏覆盖画布底部的高度（px）：用于向上平移画布保证光标可见。 */
     coveredBottomPx: Float = 0f,
-    onFocusKeyboard: () -> Unit,
+    /** 软键盘是否弹出：仅在键盘弹出时向上平移画布，避免工具栏常驻把顶部（如 herdr 的 switch 菜单）顶出屏幕。 */
+    keyboardVisible: Boolean = false,
+    /** 首次量到真实画布尺寸后回调（用于以真实行列建连，避免先以 80x24 起 PTY）。 */
+    onReady: (cols: Int, rows: Int) -> Unit = { _, _ -> },
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -94,6 +96,8 @@ fun TerminalView(
     var scrollOffset by remember { mutableStateOf(0) }
     // 滚动小数累加器（按行换算）
     var scrollAccum by remember { mutableFloatStateOf(0f) }
+    // 首次量到有效画布尺寸后置位（用真实行列建连）
+    var readySent by remember { mutableStateOf(false) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
     val fontFamily = monospaceFontFamily()
@@ -118,8 +122,10 @@ fun TerminalView(
     val buffer = controller.buffer
     val latestCanvasSize by rememberUpdatedState(canvasSize)
 
-    // 键盘/工具栏覆盖画布底部时向上平移，保证光标可见（不改变 PTY 尺寸，
-    // 避免全屏程序随键盘弹收反复重排）；用户回看滚动时不平移。
+    // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY 尺寸，
+    // 避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不触发平移，
+    // 否则底部有工具栏时会把终端顶部（如 herdr 的 switch 菜单）顶出屏幕。
+    // 用户回看滚动时不平移。
     // frame 每次输出自增，读取它以在输出后重算平移。
     @Suppress("UNUSED_VARIABLE")
     val frame = controller.frame
@@ -143,11 +149,8 @@ fun TerminalView(
         ((pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)) to
             ((pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1))
 
-    // 最近指针位置（鼠标模式下滚轮事件的落点）
-    var lastPointer by remember { mutableStateOf(Offset.Zero) }
-
     val panUp = run {
-        if (scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
+        if (!keyboardVisible || scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
         val cursorBottomY = (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
         val visibleBottomY = canvasSize.height.toFloat() - coveredBottomPx
         if (cursorBottomY > visibleBottomY) {
@@ -157,9 +160,14 @@ fun TerminalView(
 
     // 尺寸或字号变化时重新计算行列并同步 PTY
     LaunchedEffect(canvasSize, effectiveFontSizeSp) {
+        if (canvasSize.width <= 0 || canvasSize.height <= 0) return@LaunchedEffect
         val cols = (canvasSize.width / cellW).toInt().coerceAtLeast(1)
         val rows = (canvasSize.height / cellH).toInt().coerceAtLeast(1)
         controller.resize(cols, rows, canvasSize.width, canvasSize.height)
+        if (!readySent) {
+            readySent = true
+            onReady(cols, rows)
+        }
     }
 
     Canvas(
@@ -169,30 +177,69 @@ fun TerminalView(
                 canvasSize = size
             }
             // 触摸 → 鼠标事件：TUI 开启上报（1000/1002/1003）时接管手势，
-            // 否则不消费事件，保持聚焦键盘/选择/滚动回看的默认行为
+            // 否则不消费事件，保持聚焦键盘/选择/滚动回看的默认行为。
+            // 手势语义（鼠标模式下唯一事件源，scrollable 同步让位）：
+            //   - 轻点 → 左键按下/释放（释放用按下格，避免手指抖动被 herdr 的 1 格拖拽阈值判成拖拽）
+            //   - 单指纵向拖拽 → 滚轮（手指下滑=回看=滚轮上 64，上滑=向下=65），落点跟随手指
+            //   - 单指横向拖拽 / 双指拖拽 → 鼠标拖拽 motion（1002/1003，选字、拖分割线、pane 内拖拽）
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (buffer.mouseTracking <= 0) return@awaitEachGesture
                     down.consume()
-                    var (col, row) = pointerCell(down.position)
+                    val downId = down.id
+                    val downCell = pointerCell(down.position)
+                    var (col, row) = downCell
                     sendMouseEvent(0, col, row, release = false)
+                    var scrollAccumY = 0f
+                    var prevY = down.position.y
+                    var movedCell = false
+                    var multiTouch = false
                     while (true) {
                         val event = awaitPointerEvent()
-                        val change = event.changes.first()
+                        // 第二根手指参与 → 切换为鼠标拖拽语义
+                        if (event.changes.count { it.pressed } > 1) multiTouch = true
+                        val change = event.changes.firstOrNull { it.id == downId } ?: continue
+                        // 以 pressed 状态判断结束而非 changedToUp()：极快的点击可能被 Compose
+                        // 合并为单帧（down+up 同帧时 previousPressed=false，changedToUp 永不成立），
+                        // 否则释放事件丢失、手势循环卡死，后续点击全被吞。
+                        if (!change.pressed) {
+                            val upPos = if (movedCell) change.position else down.position
+                            val (uc, ur) = pointerCell(upPos)
+                            sendMouseEvent(0, uc, ur, release = true)
+                            break
+                        }
                         change.consume()
-                        lastPointer = change.position
                         val (nc, nr) = pointerCell(change.position)
                         if (nc != col || nr != row) {
-                            col = nc; row = nr
-                            // 拖拽移动（1002/1003 才上报移动）
-                            if (buffer.mouseTracking >= 1002) {
+                            val movedH = nc != col
+                            val movedV = nr != row
+                            col = nc
+                            row = nr
+                            movedCell = true
+                            // 横向单指（分割线/标签）或多指拖拽 → 鼠标拖拽；纵向单指已换算滚轮
+                            val sendMotion = buffer.mouseTracking >= 1002 &&
+                                (multiTouch || (movedH && !movedV))
+                            if (sendMotion) {
                                 sendMouseEvent(32, col, row, release = false)
                             }
                         }
-                        if (change.changedToUp()) {
-                            sendMouseEvent(0, col, row, release = true)
-                            break
+                        // 单指纵向位移 → 滚轮（每 cellH 一档），落点跟随手指当前位置
+                        if (!multiTouch) {
+                            // 不依赖 positionChange()：外层 handler 在 scrollable 消费事件后
+                            // 该增量恒为 0，改为自行记录前后 y 位置计算位移
+                            val dy = change.position.y - prevY
+                            prevY = change.position.y
+                            scrollAccumY += dy
+                            val notches = (scrollAccumY / cellH).toInt()
+                            if (notches != 0) {
+                                val btn = if (notches > 0) 64 else 65
+                                val (wc, wr) = pointerCell(change.position)
+                                repeat(kotlin.math.abs(notches)) {
+                                    sendMouseEvent(btn, wc, wr, release = false)
+                                }
+                                scrollAccumY -= notches * cellH
+                            }
                         }
                     }
                 }
@@ -245,17 +292,13 @@ fun TerminalView(
             .scrollable(
                 orientation = Orientation.Vertical,
                 state = rememberScrollableState { delta ->
+                    // TUI 鼠标模式：手势由上面的鼠标 handler 全权处理（避免拖拽既发
+                    // drag-motion 又发滚轮的混合序列），本地滚动只在非鼠标模式生效
+                    if (buffer.mouseTracking > 0) return@rememberScrollableState delta
                     scrollAccum += delta
                     val rows = (scrollAccum / cellH).toInt()
                     if (rows != 0) {
-                        if (buffer.mouseTracking > 0) {
-                            // TUI 鼠标模式：滚动映射为滚轮事件（64=上 65=下）
-                            val btn = if (rows > 0) 65 else 64
-                            val (wc, wr) = pointerCell(lastPointer)
-                            repeat(kotlin.math.abs(rows)) { sendMouseEvent(btn, wc, wr, release = false) }
-                        } else {
-                            scrollOffset = (scrollOffset + rows).coerceIn(0, buffer.scrollbackSize())
-                        }
+                        scrollOffset = (scrollOffset + rows).coerceIn(0, buffer.scrollbackSize())
                         scrollAccum -= rows * cellH
                     }
                     delta
