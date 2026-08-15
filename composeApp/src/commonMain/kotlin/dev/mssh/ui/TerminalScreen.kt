@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.isImeVisible
@@ -199,11 +200,12 @@ fun TerminalScreen(
 
         // 终端画布 + 悬浮工具栏：键盘弹起时不挤压画布（adjustNothing），避免 vim/tmux
         // 等全屏程序随键盘弹收反复 SIGWINCH 重排；由 TerminalView 向上平移保证光标可见。
+        // 末尾的 8dp 是光标与工具栏之间的视觉间距余量。
         val density = LocalDensity.current
         val coveredBottomPx = maxOf(
             WindowInsets.ime.getBottom(density).toFloat(),
             WindowInsets.navigationBars.getBottom(density).toFloat(),
-        ) + toolbarHeightPx
+        ) + toolbarHeightPx + with(density) { 12.dp.toPx() }
         Box(Modifier.weight(1f).clipToBounds()) {
             TerminalView(
                 controller = controller,
@@ -221,17 +223,19 @@ fun TerminalScreen(
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
 
-            // 底部悬浮键盘工具栏：半透明背景覆盖画布底部。
+            // 底部悬浮键盘工具栏：不透明背景 + 顶部分隔线，与系统键盘/终端内容拉开层次。
             // 外层负责避让导航条/键盘；内层单独测内容高度（padding 会算进
             // 外层总高，直接测外层会把键盘高度重复计入平移量）。
             Column(
                 Modifier.align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(theme.background().copy(alpha = 0.92f))
+                    .background(theme.background())
                     .navigationBarsPadding()
                     .imePadding(),
             ) {
                 Column(Modifier.onSizeChanged { toolbarHeightPx = it.height.toFloat() }) {
+                    HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
+                    Spacer(Modifier.height(6.dp))
                 if (settings.keyboardToolbarVisible) {
                     KeyToolbar(
                         ctrlActive = ctrlActive,
@@ -259,6 +263,7 @@ fun TerminalScreen(
                             altActive = false
                         },
                         theme = theme,
+                        modifier = Modifier.padding(bottom = 8.dp),
                     )
                 }
                 // 隐藏输入字段：仅作为输入法接入口，不渲染可见 UI。
