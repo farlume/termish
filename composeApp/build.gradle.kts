@@ -52,7 +52,10 @@ kotlin {
         }
         target.compilations.getByName("main").cinterops.create("moshpty") {
             defFile(moshptyDef)
-            compilerOpts("-I${nativeRoot.resolve("include")}")
+            compilerOpts(
+                "-I${rootProject.file("scripts/ios")}",
+                "-I${nativeRoot.resolve("include")}",
+            )
         }
     }
 
