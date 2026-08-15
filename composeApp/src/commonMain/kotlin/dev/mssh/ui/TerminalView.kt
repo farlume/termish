@@ -205,6 +205,12 @@ fun TerminalView(
                     val downId = down.id
                     val downCell = pointerCell(down.position)
                     var (col, row) = downCell
+                    // 手势方向（null=尚未判定）：按整体位移主导方向决定语义并锁定，
+                    // 避免真实手指的横向抖动把纵向滚动误判成横向拖拽（herdr 会当
+                    // 成选区并复制）。纵向主导 → 只发滚轮；横向主导 → 才发 Down+motion。
+                    var vertical: Boolean? = null
+                    var totalDx = 0f
+                    var totalDy = 0f
                     // 延迟到手势意图明确后再发 Down：
                     //   - 轻点 → 按下+抬起同格（点击）
                     //   - 单指纵向拖拽 → 只发滚轮（不按下/抬起）：herdr 对"按下后在其他格抬起"
@@ -220,6 +226,7 @@ fun TerminalView(
                         }
                     }
                     var scrollAccumY = 0f
+                    var prevX = down.position.x
                     var prevY = down.position.y
                     var movedCell = false
                     var multiTouch = false
@@ -245,16 +252,25 @@ fun TerminalView(
                             break
                         }
                         change.consume()
+                        val dx = change.position.x - prevX
+                        val dy = change.position.y - prevY
+                        prevX = change.position.x
+                        prevY = change.position.y
+                        totalDx += dx
+                        totalDy += dy
+                        // 位移超过一格后判定方向并锁定（横向抖动不改变纵向手势）
+                        if (vertical == null && !multiTouch &&
+                            (kotlin.math.abs(totalDx) >= cellW || kotlin.math.abs(totalDy) >= cellH)
+                        ) {
+                            vertical = kotlin.math.abs(totalDy) >= kotlin.math.abs(totalDx)
+                        }
                         val (nc, nr) = pointerCell(change.position)
                         if (nc != col || nr != row) {
-                            val movedH = nc != col
-                            val movedV = nr != row
                             col = nc
                             row = nr
                             movedCell = true
-                            // 横向单指（分割线/标签）或多指拖拽 → 鼠标拖拽；纵向单指已换算滚轮
-                            val wantMotion = buffer.mouseTracking >= 1002 &&
-                                (multiTouch || (movedH && !movedV))
+                            // 横向主导/多指 → 鼠标拖拽（分割线、选区）；纵向主导 → 已换算滚轮
+                            val wantMotion = buffer.mouseTracking >= 1002 && (multiTouch || vertical == false)
                             if (wantMotion) {
                                 sendDownIfNeeded()
                                 sendMouseEvent(32, col, row, release = false)
@@ -263,25 +279,23 @@ fun TerminalView(
                         }
                         // 单指纵向位移 → 滚轮（每 cellH 一档），落点跟随手指当前位置
                         if (!multiTouch) {
-                            // 不依赖 positionChange()：外层 handler 在 scrollable 消费事件后
-                            // 该增量恒为 0，改为自行记录前后 y 位置计算位移
-                            val dy = change.position.y - prevY
-                            prevY = change.position.y
                             scrollAccumY += dy
-                            val notches = (scrollAccumY / cellH).toInt()
-                            if (notches != 0) {
-                                val btn = if (notches > 0) 64 else 65
-                                val (wc, wr) = pointerCell(change.position)
-                                // 快速上滑到顶部时，最后一批滚轮会落在第 0 行——桌面布局下那是
-                                // herdr 的 tab 栏，每个滚轮都会切一次 tab（表现为松手后疯狂切 tab）。
-                                // 滚轮钳制到第 1 行起：pane 区完全可滚，chrome 永不接收滚轮；
-                                // 点击切 tab 走 Down/Up 路径，不受影响。
-                                val wheelRow = maxOf(wr, 1)
-                                repeat(kotlin.math.abs(notches)) {
-                                    sendMouseEvent(btn, wc, wheelRow, release = false)
+                            if (vertical == true) {
+                                val notches = (scrollAccumY / cellH).toInt()
+                                if (notches != 0) {
+                                    val btn = if (notches > 0) 64 else 65
+                                    val (wc, wr) = pointerCell(change.position)
+                                    // 快速上滑到顶部时，最后一批滚轮会落在第 0 行——桌面布局下那是
+                                    // herdr 的 tab 栏，每个滚轮都会切一次 tab（表现为松手后疯狂切 tab）。
+                                    // 滚轮钳制到第 1 行起：pane 区完全可滚，chrome 永不接收滚轮；
+                                    // 点击切 tab 走 Down/Up 路径，不受影响。
+                                    val wheelRow = maxOf(wr, 1)
+                                    repeat(kotlin.math.abs(notches)) {
+                                        sendMouseEvent(btn, wc, wheelRow, release = false)
+                                    }
+                                    scrollAccumY -= notches * cellH
+                                    sentWheel = true
                                 }
-                                scrollAccumY -= notches * cellH
-                                sentWheel = true
                             }
                         }
                     }
