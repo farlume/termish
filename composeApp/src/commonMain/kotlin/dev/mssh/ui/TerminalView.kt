@@ -257,8 +257,13 @@ fun TerminalView(
                             if (notches != 0) {
                                 val btn = if (notches > 0) 64 else 65
                                 val (wc, wr) = pointerCell(change.position)
+                                // 快速上滑到顶部时，最后一批滚轮会落在第 0 行——桌面布局下那是
+                                // herdr 的 tab 栏，每个滚轮都会切一次 tab（表现为松手后疯狂切 tab）。
+                                // 滚轮钳制到第 1 行起：pane 区完全可滚，chrome 永不接收滚轮；
+                                // 点击切 tab 走 Down/Up 路径，不受影响。
+                                val wheelRow = maxOf(wr, 1)
                                 repeat(kotlin.math.abs(notches)) {
-                                    sendMouseEvent(btn, wc, wr, release = false)
+                                    sendMouseEvent(btn, wc, wheelRow, release = false)
                                 }
                                 scrollAccumY -= notches * cellH
                                 sentWheel = true
