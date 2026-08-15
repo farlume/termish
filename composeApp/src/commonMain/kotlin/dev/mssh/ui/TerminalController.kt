@@ -26,7 +26,12 @@ data class AuthPromptRequest(val prompt: AuthPrompt) {
     internal val deferred = CompletableDeferred<List<String>?>()
 }
 
-data class HostKeyRequest(val key: HostKeyInfo) {
+data class HostKeyRequest(
+    val key: HostKeyInfo,
+    /** 服务器指纹与已保存的不一致（服务器重装/换机/端口转发变化等），需用户重新核对。 */
+    val changed: Boolean = false,
+    val previousFingerprint: String? = null,
+) {
     internal val deferred = CompletableDeferred<Boolean>()
 }
 
@@ -187,7 +192,12 @@ class TerminalController(
             // 已知指纹：严格比对
             val known = host.knownHostFingerprint
             if (known != null) {
-                return known == hostKey.fingerprintSha256
+                if (known == hostKey.fingerprintSha256) return true
+                // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
+                // 改为弹窗让用户核对新旧指纹后决定。
+                val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                hostKeyPrompt = req
+                return runBlockingAwait(req.deferred)
             }
             // TOFU：首次连接由用户确认
             val req = HostKeyRequest(hostKey)

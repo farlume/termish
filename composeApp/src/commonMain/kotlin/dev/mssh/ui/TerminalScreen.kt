@@ -182,7 +182,11 @@ fun TerminalScreen(
 
     val hostKey = controller.hostKeyPrompt
     if (hostKey != null) {
-        HostKeyDialog(hostKey.key) { accept ->
+        HostKeyDialog(
+            key = hostKey.key,
+            changed = hostKey.changed,
+            previousFingerprint = hostKey.previousFingerprint,
+        ) { accept ->
             controller.respondToHostKey(accept)
         }
     }
@@ -488,15 +492,33 @@ private fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Un
 }
 
 @Composable
-private fun HostKeyDialog(key: dev.mssh.ssh.HostKeyInfo, onResult: (Boolean) -> Unit) {
+private fun HostKeyDialog(
+    key: dev.mssh.ssh.HostKeyInfo,
+    changed: Boolean,
+    previousFingerprint: String?,
+    onResult: (Boolean) -> Unit,
+) {
     AlertDialog(
         onDismissRequest = { onResult(false) },
-        title = { Text("确认服务器身份") },
+        title = { Text(if (changed) "服务器指纹已变更" else "确认服务器身份") },
         text = {
             Column {
-                Text("无法验证服务器主机的真实性。请核对指纹：")
                 Text(
-                    "${key.algorithm}\n${key.fingerprintSha256}",
+                    if (changed) {
+                        "该主机的服务器指纹与已保存的不一致（可能服务器重装、换机或端口转发变化）。\n请核对新指纹后决定是否信任："
+                    } else {
+                        "无法验证服务器主机的真实性。请核对指纹："
+                    }
+                )
+                if (changed && previousFingerprint != null) {
+                    Text(
+                        "已保存：$previousFingerprint",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+                Text(
+                    "${if (changed) "当前" else key.algorithm}\n${key.fingerprintSha256}",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 8.dp),
                 )
