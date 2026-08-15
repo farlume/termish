@@ -165,6 +165,9 @@ class TerminalBuffer(
         val line = lineAt(cursorRow)
         val col = cursorCol
 
+        // 落点在宽字符尾巴上：先清掉头，避免残留半个宽字符
+        if (col > 0 && line.cells[col].isWideTail) line.cells[col - 1].clear()
+
         if (width == 2) {
             if (cols < 2) { writeNarrow(cp); return }
             // 宽字符：若处于行末，先换行
@@ -179,8 +182,16 @@ class TerminalBuffer(
             c.attrs = currentAttrs
             c.fg = currentFg
             c.bg = currentBg
-            line.cells[col + 1].clear()
-            line.cells[col + 1].isWideTail = true
+            val tail = line.cells[col + 1]
+            tail.clear()
+            // 尾巴必须继承头的颜色/属性：否则宽字符右半格露出默认背景，
+            // 在带底色的行（如 pi 的消息条）上表现为黑块盖住半个字
+            tail.attrs = currentAttrs
+            tail.fg = currentFg
+            tail.bg = currentBg
+            tail.isWideTail = true
+            // 尾巴盖掉了原宽字符的头：清掉它原来尾巴的标记，避免越雷悬空
+            if (col + 2 < cols && line.cells[col + 2].isWideTail) line.cells[col + 2].isWideTail = false
             cursorCol = col + 2
             markChanged()
             return
@@ -193,15 +204,18 @@ class TerminalBuffer(
         if (insertMode) {
             insertCells(1)
         }
-        val c = lineAt(cursorRow).cells[cursorCol]
+        val line = lineAt(cursorRow)
+        // 落点在宽字符尾巴上：先清掉头
+        if (cursorCol > 0 && line.cells[cursorCol].isWideTail) line.cells[cursorCol - 1].clear()
+        val c = line.cells[cursorCol]
         c.clear()
         c.codePoint = cp
         c.attrs = currentAttrs
         c.fg = currentFg
         c.bg = currentBg
-        // 清除可能的宽尾巴
-        if (cursorCol + 1 < cols && lineAt(cursorRow).cells[cursorCol + 1].isWideTail) {
-            lineAt(cursorRow).cells[cursorCol + 1].isWideTail = false
+        // 覆盖宽字符头时清掉尾巴标记
+        if (cursorCol + 1 < cols && line.cells[cursorCol + 1].isWideTail) {
+            line.cells[cursorCol + 1].isWideTail = false
         }
 
         if (cursorCol == cols - 1) {

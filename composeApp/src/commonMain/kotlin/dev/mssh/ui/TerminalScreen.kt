@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -95,7 +94,9 @@ fun TerminalScreen(
     val inputFocusRequester = remember { FocusRequester() }
     var showDisconnectDialog by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
-    val imeVisible = WindowInsets.isImeVisible
+    // 键盘是否弹出：ime inset 高于导航条即认为弹出（跨平台，isImeVisible 仅 Android 有）
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) >
+        WindowInsets.navigationBars.getBottom(LocalDensity.current)
     // 点画布/键盘按钮：焦点变更与输入连接建立是异步的，立即 show() 常被忽略，
     // 延迟一小拍再显式拉起键盘。
     val showKeyboard: () -> Unit = {
