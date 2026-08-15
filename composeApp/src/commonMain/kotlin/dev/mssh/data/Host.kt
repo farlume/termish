@@ -46,6 +46,9 @@ data class AppSettings(
     val terminalThemeIndex: Int = 0,
     val fontSize: Int = 14,
     val terminalFontSize: Int = 8,
+    /** 头像字母/背景色：首次进入设置页随机生成后持久化，不再随切换变化。 */
+    val avatarLetter: String = "",
+    val avatarColorIndex: Int = -1,
     /** 目标终端列数：>0 时忽略 terminalFontSize，按屏幕宽度自动反算字号（对齐桌面终端 120×30 这类体验）。 */
     val terminalTargetCols: Int = 0,
     val keyboardToolbarVisible: Boolean = true,

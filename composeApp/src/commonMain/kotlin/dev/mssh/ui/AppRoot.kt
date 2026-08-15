@@ -1,6 +1,7 @@
 package dev.mssh.ui
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
@@ -55,6 +56,9 @@ fun AppRoot(repository: HostRepository) {
             Screen.Home -> {
                 var tab by remember { mutableStateOf(HomeTab.HOSTS) }
                 Scaffold(
+                    // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
+                    // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     bottomBar = {
                         NavigationBar {
                             NavigationBarItem(
@@ -103,7 +107,6 @@ fun AppRoot(repository: HostRepository) {
                                     repository.deleteHost(host.id)
                                     refreshHosts()
                                 },
-                                onOpenSettings = { tab = HomeTab.SETTINGS },
                             )
 
                             HomeTab.CONNECTIONS -> ConnectionsScreen(
@@ -117,11 +120,12 @@ fun AppRoot(repository: HostRepository) {
 
                             HomeTab.SETTINGS -> SettingsScreen(
                                 settings = settings,
-                                onSave = { new ->
+                                onChange = { new ->
+                                    // 即改即存
                                     repository.saveSettings(new)
                                     settings = new
                                 },
-                                onCancel = { tab = HomeTab.HOSTS },
+                                showBack = false,
                             )
                         }
                     }

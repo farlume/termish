@@ -153,24 +153,19 @@ fun TerminalScreen(
 
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // 头部：返回按钮 + 标题 + 状态，底部分隔线与终端画布区分
-        Column(Modifier.fillMaxWidth().background(theme.background())) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = { requestBack() }) {
-                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = theme.foreground())
-                }
-                Text(controller.title, style = MaterialTheme.typography.titleSmall, color = theme.foreground())
-                Spacer(Modifier.weight(1f))
-                ConnectionStatusIndicator(
-                    status = controller.status,
-                    reconnecting = controller.status == ConnStatus.CONNECTING && controller.errorMessage != null,
-                    modifier = Modifier.padding(end = 12.dp),
-                )
-            }
-            HorizontalDivider(color = theme.foreground().copy(alpha = 0.15f))
+        // 头部：返回 + 标题 + 实时连接状态（通用紧凑页头，终端配色）
+        MsshHeader(
+            title = controller.title,
+            onBack = requestBack,
+            containerColor = theme.background(),
+            contentColor = theme.foreground(),
+            statusBarPadding = false,
+        ) {
+            ConnectionStatusIndicator(
+                status = controller.status,
+                reconnecting = controller.status == ConnStatus.CONNECTING && controller.errorMessage != null,
+                modifier = Modifier.padding(end = 12.dp),
+            )
         }
 
         controller.errorMessage?.let {

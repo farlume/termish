@@ -16,7 +16,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,12 +47,13 @@ fun HostEditScreen(
     var quickCommands by remember {
         mutableStateOf(existing?.quickCommands?.joinToString("\n") { "${it.label}:${it.command}" } ?: "")
     }
+    var startupCommand by remember { mutableStateOf(existing?.startupCommand ?: "") }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text(if (existing == null) "添加主机" else "编辑主机") },
-                navigationIcon = { TextButton(onClick = onCancel) { Text("取消") } },
+            MsshHeader(
+                title = if (existing == null) "添加主机" else "编辑主机",
+                onBack = onCancel,
                 actions = {
                     TextButton(onClick = {
                         val id = existing?.id ?: newId()
@@ -69,6 +69,7 @@ fun HostEditScreen(
                             createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
                             lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                             knownHostFingerprint = existing?.knownHostFingerprint,
+                            startupCommand = startupCommand.trim(),
                         )
                         onSave(host, password, privateKey)
                     }) { Text("保存") }
@@ -122,6 +123,12 @@ fun HostEditScreen(
                 quickCommands, { quickCommands = it }, Modifier.fillMaxWidth(),
                 label = { Text("快速命令（每行「标签:命令」）") },
                 minLines = 3,
+            )
+            OutlinedTextField(
+                startupCommand, { startupCommand = it }, Modifier.fillMaxWidth(),
+                label = { Text("启动命令（连接后自动执行）") },
+                placeholder = { Text("tmux new -A -s main（重连恢复现场）") },
+                singleLine = true,
             )
         }
     }

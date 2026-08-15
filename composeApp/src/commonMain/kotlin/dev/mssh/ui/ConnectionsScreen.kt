@@ -3,9 +3,6 @@ package dev.mssh.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -15,10 +12,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -39,7 +37,7 @@ fun ConnectionsScreen(
     onClose: (TerminalController) -> Unit,
 ) {
     Scaffold(
-        topBar = { TopAppBar(title = { Text("连接") }) },
+        topBar = { MsshHeader(title = "连接") },
     ) { padding ->
         if (sessions.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
@@ -53,25 +51,27 @@ fun ConnectionsScreen(
         }
         LazyColumn(Modifier.fillMaxSize().padding(padding)) {
             items(sessions, key = { it.host.id }) { controller ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { onOpen(controller) }.padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .clickable { onOpen(controller) },
                 ) {
-                    Box(Modifier.size(10.dp).clip(CircleShape).background(statusColor(controller.status)))
-                    Spacer(Modifier.size(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(controller.title, style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "${controller.host.username}@${controller.host.hostname}:${controller.host.port} · ${statusText(controller.status)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        )
-                    }
-                    IconButton(onClick = { onClose(controller) }) {
-                        Icon(Icons.Default.Close, contentDescription = "断开")
-                    }
+                    ListItem(
+                        headlineContent = { Text(controller.title) },
+                        supportingContent = {
+                            Text("${controller.host.username}@${controller.host.hostname}:${controller.host.port} · ${statusText(controller.status)}")
+                        },
+                        leadingContent = {
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(statusColor(controller.status)))
+                        },
+                        trailingContent = {
+                            IconButton(onClick = { onClose(controller) }) {
+                                Icon(Icons.Default.Close, contentDescription = "断开")
+                            }
+                        },
+                    )
                 }
-                HorizontalDivider()
             }
         }
     }
