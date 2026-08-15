@@ -80,10 +80,12 @@ class TerminalController(
     }
 
     fun connect(columns: Int, rows: Int) {
-        if (status != ConnStatus.IDLE) return
+        // 允许 IDLE / 已断开 / 失败状态下（重）连接，缓冲保留
+        if (status != ConnStatus.IDLE && status != ConnStatus.CLOSED && status != ConnStatus.ERROR) return
         lastCols = columns
         lastRows = rows
         reconnectAttempts = 0
+        errorMessage = null
         doConnect()
     }
 
@@ -107,6 +109,7 @@ class TerminalController(
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
+                errorMessage = null
                 startKeepAlive()
                 // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
                 if (host.startupCommand.isNotBlank()) {

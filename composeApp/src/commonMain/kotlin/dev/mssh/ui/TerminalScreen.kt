@@ -1,6 +1,7 @@
 package dev.mssh.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,6 +82,8 @@ fun TerminalScreen(
     theme: TerminalTheme,
     settings: dev.mssh.data.AppSettings,
     onBack: () -> Unit,
+    /** 非空时，连接中的会话返回先弹「保留策略」选择。 */
+    onBackWithPolicy: ((SessionKeepPolicy) -> Unit)? = null,
 ) {
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
@@ -108,9 +111,15 @@ fun TerminalScreen(
         }
     }
 
-    // 返回：会话保留在 SessionManager 继续运行（前台服务保活），
-    // 从主页「连接」tab 可重新进入；断开连接在连接页操作。
-    val requestBack = { onBack() }
+    // 返回：连接中的会话先弹保留策略（常驻/保留 10 分钟/断开）；其余直接回退
+    var showLeaveDialog by remember { mutableStateOf(false) }
+    val requestBack = {
+        if (controller.isConnected() && onBackWithPolicy != null) {
+            showLeaveDialog = true
+        } else {
+            onBack()
+        }
+    }
 
     // 拦截系统返回（手势/返回键），与点击返回按钮一致
     PlatformBackHandler(enabled = true, onBack = requestBack)
@@ -144,6 +153,33 @@ fun TerminalScreen(
         }
     }
 
+    // 离开终端页的会话保留策略选择
+    if (showLeaveDialog && onBackWithPolicy != null) {
+        AlertDialog(
+            onDismissRequest = { showLeaveDialog = false },
+            title = { Text("保留此会话？") },
+            text = {
+                Column {
+                    LeavePolicyOption("常驻后台", "保持连接，随时从「连接」页重入") {
+                        showLeaveDialog = false
+                        onBackWithPolicy(SessionKeepPolicy.KEEP_ALIVE)
+                    }
+                    LeavePolicyOption("保留 10 分钟", "超时后自动断开") {
+                        showLeaveDialog = false
+                        onBackWithPolicy(SessionKeepPolicy.KEEP_10_MIN)
+                    }
+                    LeavePolicyOption("立即断开", "关闭会话") {
+                        showLeaveDialog = false
+                        onBackWithPolicy(SessionKeepPolicy.DISCONNECT)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLeaveDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
     val hostKey = controller.hostKeyPrompt
     if (hostKey != null) {
         HostKeyDialog(hostKey.key) { accept ->
@@ -168,8 +204,22 @@ fun TerminalScreen(
             )
         }
 
+        // 重连/错误飘条：重连中=琥珀色，失败=红色；跟随终端主题背景
         controller.errorMessage?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 8.dp))
+            val bannerColor = if (controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED) {
+                androidx.compose.ui.graphics.Color(0xFFEF5350)
+            } else {
+                androidx.compose.ui.graphics.Color(0xFFFFA726)
+            }
+            Text(
+                it,
+                color = bannerColor,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(bannerColor.copy(alpha = 0.12f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
         }
 
         // 快速命令
@@ -338,6 +388,21 @@ private fun ConnectionStatusIndicator(
         Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
         Spacer(Modifier.size(6.dp))
         Text(label, color = Color(0xFF9E9E9E), style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/** 离开会话弹窗的选项行。 */
+@Composable
+private fun LeavePolicyOption(title: String, subtitle: String, onClick: () -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            subtitle,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+        )
     }
 }
 

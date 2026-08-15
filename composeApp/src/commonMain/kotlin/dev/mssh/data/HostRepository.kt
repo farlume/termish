@@ -69,5 +69,23 @@ class HostRepository(
         settings.putString(settingsKey, json.encodeToString(s))
     }
 
+    // ---------- 最近会话（连接页列表持久化） ----------
+
+    private val recentSessionsKey = "mssh.recent_sessions.v1"
+
+    /** 最近会话的主机 id 列表（重启后恢复连接页，状态为未连接，点击重连）。 */
+    fun loadRecentSessionHostIds(): List<String> {
+        val raw = settings.getStringOrNull(recentSessionsKey) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<String>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveRecentSessionHostIds(ids: List<String>) {
+        settings.putString(recentSessionsKey, json.encodeToString(ids))
+    }
+
     private fun currentTimeMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
 }

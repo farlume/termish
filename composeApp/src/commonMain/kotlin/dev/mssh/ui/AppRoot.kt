@@ -44,6 +44,18 @@ fun AppRoot(repository: HostRepository) {
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val sessionManager = remember { SessionManager(repository) }
+    // 恢复上次运行时的会话列表（仅一次；进程死亡连接必死，恢复为未连接可重连）
+    var sessionsRestored by remember { mutableStateOf(false) }
+    if (!sessionsRestored) {
+        sessionManager.restoreRecent(hosts, settings.autoReconnect)
+        sessionsRestored = true
+    }
+
+    // 全局返回栈：非主页 → 回主页；主页非主机 tab → 回主机 tab；否则交给系统退出
+    var homeTab by remember { mutableStateOf(HomeTab.HOSTS) }
+    PlatformBackHandler(enabled = screen != Screen.Home || homeTab != HomeTab.HOSTS) {
+        if (screen != Screen.Home) screen = Screen.Home else homeTab = HomeTab.HOSTS
+    }
 
     fun refreshHosts() {
         hosts = repository.listHosts()
@@ -54,7 +66,6 @@ fun AppRoot(repository: HostRepository) {
     MsshTheme(settings.theme) {
         when (val s = screen) {
             Screen.Home -> {
-                var tab by remember { mutableStateOf(HomeTab.HOSTS) }
                 Scaffold(
                     // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
                     // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
@@ -62,14 +73,14 @@ fun AppRoot(repository: HostRepository) {
                     bottomBar = {
                         NavigationBar {
                             NavigationBarItem(
-                                selected = tab == HomeTab.HOSTS,
-                                onClick = { tab = HomeTab.HOSTS },
+                                selected = homeTab == HomeTab.HOSTS,
+                                onClick = { homeTab = HomeTab.HOSTS },
                                 icon = { Icon(Icons.Default.Dns, contentDescription = "主机") },
                                 label = { Text("主机") },
                             )
                             NavigationBarItem(
-                                selected = tab == HomeTab.CONNECTIONS,
-                                onClick = { tab = HomeTab.CONNECTIONS },
+                                selected = homeTab == HomeTab.CONNECTIONS,
+                                onClick = { homeTab = HomeTab.CONNECTIONS },
                                 icon = {
                                     BadgedBox(badge = {
                                         if (sessionManager.sessions.isNotEmpty()) {
@@ -82,8 +93,8 @@ fun AppRoot(repository: HostRepository) {
                                 label = { Text("连接") },
                             )
                             NavigationBarItem(
-                                selected = tab == HomeTab.SETTINGS,
-                                onClick = { tab = HomeTab.SETTINGS },
+                                selected = homeTab == HomeTab.SETTINGS,
+                                onClick = { homeTab = HomeTab.SETTINGS },
                                 icon = { Icon(Icons.Default.Settings, contentDescription = "设置") },
                                 label = { Text("设置") },
                             )
@@ -91,13 +102,14 @@ fun AppRoot(repository: HostRepository) {
                     },
                 ) { padding ->
                     Box(Modifier.padding(padding)) {
-                        when (tab) {
+                        when (homeTab) {
                             HomeTab.HOSTS -> HostListScreen(
                                 hosts = hosts,
                                 onAdd = { screen = Screen.Edit(null) },
                                 onEdit = { screen = Screen.Edit(it.id) },
                                 onConnect = { host ->
                                     val controller = sessionManager.open(host, settings.autoReconnect)
+                                    sessionManager.cancelScheduledClose(controller)
                                     screen = Screen.Terminal(controller)
                                 },
                                 onDelete = { host ->
@@ -111,9 +123,17 @@ fun AppRoot(repository: HostRepository) {
 
                             HomeTab.CONNECTIONS -> ConnectionsScreen(
                                 sessions = sessionManager.sessions,
-                                onOpen = { screen = Screen.Terminal(it) },
+                                onOpen = {
+                                    sessionManager.cancelScheduledClose(it)
+                                    screen = Screen.Terminal(it)
+                                },
                                 onClose = {
-                                    sessionManager.close(it)
+                                    // 活跃会话 → 断开（保留列表）；已断开 → 移除
+                                    if (it.status == ConnStatus.CONNECTED || it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) {
+                                        sessionManager.disconnect(it)
+                                    } else {
+                                        sessionManager.remove(it)
+                                    }
                                     refreshHosts()
                                 },
                             )
@@ -125,7 +145,6 @@ fun AppRoot(repository: HostRepository) {
                                     repository.saveSettings(new)
                                     settings = new
                                 },
-                                showBack = false,
                             )
                         }
                     }
@@ -154,6 +173,16 @@ fun AppRoot(repository: HostRepository) {
                 theme = terminalTheme,
                 settings = settings,
                 onBack = {
+                    refreshHosts()
+                    screen = Screen.Home
+                },
+                onBackWithPolicy = { policy ->
+                    when (policy) {
+                        SessionKeepPolicy.KEEP_10_MIN ->
+                            sessionManager.scheduleClose(s.controller, 10 * 60 * 1000L)
+                        SessionKeepPolicy.DISCONNECT -> sessionManager.disconnect(s.controller)
+                        SessionKeepPolicy.KEEP_ALIVE -> {}
+                    }
                     refreshHosts()
                     screen = Screen.Home
                 },

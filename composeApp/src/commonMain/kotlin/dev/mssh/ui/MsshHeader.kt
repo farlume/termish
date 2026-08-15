@@ -22,6 +22,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
@@ -63,4 +64,26 @@ fun MsshHeader(
         }
         HorizontalDivider(color = contentColor.copy(alpha = 0.15f))
     }
+}
+
+/**
+ * 大标题页头（iOS 风格）：顶级 tab 页使用。
+ * 28sp 加粗大标题 + 充足留白，无下边框，视觉上更通透。
+ */
+@Composable
+fun MsshLargeHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+) {
+    Text(
+        title,
+        style = MaterialTheme.typography.headlineSmall,
+        fontWeight = FontWeight.Bold,
+        color = contentColor,
+        modifier = modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
+    )
 }

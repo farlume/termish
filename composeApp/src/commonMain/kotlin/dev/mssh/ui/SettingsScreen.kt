@@ -107,7 +107,7 @@ fun SettingsScreen(
     )
 
     Scaffold(
-        topBar = { MsshHeader(title = "设置", onBack = if (showBack) onBack else null) },
+        topBar = { MsshLargeHeader(title = "设置") },
     ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),

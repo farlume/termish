@@ -54,7 +54,7 @@ fun HostListScreen(
 
     Scaffold(
         topBar = {
-            MsshHeader(title = "MSSH")
+            MsshLargeHeader(title = "MSSH")
         },
         floatingActionButton = {
             FloatingActionButton(onClick = onAdd) { Icon(Icons.Default.Add, "添加主机") }
