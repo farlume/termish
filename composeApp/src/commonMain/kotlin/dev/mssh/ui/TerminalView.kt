@@ -1,7 +1,6 @@
 package dev.mssh.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
@@ -10,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -33,6 +33,7 @@ import dev.mssh.term.TerminalCell
 import dev.mssh.term.TerminalLine
 import dev.mssh.term.TerminalPalette
 import dev.mssh.ui.theme.TerminalTheme
+import dev.mssh.util.monospaceFontFamily
 
 private fun cellColor(c: Int, theme: TerminalTheme): Color {
     val idx = TerminalPalette.BASIC_16.indexOf(c)
@@ -78,13 +79,14 @@ fun TerminalView(
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
 
     val fontSize = fontSizeState.sp
-    val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize)
+    val style = TextStyle(fontFamily = monospaceFontFamily(), fontSize = fontSize)
     val sample = remember(fontSizeState) { textMeasurer.measure("W", style) }
     val cellW = sample.size.width.toFloat()
     val cellH = (sample.size.height.toFloat() * 1.2f).coerceAtLeast(1f)
     val textTop = (cellH - sample.size.height) / 2f
 
     val buffer = controller.buffer
+    val latestCanvasSize by rememberUpdatedState(canvasSize)
 
     // 尺寸或字号变化时重新计算行列并同步 PTY
     LaunchedEffect(canvasSize, fontSizeState) {
@@ -116,19 +118,35 @@ fun TerminalView(
                 )
             }
             .pointerInput(Unit) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    // 向上拖动（dragAmount.y > 0）查看回看
-                    val delta = (dragAmount.y / cellH).toInt()
-                    if (delta != 0) {
-                        scrollOffset = (scrollOffset + delta).coerceIn(0, buffer.scrollbackSize())
-                    }
-                }
-            }
-            .pointerInput(Unit) {
-                detectTransformGestures { _, _, zoom, _ ->
-                    fontSizeState = (fontSizeState * zoom).coerceIn(6f, 40f)
-                }
+                var accumulated = 0f
+                // 统一用 transform 手势：单指 pan 滚动回看，双指 zoom 缩放（避免多个 detector 互相抢事件）
+                detectTransformGestures(
+                    panZoomLock = true,
+                    onGesture = { centroid, pan, zoom, _ ->
+                        if (zoom != 1f) {
+                            fontSizeState = (fontSizeState * zoom).coerceIn(6f, 40f)
+                        }
+                        if (centroid.x >= latestCanvasSize.width - 24f && buffer.scrollbackSize() > 0) {
+                            // 滚动条拖动：手指位置映射到历史位置
+                            val sb = buffer.scrollbackSize()
+                            val h = latestCanvasSize.height
+                            if (sb > 0 && h > 0) {
+                                val total = buffer.totalLines().toFloat()
+                                val trackH = h.toFloat()
+                                val thumbH = (buffer.rows / total * trackH).coerceAtLeast(24f)
+                                val ratio = (centroid.y / (trackH - thumbH)).coerceIn(0f, 1f)
+                                scrollOffset = (ratio * sb).toInt().coerceIn(0, sb)
+                            }
+                        } else {
+                            accumulated += pan.y
+                            val rows = (accumulated / cellH).toInt()
+                            if (rows != 0) {
+                                scrollOffset = (scrollOffset - rows).coerceIn(0, buffer.scrollbackSize())
+                                accumulated -= rows * cellH
+                            }
+                        }
+                    },
+                )
             },
     ) {
         // 观察重绘序号触发 redraw（否则 Compose 会因 draw 内容未变而跳过重绘）
@@ -288,6 +306,18 @@ fun TerminalView(
                     }
                 }
             }
+        }
+
+        // 滚动条（有历史时显示在右侧，可拖动）
+        if (scrollback > 0) {
+            val barW = 6f
+            val barX = size.width - barW - 4f
+            val trackH = (size.height - 4f).coerceAtLeast(1f)
+            val total = totalLines.toFloat().coerceAtLeast(buffer.rows.toFloat())
+            val thumbH = (buffer.rows / total * trackH).coerceAtLeast(24f)
+            val thumbY = (offset.toFloat() / scrollback * (trackH - thumbH)).coerceIn(0f, trackH - thumbH)
+            drawRect(theme.foreground().copy(alpha = 0.12f), Offset(barX, 2f), Size(barW, trackH))
+            drawRect(theme.foreground().copy(alpha = 0.45f), Offset(barX, 2f + thumbY), Size(barW, thumbH))
         }
     }
 }

@@ -2,10 +2,12 @@ package dev.mssh.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -14,11 +16,15 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarHost
@@ -36,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -62,6 +69,20 @@ fun TerminalScreen(
     var altActive by remember { mutableStateOf(false) }
     var inputValue by remember { mutableStateOf(TextFieldValue("")) }
     val inputFocusRequester = remember { FocusRequester() }
+    var showDisconnectDialog by remember { mutableStateOf(false) }
+
+    // 返回：连接中先确认，否则直接关闭并回退
+    val requestBack = {
+        if (controller.isConnected()) {
+            showDisconnectDialog = true
+        } else {
+            controller.close()
+            onBack()
+        }
+    }
+
+    // 拦截系统返回（手势/返回键），与点击返回按钮一致
+    PlatformBackHandler(enabled = true, onBack = requestBack)
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 
@@ -93,21 +114,44 @@ fun TerminalScreen(
         }
     }
 
+    if (showDisconnectDialog) {
+        AlertDialog(
+            onDismissRequest = { showDisconnectDialog = false },
+            title = { Text("断开连接") },
+            text = { Text("当前会话已连接，确定要断开并返回吗？") },
+            confirmButton = {
+                Button(onClick = {
+                    showDisconnectDialog = false
+                    controller.close()
+                    onBack()
+                }) { Text("断开并返回") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDisconnectDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // 状态栏（与终端画布同色，视觉上连成一体）
-        Row(
-            Modifier.fillMaxWidth().background(theme.background()).padding(horizontal = 8.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(controller.title, style = MaterialTheme.typography.titleSmall)
-            when (controller.status) {
-                ConnStatus.CONNECTING, ConnStatus.AUTH -> CircularProgressIndicator(Modifier.padding(8.dp), strokeWidth = 2.dp)
-                ConnStatus.ERROR -> Text("连接失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                ConnStatus.CLOSED -> Text("已断开", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                else -> {}
+        // 头部：返回按钮 + 标题 + 状态，底部分隔线与终端画布区分
+        Column(Modifier.fillMaxWidth().background(theme.background())) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = { requestBack() }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = theme.foreground())
+                }
+                Text(controller.title, style = MaterialTheme.typography.titleSmall, color = theme.foreground())
+                Spacer(Modifier.weight(1f))
+                when (controller.status) {
+                    ConnStatus.CONNECTING, ConnStatus.AUTH -> CircularProgressIndicator(Modifier.padding(8.dp), strokeWidth = 2.dp)
+                    ConnStatus.ERROR -> Text("连接失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                    ConnStatus.CLOSED -> Text("已断开", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+                    else -> {}
+                }
             }
-            TextButton(onClick = { controller.close(); onBack() }) { Text("断开") }
+            HorizontalDivider(color = theme.foreground().copy(alpha = 0.15f))
         }
 
         controller.errorMessage?.let {
@@ -136,8 +180,8 @@ fun TerminalScreen(
 
         SnackbarHost(snackbar)
 
-        // 输入框 + 键盘工具栏
-        Column(Modifier.imePadding()) {
+        // 输入框 + 键盘工具栏（背景跟随终端主题，Light 配色下不会发黑）
+        Column(Modifier.imePadding().background(theme.background())) {
             if (settings.keyboardToolbarVisible) {
                 KeyToolbar(
                     ctrlActive = ctrlActive,
@@ -146,6 +190,7 @@ fun TerminalScreen(
                     onToggleAlt = { altActive = !altActive },
                     applicationCursorKeys = appCursorKeys,
                     onKey = { key -> controller.sendBytes(specialKeyBytes(key, appCursorKeys)) },
+                    theme = theme,
                 )
             }
             BasicTextField(
@@ -171,6 +216,8 @@ fun TerminalScreen(
                     inputValue = if (newText.contains('\n')) TextFieldValue("") else new
                 },
                 modifier = Modifier.fillMaxWidth().padding(4.dp).focusRequester(inputFocusRequester),
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = theme.foreground()),
+                cursorBrush = SolidColor(theme.cursor()),
                 keyboardOptions = KeyboardOptions(
                     keyboardType = KeyboardType.Ascii,
                     capitalization = KeyboardCapitalization.None,
@@ -181,11 +228,11 @@ fun TerminalScreen(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
+                            .border(1.dp, theme.foreground().copy(alpha = 0.4f), MaterialTheme.shapes.small)
                             .padding(12.dp),
                     ) {
                         if (inputValue.text.isEmpty()) {
-                            Text("输入命令…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("输入命令…", color = theme.foreground().copy(alpha = 0.5f))
                         }
                         innerTextField()
                     }
