@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.gestures.rememberScrollableState
 import androidx.compose.foundation.gestures.scrollable
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -34,6 +35,10 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import dev.mssh.term.CellAttr
@@ -103,8 +108,12 @@ fun TerminalView(
     // 首次量到有效画布尺寸后置位（用真实行列建连）
     var readySent by remember { mutableStateOf(false) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    // 惯性滚轮动画作用域（随组合销毁自动取消）
-    val inertiaScope = rememberCoroutineScope()
+    // 惯性滚轮动画作用域：rememberCoroutineScope 在部分平台上调度不保证立即执行，
+    // 这里用显式 Main 作用域 + 组合销毁时取消
+    val inertiaScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
+    DisposableEffect(Unit) {
+        onDispose { inertiaScope.cancel() }
+    }
 
     val fontFamily = monospaceFontFamily()
     // 目标列数模式：字形宽度与字号成线性关系，用 12sp 参考测量反算所需字号
@@ -269,7 +278,7 @@ fun TerminalView(
                                     val dtMs = (newest.first - oldest.first).coerceAtLeast(16L)
                                     (newest.second - oldest.second) * 1000f / dtMs
                                 } else 0f
-                                if (kotlin.math.abs(velocityY) >= 250f) {
+                                if (kotlin.math.abs(velocityY) >= 150f) {
                                     val btn = if (velocityY > 0f) 64 else 65
                                     val (wc, wr) = pointerCell(lastPos)
                                     val wheelRow = maxOf(wr, 1)
@@ -288,7 +297,7 @@ fun TerminalView(
                                                 }
                                                 accum -= notches * cellH
                                             }
-                                            vel *= 0.93f
+                                            vel *= 0.94f
                                             delay(16)
                                         }
                                     }
@@ -303,7 +312,13 @@ fun TerminalView(
                         prevY = change.position.y
                         lastPos = change.position
                         recent.addLast(change.uptimeMillis to change.position.y)
-                        if (recent.size > 8) recent.removeFirst()
+                        // 只保留最近 ~150ms 的事件：长按后拖动时，长按期的静止事件
+                        // 会稀释速度估算（长按 500ms + 快速拖动 → 平均速度接近 0），
+                        // 惯性就永远不触发。按时间裁剪后速度反映真实拖动速度。
+                        val nowMs = change.uptimeMillis
+                        while (recent.isNotEmpty() && nowMs - recent.first().first > 150L) {
+                            recent.removeFirst()
+                        }
                         totalDx += dx
                         totalDy += dy
                         // 位移超过一格后判定方向并锁定（横向抖动不改变纵向手势）
