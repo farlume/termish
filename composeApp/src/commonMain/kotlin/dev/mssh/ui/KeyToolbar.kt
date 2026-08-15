@@ -26,7 +26,7 @@ enum class SpecialKey(val label: String) {
     ESC("ESC"), TAB("TAB"), CTRL("CTRL"), ALT("ALT"),
     UP("↑"), DOWN("↓"), LEFT("←"), RIGHT("→"),
     HOME("HOME"), END("END"), PGUP("PGUP"), PGDN("PGDN"),
-    SLASH("/"), PIPE("|"), DASH("-"), TILDE("~"), DOLLAR("$"), DOT("."), COLON(":"),
+    CTRL_C("⌃C"), CTRL_D("⌃D"), CTRL_Z("⌃Z"), CTRL_L("⌃L"),
 }
 
 fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray = when (key) {
@@ -40,13 +40,10 @@ fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray 
     SpecialKey.END -> escapeSeq(if (applicationCursorKeys) "OF" else "F")
     SpecialKey.PGUP -> escapeSeq("5~")
     SpecialKey.PGDN -> escapeSeq("6~")
-    SpecialKey.SLASH -> "/".encodeToByteArray()
-    SpecialKey.PIPE -> "|".encodeToByteArray()
-    SpecialKey.DASH -> "-".encodeToByteArray()
-    SpecialKey.TILDE -> "~".encodeToByteArray()
-    SpecialKey.DOLLAR -> "$".encodeToByteArray()
-    SpecialKey.DOT -> ".".encodeToByteArray()
-    SpecialKey.COLON -> ":".encodeToByteArray()
+    SpecialKey.CTRL_C -> byteArrayOf(0x03)
+    SpecialKey.CTRL_D -> byteArrayOf(0x04)
+    SpecialKey.CTRL_Z -> byteArrayOf(0x1a)
+    SpecialKey.CTRL_L -> byteArrayOf(0x0c)
     SpecialKey.CTRL, SpecialKey.ALT -> ByteArray(0)
 }
 
@@ -60,6 +57,8 @@ fun KeyToolbar(
     onToggleAlt: () -> Unit,
     applicationCursorKeys: Boolean,
     onKey: (SpecialKey) -> Unit,
+    onToggleKeyboard: () -> Unit = {},
+    onPaste: () -> Unit = {},
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
 ) {
@@ -70,21 +69,20 @@ fun KeyToolbar(
             .padding(horizontal = 4.dp, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        KeyButton("⌨", false, theme) { onToggleKeyboard() }
         KeyButton("CTRL", ctrlActive, theme) { onToggleCtrl() }
         KeyButton("ALT", altActive, theme) { onToggleAlt() }
         KeyButton("ESC", false, theme) { onKey(SpecialKey.ESC) }
         KeyButton("TAB", false, theme) { onKey(SpecialKey.TAB) }
+        KeyButton("⌃C", false, theme) { onKey(SpecialKey.CTRL_C) }
+        KeyButton("⌃D", false, theme) { onKey(SpecialKey.CTRL_D) }
+        KeyButton("⌃Z", false, theme) { onKey(SpecialKey.CTRL_Z) }
+        KeyButton("⌃L", false, theme) { onKey(SpecialKey.CTRL_L) }
         KeyButton("↑", false, theme) { onKey(SpecialKey.UP) }
         KeyButton("↓", false, theme) { onKey(SpecialKey.DOWN) }
         KeyButton("←", false, theme) { onKey(SpecialKey.LEFT) }
         KeyButton("→", false, theme) { onKey(SpecialKey.RIGHT) }
-        KeyButton("|", false, theme) { onKey(SpecialKey.PIPE) }
-        KeyButton("-", false, theme) { onKey(SpecialKey.DASH) }
-        KeyButton("~", false, theme) { onKey(SpecialKey.TILDE) }
-        KeyButton("$", false, theme) { onKey(SpecialKey.DOLLAR) }
-        KeyButton("/", false, theme) { onKey(SpecialKey.SLASH) }
-        KeyButton(".", false, theme) { onKey(SpecialKey.DOT) }
-        KeyButton(":", false, theme) { onKey(SpecialKey.COLON) }
+        KeyButton("PASTE", false, theme) { onPaste() }
     }
 }
 

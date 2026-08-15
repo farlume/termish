@@ -15,6 +15,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.TextStyle
@@ -68,6 +69,8 @@ fun TerminalView(
     theme: TerminalTheme,
     fontSizeSp: Float,
     targetCols: Int = 0,
+    /** 键盘/工具栏覆盖画布底部的高度（px）：用于向上平移画布保证光标可见。 */
+    coveredBottomPx: Float = 0f,
     onFocusKeyboard: () -> Unit,
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
@@ -99,6 +102,20 @@ fun TerminalView(
     val buffer = controller.buffer
     val latestCanvasSize by rememberUpdatedState(canvasSize)
 
+    // 键盘/工具栏覆盖画布底部时向上平移，保证光标可见（不改变 PTY 尺寸，
+    // 避免全屏程序随键盘弹收反复重排）；用户回看滚动时不平移。
+    // frame 每次输出自增，读取它以在输出后重算平移。
+    @Suppress("UNUSED_VARIABLE")
+    val frame = controller.frame
+    val panUp = run {
+        if (scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
+        val cursorBottomY = (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
+        val visibleBottomY = canvasSize.height.toFloat() - coveredBottomPx
+        if (cursorBottomY > visibleBottomY) {
+            (cursorBottomY - visibleBottomY).coerceAtMost(canvasSize.height.toFloat())
+        } else 0f
+    }
+
     // 尺寸或字号变化时重新计算行列并同步 PTY
     LaunchedEffect(canvasSize, effectiveFontSizeSp) {
         val cols = (canvasSize.width / cellW).toInt().coerceAtLeast(1)
@@ -108,6 +125,7 @@ fun TerminalView(
 
     Canvas(
         modifier
+            .graphicsLayer { translationY = -panUp }
             .onSizeChanged { size ->
                 canvasSize = size
             }

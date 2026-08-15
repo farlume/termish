@@ -8,9 +8,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
@@ -34,16 +40,27 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,6 +71,7 @@ import dev.mssh.ui.theme.TerminalTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
     controller: TerminalController,
@@ -68,8 +86,23 @@ fun TerminalScreen(
     var ctrlActive by remember { mutableStateOf(false) }
     var altActive by remember { mutableStateOf(false) }
     var inputValue by remember { mutableStateOf(TextFieldValue("")) }
+    // 已提交基线：输入法组合态（拼音等）不参与 diff，提交时才更新
+    var committedText by remember { mutableStateOf("") }
+    // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
+    var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
     val inputFocusRequester = remember { FocusRequester() }
     var showDisconnectDialog by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val imeVisible = WindowInsets.isImeVisible
+    // 点画布/键盘按钮：焦点变更与输入连接建立是异步的，立即 show() 常被忽略，
+    // 延迟一小拍再显式拉起键盘。
+    val showKeyboard: () -> Unit = {
+        inputFocusRequester.requestFocus()
+        scope.launch {
+            delay(150)
+            keyboardController?.show()
+        }
+    }
 
     // 返回：连接中先确认，否则直接关闭并回退
     val requestBack = {
@@ -163,82 +196,155 @@ fun TerminalScreen(
             QuickCommandsBar(controller)
         }
 
-        // 终端画布
-        Box(Modifier.weight(1f)) {
+        // 终端画布 + 悬浮工具栏：键盘弹起时不挤压画布（adjustNothing），避免 vim/tmux
+        // 等全屏程序随键盘弹收反复 SIGWINCH 重排；由 TerminalView 向上平移保证光标可见。
+        val density = LocalDensity.current
+        val coveredBottomPx = maxOf(
+            WindowInsets.ime.getBottom(density).toFloat(),
+            WindowInsets.navigationBars.getBottom(density).toFloat(),
+        ) + toolbarHeightPx
+        Box(Modifier.weight(1f).clipToBounds()) {
             TerminalView(
                 controller = controller,
                 theme = theme,
                 fontSizeSp = settings.terminalFontSize.toFloat(),
                 targetCols = settings.terminalTargetCols,
-                onFocusKeyboard = { inputFocusRequester.requestFocus() },
+                coveredBottomPx = coveredBottomPx,
+                onFocusKeyboard = { showKeyboard() },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))
                     scope.launch { snackbar.showSnackbar("已复制") }
                 },
                 modifier = Modifier.fillMaxSize(),
             )
-        }
 
-        SnackbarHost(snackbar)
+            SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
 
-        // 输入框 + 键盘工具栏（背景跟随终端主题，Light 配色下不会发黑）
-        Column(Modifier.imePadding().background(theme.background())) {
-            if (settings.keyboardToolbarVisible) {
-                KeyToolbar(
-                    ctrlActive = ctrlActive,
-                    altActive = altActive,
-                    onToggleCtrl = { ctrlActive = !ctrlActive },
-                    onToggleAlt = { altActive = !altActive },
-                    applicationCursorKeys = appCursorKeys,
-                    onKey = { key -> controller.sendBytes(specialKeyBytes(key, appCursorKeys)) },
-                    theme = theme,
-                )
-            }
-            BasicTextField(
-                value = inputValue,
-                onValueChange = { new ->
-                    val oldText = inputValue.text
-                    val newText = new.text
-                    when {
-                        newText.length > oldText.length -> {
-                            val added = newText.substring(oldText.length)
-                            sendTyped(controller, added, ctrlActive, altActive)
+            // 底部悬浮键盘工具栏：半透明背景覆盖画布底部。
+            // 外层负责避让导航条/键盘；内层单独测内容高度（padding 会算进
+            // 外层总高，直接测外层会把键盘高度重复计入平移量）。
+            Column(
+                Modifier.align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .background(theme.background().copy(alpha = 0.92f))
+                    .navigationBarsPadding()
+                    .imePadding(),
+            ) {
+                Column(Modifier.onSizeChanged { toolbarHeightPx = it.height.toFloat() }) {
+                if (settings.keyboardToolbarVisible) {
+                    KeyToolbar(
+                        ctrlActive = ctrlActive,
+                        altActive = altActive,
+                        onToggleCtrl = { ctrlActive = !ctrlActive },
+                        onToggleAlt = { altActive = !altActive },
+                        applicationCursorKeys = appCursorKeys,
+                        onKey = { key ->
+                            controller.sendBytes(specialKeyBytes(key, appCursorKeys))
+                            // 任何按键发出后消耗粘性修饰键，避免 CTRL 残留污染后续输入
+                            // （残留会导致下个字母变成 Ctrl+D/C 等而意外退出会话）
                             ctrlActive = false
                             altActive = false
+                        },
+                        onToggleKeyboard = {
+                            if (imeVisible) keyboardController?.hide() else showKeyboard()
+                        },
+                        onPaste = {
+                            val text = clipboard.getText()?.text
+                            if (!text.isNullOrEmpty()) {
+                                controller.sendText(text)
+                                scope.launch { snackbar.showSnackbar("已粘贴") }
+                            }
+                            ctrlActive = false
+                            altActive = false
+                        },
+                        theme = theme,
+                    )
+                }
+                // 常驻输入框：组合态（拼音等）只更新视图不发送；提交时按已提交基线 diff。
+                BasicTextField(
+                    value = inputValue,
+                    onValueChange = { new ->
+                        if (new.composition != null) {
+                            inputValue = new
+                            return@BasicTextField
                         }
-                        newText.length < oldText.length -> {
-                            // 退格
-                            repeat(oldText.length - newText.length) {
-                                controller.sendBytes(byteArrayOf(0x7f))
+                        val oldText = committedText
+                        val newText = new.text
+                        when {
+                            newText.length > oldText.length && newText.startsWith(oldText) -> {
+                                sendTyped(controller, newText.substring(oldText.length), ctrlActive, altActive)
+                                ctrlActive = false
+                                altActive = false
+                            }
+                            newText.length < oldText.length && oldText.startsWith(newText) -> {
+                                repeat(oldText.length - newText.length) {
+                                    controller.sendBytes(byteArrayOf(0x7f))
+                                }
+                            }
+                            newText != oldText -> {
+                                // 非尾部编辑（如粘贴覆盖选区）：删旧发新
+                                repeat(oldText.length) { controller.sendBytes(byteArrayOf(0x7f)) }
+                                sendTyped(controller, newText, ctrlActive, altActive)
+                                ctrlActive = false
+                                altActive = false
                             }
                         }
-                    }
-                    // 输入换行（Enter）后清空输入行；否则保留以正确计算增量
-                    inputValue = if (newText.contains('\n')) TextFieldValue("") else new
-                },
-                modifier = Modifier.fillMaxWidth().padding(4.dp).focusRequester(inputFocusRequester),
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = theme.foreground()),
-                cursorBrush = SolidColor(theme.cursor()),
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Ascii,
-                    capitalization = KeyboardCapitalization.None,
-                    autoCorrectEnabled = false,
-                ),
-                singleLine = false,
-                decorationBox = { innerTextField ->
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, theme.foreground().copy(alpha = 0.4f), MaterialTheme.shapes.small)
-                            .padding(12.dp),
-                    ) {
-                        if (inputValue.text.isEmpty()) {
-                            Text("输入命令…", color = theme.foreground().copy(alpha = 0.5f))
+                        committedText = newText
+                        // Enter 后或缓冲过长时清空输入框
+                        if (newText.contains('\n') || newText.length > 64) {
+                            committedText = ""
+                            inputValue = TextFieldValue("")
+                        } else {
+                            inputValue = new
                         }
-                        innerTextField()
-                    }
-                },
-            )
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp).padding(4.dp)
+                        .focusRequester(inputFocusRequester)
+                        // 退格作为按键事件统一处理：输入框为空时（Enter 后/快速命令后）
+                        // 也要向远端发 0x7f，否则远端行有内容却删不掉。
+                        // 输入法组合态除外：组合文本尚未发给远端，让 IME 自己删。
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.Backspace &&
+                                inputValue.composition == null
+                            ) {
+                                controller.sendBytes(byteArrayOf(0x7f))
+                                if (committedText.isNotEmpty()) {
+                                    committedText = committedText.dropLast(1)
+                                    inputValue = TextFieldValue(committedText)
+                                }
+                                true
+                            } else false
+                        }
+                        // 兜底：焦点真正到手后再 show()，解决部分机型 requestFocus
+                        // 后立即 show 被忽略（键盘拉不起来）的问题
+                        .onFocusChanged { if (it.isFocused) keyboardController?.show() },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = theme.foreground()),
+                    cursorBrush = SolidColor(theme.cursor()),
+                    keyboardOptions = KeyboardOptions(
+                        // 用 Text 而不是 Ascii：Ascii 会让输入法禁用中文候选
+                        keyboardType = KeyboardType.Text,
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrectEnabled = false,
+                    ),
+                    // 多行模式以捕获输入法 Enter（\n → CR）；高度被 heightIn 限制，
+                    // 长粘贴/长命令不会把工具栏顶出屏幕
+                    singleLine = false,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, theme.foreground().copy(alpha = 0.4f), MaterialTheme.shapes.small)
+                                .padding(12.dp),
+                        ) {
+                            if (inputValue.text.isEmpty()) {
+                                Text("输入命令…", color = theme.foreground().copy(alpha = 0.5f))
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
+                }
+            }
         }
     }
 }
