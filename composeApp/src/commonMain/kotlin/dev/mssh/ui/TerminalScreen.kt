@@ -42,6 +42,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import dev.mssh.ssh.AuthPrompt
 import dev.mssh.ui.theme.TerminalTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -64,6 +65,16 @@ fun TerminalScreen(
 
     LaunchedEffect(Unit) {
         controller.connect(80, 24)
+    }
+
+    // 光标闪烁：连接建立后周期性切换可见性并重绘
+    LaunchedEffect(controller.status, settings.cursorBlink) {
+        while (controller.status == ConnStatus.CONNECTED) {
+            delay(530)
+            if (settings.cursorBlink) {
+                controller.blinkCursor()
+            }
+        }
     }
 
     val prompt = controller.authPrompt

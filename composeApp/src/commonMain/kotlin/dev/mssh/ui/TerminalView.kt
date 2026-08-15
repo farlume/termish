@@ -5,6 +5,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -17,18 +18,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.unit.TextUnit
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import dev.mssh.term.CellAttr
 import dev.mssh.term.CharWidth
 import dev.mssh.term.DEFAULT_BG
 import dev.mssh.term.DEFAULT_FG
+import dev.mssh.term.TerminalBuffer
 import dev.mssh.term.TerminalCell
 import dev.mssh.term.TerminalLine
 import dev.mssh.term.TerminalPalette
@@ -56,6 +56,12 @@ private fun StringBuilder.appendCodePoint(cp: Int) {
 
 private fun codePointToString(cp: Int): String = StringBuilder().appendCodePoint(cp).toString()
 
+private fun currentStartAbs(buffer: TerminalBuffer, scrollOffset: Int): Int {
+    val scrollback = buffer.scrollbackSize()
+    val offset = scrollOffset.coerceIn(0, scrollback)
+    return (buffer.totalLines() - buffer.rows - offset).coerceAtLeast(0)
+}
+
 @Composable
 fun TerminalView(
     controller: TerminalController,
@@ -66,37 +72,40 @@ fun TerminalView(
     modifier: Modifier = Modifier,
 ) {
     val textMeasurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    val fontSize: TextUnit = fontSizeSp.sp
+
+    var scrollOffset by remember { mutableStateOf(0) }
+    var fontSizeState by remember { mutableFloatStateOf(fontSizeSp) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    val fontSize = fontSizeState.sp
     val style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = fontSize)
-    val sample = remember(fontSizeSp) { textMeasurer.measure("W", style) }
+    val sample = remember(fontSizeState) { textMeasurer.measure("W", style) }
     val cellW = sample.size.width.toFloat()
     val cellH = (sample.size.height.toFloat() * 1.2f).coerceAtLeast(1f)
     val textTop = (cellH - sample.size.height) / 2f
 
-    var scrollOffset by remember { mutableStateOf(0) }
-    var fontSizeState by remember { mutableFloatStateOf(fontSizeSp) }
-
     val buffer = controller.buffer
-    val scrollback = buffer.scrollbackSize()
-    val offset = scrollOffset.coerceIn(0, scrollback)
-    val totalLines = buffer.totalLines()
-    val startAbs = (totalLines - buffer.rows - offset).coerceAtLeast(0)
+
+    // 尺寸或字号变化时重新计算行列并同步 PTY
+    LaunchedEffect(canvasSize, fontSizeState) {
+        val cols = (canvasSize.width / cellW).toInt().coerceAtLeast(1)
+        val rows = (canvasSize.height / cellH).toInt().coerceAtLeast(1)
+        controller.resize(cols, rows, canvasSize.width, canvasSize.height)
+    }
 
     Canvas(
         modifier
             .onSizeChanged { size ->
-                val cols = (size.width / cellW).toInt().coerceAtLeast(1)
-                val rows = (size.height / cellH).toInt().coerceAtLeast(1)
-                controller.resize(cols, rows, size.width, size.height)
+                canvasSize = size
             }
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { onFocusKeyboard() },
                     onLongPress = { pos ->
+                        val startAbsNow = currentStartAbs(buffer, scrollOffset)
                         val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
                         val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
-                        val absRow = startAbs + row
+                        val absRow = startAbsNow + row
                         controller.selection.start(absRow, col)
                         controller.selection.extend(absRow, buffer.cols - 1)
                         val text = controller.selection.selectedText()
@@ -118,12 +127,22 @@ fun TerminalView(
             }
             .pointerInput(Unit) {
                 detectTransformGestures { _, _, zoom, _ ->
-                    fontSizeState = (fontSizeState * zoom).coerceIn(8f, 32f)
+                    fontSizeState = (fontSizeState * zoom).coerceIn(6f, 40f)
                 }
             },
     ) {
-        // 背景
-        drawRect(theme.background())
+        // 观察重绘序号触发 redraw（否则 Compose 会因 draw 内容未变而跳过重绘）
+        @Suppress("UNUSED_VARIABLE")
+        val redraw = controller.frame
+
+        // 每次绘制都基于最新 buffer/滚动位置计算可视区
+        val scrollback = buffer.scrollbackSize()
+        val offset = scrollOffset.coerceIn(0, scrollback)
+        val totalLines = buffer.totalLines()
+        val startAbs = (totalLines - buffer.rows - offset).coerceAtLeast(0)
+
+        // 背景（alpha 恒为 1，仅用于消费 redraw 以建立重绘观察）
+        drawRect(theme.background().copy(alpha = if (redraw >= 0L) 1f else 1f))
 
         val lines = ArrayList<TerminalLine>(buffer.rows)
         for (r in 0 until buffer.rows) {
@@ -166,7 +185,6 @@ fun TerminalView(
                 val (fgColor, _) = cellColors(cell, theme)
                 val runStyle = style.copy(color = fgColor)
                 var j = i
-                var cells = 0
                 val sb = StringBuilder()
                 while (j < buffer.cols) {
                     val c2 = line.cells[j]
@@ -175,7 +193,6 @@ fun TerminalView(
                     if (c2.codePoint == ' '.code && c2.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) break
                     sb.appendCodePoint(c2.codePoint)
                     j++
-                    cells++
                 }
                 if (sb.isNotEmpty()) {
                     drawText(
@@ -229,7 +246,6 @@ fun TerminalView(
             for (abs in selTop..selBottom) {
                 val r = abs - startAbs
                 if (r !in 0 until buffer.rows) continue
-                val line = lines[r]
                 val fromCol = if (abs == sel.startRow && abs == sel.endRow) minOf(sel.startCol, sel.endCol)
                 else if (abs == sel.startRow) sel.startCol
                 else if (abs == sel.endRow) sel.endCol

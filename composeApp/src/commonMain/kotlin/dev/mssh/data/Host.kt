@@ -43,7 +43,7 @@ data class AppSettings(
     val theme: ThemeMode = ThemeMode.DARK,
     val terminalThemeIndex: Int = 0,
     val fontSize: Int = 14,
-    val terminalFontSize: Int = 14,
+    val terminalFontSize: Int = 12,
     val keyboardToolbarVisible: Boolean = true,
     val keepaliveSeconds: Int = 30,
     val cursorBlink: Boolean = true,

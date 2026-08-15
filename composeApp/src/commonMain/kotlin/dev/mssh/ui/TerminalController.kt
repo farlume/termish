@@ -174,6 +174,12 @@ class TerminalController(
         session?.resize(columns, rows, widthPx, heightPx)
     }
 
+    /** 光标闪烁：切换可见性并触发重绘。 */
+    fun blinkCursor() {
+        buffer.cursorVisible = !buffer.cursorVisible
+        frame++
+    }
+
     fun close() {
         status = ConnStatus.CLOSED
         session?.close()
