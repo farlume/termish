@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,10 +33,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import dev.mssh.data.SECRET_SERVICE
-import dev.mssh.data.SecretStore
 import dev.mssh.data.Host
 import dev.mssh.data.HostRepository
+import dev.mssh.data.SECRET_SERVICE
+import dev.mssh.data.SecretStore
 import dev.mssh.data.secretAccountFor
 import dev.mssh.ui.theme.MsshTheme
 import dev.mssh.ui.theme.TerminalThemes
@@ -106,122 +107,127 @@ fun AppRoot(repository: HostRepository) {
 
     val terminalTheme = TerminalThemes.ALL.getOrElse(settings.terminalThemeIndex) { TerminalThemes.ALL[0] }
 
-    MsshTheme(settings.theme) {
-        when (val s = screen) {
-            Screen.Home -> {
-                Scaffold(
-                    // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
-                    // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
-                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                    bottomBar = {
-                        // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
-                        val mono = monospaceFontFamily()
-                        Column {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .navigationBarsPadding(),
-                            ) {
-                                HomeTabItem("主机", Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
-                                    homeTab = HomeTab.HOSTS
-                                }
-                                HomeTabItem("连接", Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
-                                    homeTab = HomeTab.CONNECTIONS
-                                }
-                                HomeTabItem("设置", Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
-                                    homeTab = HomeTab.SETTINGS
+    // 语言设置：跟随系统或用户显式选择，全树文案由 LocalAppStrings 提供
+    val appStrings = remember(settings.language) { appStringsFor(settings.language) }
+
+    CompositionLocalProvider(LocalAppStrings provides appStrings) {
+        MsshTheme(settings.theme) {
+            when (val s = screen) {
+                Screen.Home -> {
+                    Scaffold(
+                        // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
+                        // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
+                        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                        bottomBar = {
+                            // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
+                            val mono = monospaceFontFamily()
+                            Column {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                Row(
+                                    Modifier.fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .navigationBarsPadding(),
+                                ) {
+                                    HomeTabItem(appStrings.appTabHosts, Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
+                                        homeTab = HomeTab.HOSTS
+                                    }
+                                    HomeTabItem(appStrings.appTabConnections, Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
+                                        homeTab = HomeTab.CONNECTIONS
+                                    }
+                                    HomeTabItem(appStrings.appTabSettings, Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
+                                        homeTab = HomeTab.SETTINGS
+                                    }
                                 }
                             }
-                        }
-                    },
-                ) { padding ->
-                    Box(Modifier.padding(padding)) {
-                        when (homeTab) {
-                            HomeTab.HOSTS -> HostListScreen(
-                                hosts = hosts,
-                                onAdd = { screen = Screen.Edit(null) },
-                                onEdit = { screen = Screen.Edit(it.id) },
-                                onConnect = { host ->
-                                    val controller = sessionManager.open(host, settings.autoReconnect)
-                                    sessionManager.cancelScheduledClose(controller)
-                                    screen = Screen.Terminal(controller)
-                                },
-                                onDelete = { host ->
-                                    sessionManager.closeForHost(host.id)
-                                    SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "password"))
-                                    SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"))
-                                    repository.deleteHost(host.id)
-                                    refreshHosts()
-                                },
-                            )
+                        },
+                    ) { padding ->
+                        Box(Modifier.padding(padding)) {
+                            when (homeTab) {
+                                HomeTab.HOSTS -> HostListScreen(
+                                    hosts = hosts,
+                                    onAdd = { screen = Screen.Edit(null) },
+                                    onEdit = { screen = Screen.Edit(it.id) },
+                                    onConnect = { host ->
+                                        val controller = sessionManager.open(host, settings.autoReconnect)
+                                        sessionManager.cancelScheduledClose(controller)
+                                        screen = Screen.Terminal(controller)
+                                    },
+                                    onDelete = { host ->
+                                        sessionManager.closeForHost(host.id)
+                                        SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "password"))
+                                        SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"))
+                                        repository.deleteHost(host.id)
+                                        refreshHosts()
+                                    },
+                                )
 
-                            HomeTab.CONNECTIONS -> ConnectionsScreen(
-                                sessions = sessionManager.sessions,
-                                onOpen = {
-                                    sessionManager.cancelScheduledClose(it)
-                                    screen = Screen.Terminal(it)
-                                },
-                                onClose = {
-                                    // 活跃会话 → 断开（保留列表）；已断开 → 移除
-                                    if (it.status == ConnStatus.CONNECTED || it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) {
-                                        sessionManager.disconnect(it)
-                                    } else {
-                                        sessionManager.remove(it)
-                                    }
-                                    refreshHosts()
-                                },
-                            )
+                                HomeTab.CONNECTIONS -> ConnectionsScreen(
+                                    sessions = sessionManager.sessions,
+                                    onOpen = {
+                                        sessionManager.cancelScheduledClose(it)
+                                        screen = Screen.Terminal(it)
+                                    },
+                                    onClose = {
+                                        // 活跃会话 → 断开（保留列表）；已断开 → 移除
+                                        if (it.status == ConnStatus.CONNECTED || it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) {
+                                            sessionManager.disconnect(it)
+                                        } else {
+                                            sessionManager.remove(it)
+                                        }
+                                        refreshHosts()
+                                    },
+                                )
 
-                            HomeTab.SETTINGS -> SettingsScreen(
-                                settings = settings,
-                                onChange = { new ->
-                                    // 即改即存
-                                    repository.saveSettings(new)
-                                    settings = new
-                                },
-                            )
+                                HomeTab.SETTINGS -> SettingsScreen(
+                                    settings = settings,
+                                    onChange = { new ->
+                                        // 即改即存
+                                        repository.saveSettings(new)
+                                        settings = new
+                                    },
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            is Screen.Edit -> {
-                val existing = hosts.firstOrNull { it.id == s.hostId }
-                HostEditScreen(
-                    existing = existing,
-                    onSave = { host, pw, key ->
-                        if (pw.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "password"), pw)
-                        if (key.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"), key)
-                        repository.upsertHost(host)
+                is Screen.Edit -> {
+                    val existing = hosts.firstOrNull { it.id == s.hostId }
+                    HostEditScreen(
+                        existing = existing,
+                        onSave = { host, pw, key ->
+                            if (pw.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "password"), pw)
+                            if (key.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"), key)
+                            repository.upsertHost(host)
+                            refreshHosts()
+                            screen = Screen.Home
+                        },
+                        onCancel = { screen = Screen.Home },
+                    )
+                }
+
+                // 返回主页不断开：会话保留在 SessionManager，由前台服务保活，
+                // 从「连接」页可重新进入（终端缓冲原样保留）
+                is Screen.Terminal -> TerminalScreen(
+                    controller = s.controller,
+                    theme = terminalTheme,
+                    settings = settings,
+                    onBack = {
                         refreshHosts()
                         screen = Screen.Home
                     },
-                    onCancel = { screen = Screen.Home },
+                    onBackWithPolicy = { policy ->
+                        when (policy) {
+                            SessionKeepPolicy.KEEP_10_MIN ->
+                                sessionManager.scheduleClose(s.controller, 10 * 60 * 1000L)
+                            SessionKeepPolicy.DISCONNECT -> sessionManager.disconnect(s.controller)
+                            SessionKeepPolicy.KEEP_ALIVE -> {}
+                        }
+                        refreshHosts()
+                        screen = Screen.Home
+                    },
                 )
             }
-
-            // 返回主页不断开：会话保留在 SessionManager，由前台服务保活，
-            // 从「连接」页可重新进入（终端缓冲原样保留）
-            is Screen.Terminal -> TerminalScreen(
-                controller = s.controller,
-                theme = terminalTheme,
-                settings = settings,
-                onBack = {
-                    refreshHosts()
-                    screen = Screen.Home
-                },
-                onBackWithPolicy = { policy ->
-                    when (policy) {
-                        SessionKeepPolicy.KEEP_10_MIN ->
-                            sessionManager.scheduleClose(s.controller, 10 * 60 * 1000L)
-                        SessionKeepPolicy.DISCONNECT -> sessionManager.disconnect(s.controller)
-                        SessionKeepPolicy.KEEP_ALIVE -> {}
-                    }
-                    refreshHosts()
-                    screen = Screen.Home
-                },
-            )
         }
     }
 }

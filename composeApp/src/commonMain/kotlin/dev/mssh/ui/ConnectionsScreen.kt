@@ -41,6 +41,7 @@ fun ConnectionsScreen(
     onOpen: (TerminalController) -> Unit,
     onClose: (TerminalController) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
     val filtered = sessions.filter { c ->
         query.isBlank() ||
@@ -51,7 +52,7 @@ fun ConnectionsScreen(
     }
 
     Scaffold(
-        topBar = { MsshLargeHeader(title = "连接") },
+        topBar = { MsshLargeHeader(title = s.appTabConnections) },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             if (sessions.isNotEmpty()) {
@@ -59,14 +60,14 @@ fun ConnectionsScreen(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    placeholder = { Text("搜索会话 / 主机 / 用户") },
+                    placeholder = { Text(s.connSearch) },
                     singleLine = true,
                 )
             }
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        if (sessions.isEmpty()) "暂无会话\n在「主机」页点击主机即可发起连接" else "无匹配会话",
+                        if (sessions.isEmpty()) s.connEmpty else s.connNoMatch,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -104,9 +105,9 @@ fun ConnectionsScreen(
                                             controller.status == ConnStatus.CONNECTING ||
                                             controller.status == ConnStatus.AUTH
                                         ) {
-                                            Icon(Icons.Default.LinkOff, contentDescription = "断开")
+                                            Icon(Icons.Default.LinkOff, contentDescription = s.connDisconnect)
                                         } else {
-                                            Icon(Icons.Default.Delete, contentDescription = "移除")
+                                            Icon(Icons.Default.Delete, contentDescription = s.connRemove)
                                         }
                                     }
                                 },
@@ -124,13 +125,4 @@ internal fun statusColor(status: ConnStatus): Color = when (status) {
     ConnStatus.CONNECTING, ConnStatus.AUTH -> Color(0xFFFFA726)
     ConnStatus.CLOSED, ConnStatus.IDLE -> Color(0xFF9E9E9E)
     ConnStatus.ERROR -> Color(0xFFEF5350)
-}
-
-internal fun statusText(status: ConnStatus): String = when (status) {
-    ConnStatus.IDLE -> "未连接"
-    ConnStatus.CONNECTING -> "连接中"
-    ConnStatus.AUTH -> "认证中"
-    ConnStatus.CONNECTED -> "已连接"
-    ConnStatus.CLOSED -> "已断开"
-    ConnStatus.ERROR -> "连接失败"
 }

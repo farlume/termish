@@ -42,6 +42,7 @@ fun MsshHeader(
     statusBarPadding: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
+    val s = LocalAppStrings.current
     Column(modifier.fillMaxWidth().background(containerColor)) {
         Row(
             Modifier
@@ -52,7 +53,7 @@ fun MsshHeader(
         ) {
             if (onBack != null) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "返回", tint = contentColor)
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = s.navBack, tint = contentColor)
                 }
             } else {
                 Spacer(Modifier.width(16.dp))

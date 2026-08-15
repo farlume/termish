@@ -55,6 +55,9 @@ class TerminalController(
         private set
     var errorMessage by mutableStateOf<String?>(null)
         private set
+    /** 当前重连尝试次数：>0 且状态为 CONNECTING 时表示正在自动重连。 */
+    var reconnectCount by mutableStateOf(0)
+        private set
     var title by mutableStateOf(host.name)
         private set
     var authPrompt by mutableStateOf<AuthPromptRequest?>(null)
@@ -93,6 +96,7 @@ class TerminalController(
         lastCols = columns
         lastRows = rows
         reconnectAttempts = 0
+        reconnectCount = 0
         errorMessage = null
         doConnect()
     }
@@ -117,6 +121,7 @@ class TerminalController(
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
+                reconnectCount = 0
                 errorMessage = null
                 startKeepAlive()
                 // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
@@ -127,7 +132,7 @@ class TerminalController(
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
                     status = ConnStatus.ERROR
-                    errorMessage = e.message ?: "连接失败"
+                    errorMessage = e.message
                 }
             }
         }
@@ -170,7 +175,8 @@ class TerminalController(
                 reconnectAttempts++
                 session = null
                 status = ConnStatus.CONNECTING
-                errorMessage = "连接中断，正在重连（第 $reconnectAttempts 次）…"
+                reconnectCount = reconnectAttempts
+                errorMessage = null
                 scope.launch {
                     kotlinx.coroutines.delay(2000L * reconnectAttempts)
                     if (status != ConnStatus.CLOSED) doConnect()

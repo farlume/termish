@@ -43,6 +43,8 @@ enum class ThemeMode { DARK, LIGHT, SYSTEM }
 @Serializable
 data class AppSettings(
     val theme: ThemeMode = ThemeMode.DARK,
+    /** 界面语言：空 = 跟随系统；"zh" / "en" = 用户显式选择。 */
+    val language: String = "",
     val terminalThemeIndex: Int = 0,
     val fontSize: Int = 14,
     val terminalFontSize: Int = 12,

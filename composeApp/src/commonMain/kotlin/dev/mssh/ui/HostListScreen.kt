@@ -42,6 +42,7 @@ fun HostListScreen(
     onConnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
     val filtered = hosts
         .filter { h ->
@@ -63,7 +64,7 @@ fun HostListScreen(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(16.dp),
-            ) { Icon(Icons.Default.Add, "添加主机") }
+            ) { Icon(Icons.Default.Add, s.hostsAdd) }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -71,7 +72,7 @@ fun HostListScreen(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
-                placeholder = { Text("搜索主机 / 标签 / 用户") },
+                placeholder = { Text(s.hostsSearch) },
                 singleLine = true,
             )
             if (filtered.isEmpty()) {
@@ -80,7 +81,7 @@ fun HostListScreen(
                     verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
-                        "还没有主机。点击右下角 + 添加第一台服务器。",
+                        s.hostsEmpty,
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
@@ -97,6 +98,7 @@ fun HostListScreen(
 
 @Composable
 private fun HostCard(host: Host, onConnect: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit) {
+    val s = LocalAppStrings.current
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -118,8 +120,8 @@ private fun HostCard(host: Host, onConnect: () -> Unit, onEdit: () -> Unit, onDe
             },
             trailingContent = {
                 Row {
-                    IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, "编辑") }
-                    IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, "删除") }
+                    IconButton(onClick = onEdit) { Icon(Icons.Default.Edit, s.hostsEdit) }
+                    IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, s.hostsDelete) }
                 }
             },
         )

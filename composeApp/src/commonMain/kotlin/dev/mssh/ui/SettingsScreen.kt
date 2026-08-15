@@ -48,10 +48,16 @@ import dev.mssh.data.AppSettings
 import dev.mssh.data.ThemeMode
 import dev.mssh.ui.theme.TerminalThemes
 
-private fun themeModeLabel(mode: ThemeMode): String = when (mode) {
-    ThemeMode.DARK -> "深色"
-    ThemeMode.LIGHT -> "浅色"
-    ThemeMode.SYSTEM -> "跟随系统"
+private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
+    ThemeMode.DARK -> s.settingsThemeDark
+    ThemeMode.LIGHT -> s.settingsThemeLight
+    ThemeMode.SYSTEM -> s.settingsThemeSystem
+}
+
+private fun languageLabel(code: String, s: AppStrings): String = when (code) {
+    "zh" -> s.languageZh
+    "en" -> s.languageEn
+    else -> s.settingsLanguageSystem
 }
 
 /** 头像背景色板。 */
@@ -69,6 +75,7 @@ fun SettingsScreen(
     showBack: Boolean = false,
     onBack: (() -> Unit)? = null,
 ) {
+    val s = LocalAppStrings.current
     var theme by remember { mutableStateOf(settings.theme) }
     var terminalThemeIndex by remember { mutableStateOf(settings.terminalThemeIndex) }
     var fontSize by remember { mutableStateOf(settings.terminalFontSize.toFloat()) }
@@ -77,9 +84,11 @@ fun SettingsScreen(
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
     var autoReconnect by remember { mutableStateOf(settings.autoReconnect) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
+    var language by remember { mutableStateOf(settings.language) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
 
     // 随机字母头像：首次生成后立即持久化，之后固定不变
     val generated = remember { ('A'..'Z').random().toString() to AVATAR_COLORS.indices.random() }
@@ -103,11 +112,12 @@ fun SettingsScreen(
             hapticFeedback = haptics,
             autoReconnect = autoReconnect,
             verifyHostKeyOnFirstUse = verifyHostKey,
+            language = language,
         )
     )
 
     Scaffold(
-        topBar = { MsshLargeHeader(title = "设置") },
+        topBar = { MsshLargeHeader(title = s.settingsTitle) },
     ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
@@ -130,32 +140,32 @@ fun SettingsScreen(
                 }
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "本地用户",
+                    s.settingsLocalUser,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                 )
             }
 
-            SettingsGroup("外观") {
-                SettingsOptionItem("应用主题", themeModeLabel(theme)) { showThemeDialog = true }
+            SettingsGroup(s.settingsGroupAppearance) {
+                SettingsOptionItem(s.settingsAppTheme, themeModeLabel(theme, s)) { showThemeDialog = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(
-                    "终端配色",
+                    s.settingsTerminalPalette,
                     TerminalThemes.ALL.getOrElse(terminalThemeIndex) { TerminalThemes.ALL[0] }.name,
                 ) { showTerminalThemeDialog = true }
             }
 
-            SettingsGroup("终端") {
+            SettingsGroup(s.settingsGroupTerminal) {
                 SettingsSliderItem(
-                    title = "终端列数",
-                    valueText = if (targetCols < 1f) "手动字号" else targetCols.toInt().toString(),
+                    title = s.settingsTerminalCols,
+                    valueText = if (targetCols < 1f) s.settingsManualFontSize else targetCols.toInt().toString(),
                     value = targetCols,
                     onValueChange = { targetCols = it; persist() },
                     valueRange = 0f..160f,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSliderItem(
-                    title = "终端字号",
+                    title = s.settingsTerminalFontSize,
                     valueText = "${fontSize.toInt()}sp",
                     value = fontSize,
                     onValueChange = { fontSize = it; persist() },
@@ -163,15 +173,17 @@ fun SettingsScreen(
                     enabled = targetCols < 1f,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem("显示键盘工具栏", keyboardToolbar) { keyboardToolbar = it; persist() }
+                SettingsSwitchItem(s.settingsShowToolbar, keyboardToolbar) { keyboardToolbar = it; persist() }
             }
 
-            SettingsGroup("通用") {
-                SettingsSwitchItem("触感反馈", haptics) { haptics = it; persist() }
+            SettingsGroup(s.settingsGroupGeneral) {
+                SettingsOptionItem(s.settingsLanguage, languageLabel(language, s)) { showLanguageDialog = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem("断线自动重连", autoReconnect) { autoReconnect = it; persist() }
+                SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem("首次连接确认主机指纹", verifyHostKey) { verifyHostKey = it; persist() }
+                SettingsSwitchItem(s.settingsAutoReconnect, autoReconnect) { autoReconnect = it; persist() }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsSwitchItem(s.settingsVerifyHostKey, verifyHostKey) { verifyHostKey = it; persist() }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -180,8 +192,8 @@ fun SettingsScreen(
 
     if (showThemeDialog) {
         SettingsChoiceDialog(
-            title = "应用主题",
-            options = ThemeMode.entries.map { themeModeLabel(it) },
+            title = s.settingsAppTheme,
+            options = ThemeMode.entries.map { themeModeLabel(it, s) },
             selected = ThemeMode.entries.indexOf(theme),
             onSelect = { theme = ThemeMode.entries[it]; persist() },
             onDismiss = { showThemeDialog = false },
@@ -189,11 +201,26 @@ fun SettingsScreen(
     }
     if (showTerminalThemeDialog) {
         SettingsChoiceDialog(
-            title = "终端配色",
+            title = s.settingsTerminalPalette,
             options = TerminalThemes.ALL.map { it.name },
             selected = terminalThemeIndex,
             onSelect = { terminalThemeIndex = it; persist() },
             onDismiss = { showTerminalThemeDialog = false },
+        )
+    }
+    if (showLanguageDialog) {
+        val codes = listOf("", "zh", "en")
+        val options = listOf(
+            s.settingsLanguageSystem,
+            s.languageZh,
+            s.languageEn,
+        )
+        SettingsChoiceDialog(
+            title = s.settingsLanguage,
+            options = options,
+            selected = codes.indexOf(language),
+            onSelect = { language = codes[it]; persist() },
+            onDismiss = { showLanguageDialog = false },
         )
     }
 }
@@ -332,6 +359,6 @@ private fun SettingsChoiceDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(LocalAppStrings.current.settingsClose) } },
     )
 }

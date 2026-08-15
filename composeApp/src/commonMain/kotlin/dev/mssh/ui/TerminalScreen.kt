@@ -85,6 +85,7 @@ fun TerminalScreen(
     /** 非空时，连接中的会话返回先弹「保留策略」选择。 */
     onBackWithPolicy: ((SessionKeepPolicy) -> Unit)? = null,
 ) {
+    val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -157,21 +158,27 @@ fun TerminalScreen(
     if (showLeaveDialog && onBackWithPolicy != null) {
         AlertDialog(
             onDismissRequest = { showLeaveDialog = false },
-            title = { Text("保留此会话？") },
+            title = { Text(s.terminalLeaveTitle) },
             text = {
                 Column {
-                    LeavePolicyOption("常驻后台", "保持连接，随时从「连接」页重入") {
+                    LeavePolicyOption(
+                        s.terminalKeepAlive,
+                        s.terminalKeepAliveSub,
+                    ) {
                         showLeaveDialog = false
                         onBackWithPolicy(SessionKeepPolicy.KEEP_ALIVE)
                     }
-                    LeavePolicyOption("立即断开", "关闭会话") {
+                    LeavePolicyOption(
+                        s.terminalDisconnect,
+                        s.terminalDisconnectSub,
+                    ) {
                         showLeaveDialog = false
                         onBackWithPolicy(SessionKeepPolicy.DISCONNECT)
                     }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showLeaveDialog = false }) { Text("取消") }
+                TextButton(onClick = { showLeaveDialog = false }) { Text(s.terminalCancel) }
             },
         )
     }
@@ -200,20 +207,27 @@ fun TerminalScreen(
             MouseModeIndicator(controller)
             ConnectionStatusIndicator(
                 status = controller.status,
-                reconnecting = controller.status == ConnStatus.CONNECTING && controller.errorMessage != null,
+                reconnecting = controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0,
                 modifier = Modifier.padding(end = 12.dp),
             )
         }
 
         // 重连/错误飘条：重连中=琥珀色，失败=红色；跟随终端主题背景
-        controller.errorMessage?.let {
+        val bannerText = when {
+            controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
+                s.terminalReconnectingN(controller.reconnectCount)
+            controller.errorMessage != null -> controller.errorMessage
+            controller.status == ConnStatus.ERROR -> s.terminalFailed
+            else -> null
+        }
+        bannerText?.let { message ->
             val bannerColor = if (controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED) {
                 androidx.compose.ui.graphics.Color(0xFFEF5350)
             } else {
                 androidx.compose.ui.graphics.Color(0xFFFFA726)
             }
             Text(
-                it,
+                message,
                 color = bannerColor,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
@@ -254,7 +268,7 @@ fun TerminalScreen(
                 },
                 onCopy = { text ->
                     clipboard.setText(AnnotatedString(text))
-                    scope.launch { snackbar.showSnackbar("已复制") }
+                    scope.launch { snackbar.showSnackbar(s.terminalCopied) }
                 },
                 modifier = Modifier.fillMaxSize()
                     .padding(horizontal = 6.dp, vertical = 4.dp)
@@ -302,7 +316,7 @@ fun TerminalScreen(
                                     "\u001b[200~$text\u001b[201~"
                                 } else text
                                 controller.sendText(payload)
-                                scope.launch { snackbar.showSnackbar("已粘贴") }
+                                scope.launch { snackbar.showSnackbar(s.terminalPasted) }
                             }
                             ctrlActive = false
                             altActive = false
@@ -387,12 +401,14 @@ private fun ConnectionStatusIndicator(
     reconnecting: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val s = LocalAppStrings.current
     val (dotColor, label) = when (status) {
-        ConnStatus.CONNECTED -> Color(0xFF4CAF50) to "已连接"
-        ConnStatus.CONNECTING -> Color(0xFFFFA726) to if (reconnecting) "重连中" else "连接中"
-        ConnStatus.AUTH -> Color(0xFFFFA726) to "认证中"
-        ConnStatus.CLOSED -> Color(0xFF9E9E9E) to "已断开"
-        ConnStatus.ERROR -> Color(0xFFEF5350) to "连接失败"
+        ConnStatus.CONNECTED -> Color(0xFF4CAF50) to s.terminalConnected
+        ConnStatus.CONNECTING -> Color(0xFFFFA726) to
+            if (reconnecting) s.terminalReconnecting else s.terminalConnecting
+        ConnStatus.AUTH -> Color(0xFFFFA726) to s.terminalAuthing
+        ConnStatus.CLOSED -> Color(0xFF9E9E9E) to s.terminalDisconnected
+        ConnStatus.ERROR -> Color(0xFFEF5350) to s.terminalFailed
         ConnStatus.IDLE -> return
     }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
@@ -460,10 +476,11 @@ private fun QuickCommandsBar(controller: TerminalController) {
 
 @Composable
 private fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Unit) {
+    val s = LocalAppStrings.current
     var values by remember { mutableStateOf(List(prompt.prompts.size) { "" }) }
     AlertDialog(
         onDismissRequest = { onResult(null) },
-        title = { Text(if (prompt.name.isNotEmpty()) prompt.name else "需要认证") },
+        title = { Text(if (prompt.name.isNotEmpty()) prompt.name else s.terminalAuthRequired) },
         text = {
             Column {
                 if (prompt.instruction.isNotEmpty()) {
@@ -485,8 +502,8 @@ private fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Un
                 }
             }
         },
-        confirmButton = { Button(onClick = { onResult(values) }) { Text("确定") } },
-        dismissButton = { TextButton(onClick = { onResult(null) }) { Text("取消") } },
+        confirmButton = { Button(onClick = { onResult(values) }) { Text(s.terminalConfirm) } },
+        dismissButton = { TextButton(onClick = { onResult(null) }) { Text(s.terminalCancel) } },
     )
 }
 
@@ -497,33 +514,31 @@ private fun HostKeyDialog(
     previousFingerprint: String?,
     onResult: (Boolean) -> Unit,
 ) {
+    val s = LocalAppStrings.current
     AlertDialog(
         onDismissRequest = { onResult(false) },
-        title = { Text(if (changed) "服务器指纹已变更" else "确认服务器身份") },
+        title = { Text(if (changed) s.terminalHostkeyChanged else s.terminalHostkeyConfirm) },
         text = {
             Column {
                 Text(
-                    if (changed) {
-                        "该主机的服务器指纹与已保存的不一致（可能服务器重装、换机或端口转发变化）。\n请核对新指纹后决定是否信任："
-                    } else {
-                        "无法验证服务器主机的真实性。请核对指纹："
-                    }
+                    if (changed) s.terminalHostkeyChangedBody
+                    else s.terminalHostkeyBody
                 )
                 if (changed && previousFingerprint != null) {
                     Text(
-                        "已保存：$previousFingerprint",
+                        s.terminalHostkeySaved + " " + previousFingerprint,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
                 Text(
-                    "${if (changed) "当前" else key.algorithm}\n${key.fingerprintSha256}",
+                    (if (changed) s.terminalHostkeyCurrent else key.algorithm) + "\n" + key.fingerprintSha256,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
         },
-        confirmButton = { Button(onClick = { onResult(true) }) { Text("信任并连接") } },
-        dismissButton = { TextButton(onClick = { onResult(false) }) { Text("取消") } },
+        confirmButton = { Button(onClick = { onResult(true) }) { Text(s.terminalTrust) } },
+        dismissButton = { TextButton(onClick = { onResult(false) }) { Text(s.terminalCancel) } },
     )
 }

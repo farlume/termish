@@ -36,6 +36,7 @@ fun HostEditScreen(
     onSave: (Host, password: String, privateKey: String) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var hostname by remember { mutableStateOf(existing?.hostname ?: "") }
     var port by remember { mutableStateOf((existing?.port ?: 22).toString()) }
@@ -52,7 +53,7 @@ fun HostEditScreen(
     Scaffold(
         topBar = {
             MsshHeader(
-                title = if (existing == null) "添加主机" else "编辑主机",
+                title = if (existing == null) s.editAddTitle else s.editEditTitle,
                 onBack = onCancel,
                 actions = {
                     TextButton(onClick = {
@@ -72,7 +73,7 @@ fun HostEditScreen(
                             startupCommand = startupCommand.trim(),
                         )
                         onSave(host, password, privateKey)
-                    }) { Text("保存") }
+                    }) { Text(s.editSave) }
                 },
             )
         },
@@ -81,31 +82,31 @@ fun HostEditScreen(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("名称") }, singleLine = true)
-            OutlinedTextField(hostname, { hostname = it }, Modifier.fillMaxWidth(), label = { Text("主机地址") }, singleLine = true)
+            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(s.editName) }, singleLine = true)
+            OutlinedTextField(hostname, { hostname = it }, Modifier.fillMaxWidth(), label = { Text(s.editHostname) }, singleLine = true)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(port, { port = it }, Modifier.weight(1f), label = { Text("端口") }, singleLine = true)
-                OutlinedTextField(username, { username = it }, Modifier.weight(2f), label = { Text("用户名") }, singleLine = true)
+                OutlinedTextField(port, { port = it }, Modifier.weight(1f), label = { Text(s.editPort) }, singleLine = true)
+                OutlinedTextField(username, { username = it }, Modifier.weight(2f), label = { Text(s.editUsername) }, singleLine = true)
             }
 
-            Text("认证方式", style = MaterialTheme.typography.labelLarge)
+            Text(s.editAuthMethod, style = MaterialTheme.typography.labelLarge)
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(authMethod == HostAuthMethod.PASSWORD, { authMethod = HostAuthMethod.PASSWORD })
-                Text("密码")
+                Text(s.editAuthPassword)
             }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(authMethod == HostAuthMethod.PRIVATE_KEY, { authMethod = HostAuthMethod.PRIVATE_KEY })
-                Text("私钥")
+                Text(s.editAuthKey)
             }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                 RadioButton(authMethod == HostAuthMethod.KEY_OR_PASSWORD, { authMethod = HostAuthMethod.KEY_OR_PASSWORD })
-                Text("私钥优先，密码兜底")
+                Text(s.editAuthKeyOrPassword)
             }
 
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {
                 OutlinedTextField(
                     password, { password = it }, Modifier.fillMaxWidth(),
-                    label = { Text(if (existing == null) "密码" else "密码（留空保持不变）") },
+                    label = { Text(if (existing == null) s.editPassword else s.editPasswordKeep) },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
                 )
@@ -113,21 +114,21 @@ fun HostEditScreen(
             if (authMethod != HostAuthMethod.PASSWORD) {
                 OutlinedTextField(
                     privateKey, { privateKey = it }, Modifier.fillMaxWidth(),
-                    label = { Text(if (existing == null) "私钥 (PEM)" else "私钥 (PEM，留空保持不变)") },
+                    label = { Text(if (existing == null) s.editPrivateKey else s.editPrivateKeyKeep) },
                     minLines = 3,
                 )
             }
 
-            OutlinedTextField(tags, { tags = it }, Modifier.fillMaxWidth(), label = { Text("标签（逗号分隔）") }, singleLine = true)
+            OutlinedTextField(tags, { tags = it }, Modifier.fillMaxWidth(), label = { Text(s.editTags) }, singleLine = true)
             OutlinedTextField(
                 quickCommands, { quickCommands = it }, Modifier.fillMaxWidth(),
-                label = { Text("快速命令（每行「标签:命令」）") },
+                label = { Text(s.editQuickCommands) },
                 minLines = 3,
             )
             OutlinedTextField(
                 startupCommand, { startupCommand = it }, Modifier.fillMaxWidth(),
-                label = { Text("启动命令（连接后自动执行）") },
-                placeholder = { Text("tmux new -A -s main（重连恢复现场）") },
+                label = { Text(s.editStartupCommand) },
+                placeholder = { Text(s.editStartupPlaceholder) },
                 singleLine = true,
             )
         }
