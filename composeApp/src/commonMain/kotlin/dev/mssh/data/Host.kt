@@ -33,6 +33,8 @@ data class Host(
     val createdAt: Long = 0L,
     val lastConnectedAt: Long = 0L,
     val knownHostFingerprint: String? = null,
+    /** 连接成功后自动执行的命令（如 `tmux new -A -s main` 实现会话现场恢复）。 */
+    val startupCommand: String = "",
 )
 
 @Serializable

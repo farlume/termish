@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -92,7 +94,6 @@ fun TerminalScreen(
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
     val inputFocusRequester = remember { FocusRequester() }
-    var showDisconnectDialog by remember { mutableStateOf(false) }
     val keyboardController = LocalSoftwareKeyboardController.current
     // 键盘是否弹出：ime inset 高于导航条即认为弹出（跨平台，isImeVisible 仅 Android 有）
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) >
@@ -107,15 +108,9 @@ fun TerminalScreen(
         }
     }
 
-    // 返回：连接中先确认，否则直接关闭并回退
-    val requestBack = {
-        if (controller.isConnected()) {
-            showDisconnectDialog = true
-        } else {
-            controller.close()
-            onBack()
-        }
-    }
+    // 返回：会话保留在 SessionManager 继续运行（前台服务保活），
+    // 从主页「连接」tab 可重新进入；断开连接在连接页操作。
+    val requestBack = { onBack() }
 
     // 拦截系统返回（手势/返回键），与点击返回按钮一致
     PlatformBackHandler(enabled = true, onBack = requestBack)
@@ -156,23 +151,6 @@ fun TerminalScreen(
         }
     }
 
-    if (showDisconnectDialog) {
-        AlertDialog(
-            onDismissRequest = { showDisconnectDialog = false },
-            title = { Text("断开连接") },
-            text = { Text("当前会话已连接，确定要断开并返回吗？") },
-            confirmButton = {
-                Button(onClick = {
-                    showDisconnectDialog = false
-                    controller.close()
-                    onBack()
-                }) { Text("断开并返回") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDisconnectDialog = false }) { Text("取消") }
-            },
-        )
-    }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // 头部：返回按钮 + 标题 + 状态，底部分隔线与终端画布区分
@@ -186,12 +164,11 @@ fun TerminalScreen(
                 }
                 Text(controller.title, style = MaterialTheme.typography.titleSmall, color = theme.foreground())
                 Spacer(Modifier.weight(1f))
-                when (controller.status) {
-                    ConnStatus.CONNECTING, ConnStatus.AUTH -> CircularProgressIndicator(Modifier.padding(8.dp), strokeWidth = 2.dp)
-                    ConnStatus.ERROR -> Text("连接失败", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                    ConnStatus.CLOSED -> Text("已断开", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
-                    else -> {}
-                }
+                ConnectionStatusIndicator(
+                    status = controller.status,
+                    reconnecting = controller.status == ConnStatus.CONNECTING && controller.errorMessage != null,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
             }
             HorizontalDivider(color = theme.foreground().copy(alpha = 0.15f))
         }
@@ -344,6 +321,28 @@ fun TerminalScreen(
                 }
             }
         }
+    }
+}
+
+/** 头部右侧实时连接状态指示：彩色圆点 + 文案。 */
+@Composable
+private fun ConnectionStatusIndicator(
+    status: ConnStatus,
+    reconnecting: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val (dotColor, label) = when (status) {
+        ConnStatus.CONNECTED -> Color(0xFF4CAF50) to "已连接"
+        ConnStatus.CONNECTING -> Color(0xFFFFA726) to if (reconnecting) "重连中" else "连接中"
+        ConnStatus.AUTH -> Color(0xFFFFA726) to "认证中"
+        ConnStatus.CLOSED -> Color(0xFF9E9E9E) to "已断开"
+        ConnStatus.ERROR -> Color(0xFFEF5350) to "连接失败"
+        ConnStatus.IDLE -> return
+    }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
+        Spacer(Modifier.size(6.dp))
+        Text(label, color = Color(0xFF9E9E9E), style = MaterialTheme.typography.labelMedium)
     }
 }
 

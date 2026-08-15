@@ -35,7 +35,7 @@ data class HostKeyRequest(val key: HostKeyInfo) {
  * 把键盘输入发给远端，并把认证/主机密钥确认桥接到 Compose UI。
  */
 class TerminalController(
-    private val host: Host,
+    val host: Host,
     private val password: String?,
     private val privateKeyPem: String?,
     private val repository: HostRepository,
@@ -108,6 +108,10 @@ class TerminalController(
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
                 startKeepAlive()
+                // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
+                if (host.startupCommand.isNotBlank()) {
+                    s.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+                }
                 frame++
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
