@@ -219,6 +219,7 @@ fun TerminalScreen(
             ConnectionStatusIndicator(
                 status = controller.status,
                 reconnecting = controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0,
+                linkLostSeconds = controller.linkLostSeconds,
                 modifier = Modifier.padding(end = 12.dp),
             )
         }
@@ -228,8 +229,8 @@ fun TerminalScreen(
             controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
                 s.terminalReconnectingN(controller.reconnectCount)
             // mosh 链路失联（会话保持中，网络恢复自动续传）：对齐 mosh 的
-            // "Last contact Ns ago" 提示；双方心跳约 3s，阈值 5s 避免单包丢失抖动
-            controller.linkLostSeconds >= 5 ->
+            // "Last contact Ns ago" 提示；状态点同步变琥珀色「失联中」
+            controller.linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS ->
                 s.terminalMoshLostContact(controller.linkLostSeconds)
             controller.errorMessage != null -> controller.errorMessage
             controller.status == ConnStatus.ERROR -> s.terminalFailed
@@ -423,17 +424,21 @@ fun TerminalScreen(
 private fun ConnectionStatusIndicator(
     status: ConnStatus,
     reconnecting: Boolean,
+    linkLostSeconds: Int,
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
-    val (dotColor, label) = when (status) {
-        ConnStatus.CONNECTED -> Color(0xFF4CAF50) to s.terminalConnected
-        ConnStatus.CONNECTING -> Color(0xFFFFA726) to
+    val (dotColor, label) = when {
+        // 会话保持中但链路失联（mosh 漫游等待恢复）：与 banner 同源，不能仍显示「已连接」
+        status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS ->
+            Color(0xFFFFA726) to s.terminalLinkLost
+        status == ConnStatus.CONNECTED -> Color(0xFF4CAF50) to s.terminalConnected
+        status == ConnStatus.CONNECTING -> Color(0xFFFFA726) to
             if (reconnecting) s.terminalReconnecting else s.terminalConnecting
-        ConnStatus.AUTH -> Color(0xFFFFA726) to s.terminalAuthing
-        ConnStatus.CLOSED -> Color(0xFF9E9E9E) to s.terminalDisconnected
-        ConnStatus.ERROR -> Color(0xFFEF5350) to s.terminalFailed
-        ConnStatus.IDLE -> return
+        status == ConnStatus.AUTH -> Color(0xFFFFA726) to s.terminalAuthing
+        status == ConnStatus.CLOSED -> Color(0xFF9E9E9E) to s.terminalDisconnected
+        status == ConnStatus.ERROR -> Color(0xFFEF5350) to s.terminalFailed
+        else -> return
     }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))

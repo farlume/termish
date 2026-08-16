@@ -31,6 +31,10 @@ import kotlinx.coroutines.launch
 
 enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
 
+/** mosh 链路失联提示阈值（秒）：双方心跳约 3s，5s 避免单包丢失抖动。
+ *  失联 banner 与状态点共用。 */
+internal const val LINK_LOST_THRESHOLD_SECONDS = 5
+
 data class AuthPromptRequest(val prompt: AuthPrompt) {
     internal val deferred = CompletableDeferred<List<String>?>()
 }

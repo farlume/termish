@@ -95,7 +95,7 @@ fun ConnectionsScreen(
                                 leadingContent = {
                                     Box(
                                         Modifier.size(10.dp).clip(CircleShape)
-                                            .background(statusColor(controller.status)),
+                                            .background(statusColor(controller.status, controller.linkLostSeconds)),
                                     )
                                 },
                                 trailingContent = {
@@ -120,9 +120,11 @@ fun ConnectionsScreen(
     }
 }
 
-internal fun statusColor(status: ConnStatus): Color = when (status) {
-    ConnStatus.CONNECTED -> Color(0xFF4CAF50)
-    ConnStatus.CONNECTING, ConnStatus.AUTH -> Color(0xFFFFA726)
-    ConnStatus.CLOSED, ConnStatus.IDLE -> Color(0xFF9E9E9E)
-    ConnStatus.ERROR -> Color(0xFFEF5350)
+internal fun statusColor(status: ConnStatus, linkLostSeconds: Int = 0): Color = when {
+    // 链路失联（会话保持中）：琥珀色，与终端页状态点/banner 同源
+    status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS -> Color(0xFFFFA726)
+    status == ConnStatus.CONNECTED -> Color(0xFF4CAF50)
+    status == ConnStatus.CONNECTING || status == ConnStatus.AUTH -> Color(0xFFFFA726)
+    status == ConnStatus.ERROR -> Color(0xFFEF5350)
+    else -> Color(0xFF9E9E9E) // CLOSED / IDLE
 }

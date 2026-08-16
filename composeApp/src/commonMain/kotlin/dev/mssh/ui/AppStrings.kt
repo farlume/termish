@@ -103,6 +103,8 @@ data class AppStrings(
     /** mosh 链路失联提示：距上次收到对端包的秒数（会话保持中，恢复自动续传）。 */
     val terminalMoshLostContact: (Int) -> String,
     val terminalConnected: String,
+    /** 链路失联（会话保持中）：状态点/会话列表在 mosh 失去联系时的文案。 */
+    val terminalLinkLost: String,
     val terminalReconnecting: String,
     val terminalConnecting: String,
     val terminalAuthing: String,
@@ -210,6 +212,7 @@ private val EnStrings = AppStrings(
     terminalReconnectingN = { "Connection lost, reconnecting (attempt $it)…" },
     terminalMoshLostContact = { "No contact from server for $it s — session held, resumes on network recovery" },
     terminalConnected = "Connected",
+    terminalLinkLost = "No contact",
     terminalReconnecting = "Reconnecting",
     terminalConnecting = "Connecting",
     terminalAuthing = "Authenticating",
@@ -310,6 +313,7 @@ private val ZhStrings = AppStrings(
     terminalReconnectingN = { "连接中断，正在重连（第 $it 次）…" },
     terminalMoshLostContact = { "与服务器失去联系 $it 秒——会话保持中，网络恢复后自动续传" },
     terminalConnected = "已连接",
+    terminalLinkLost = "失联中",
     terminalReconnecting = "重连中",
     terminalConnecting = "连接中",
     terminalAuthing = "认证中",
