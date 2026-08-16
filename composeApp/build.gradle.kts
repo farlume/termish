@@ -1,6 +1,7 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import java.nio.file.Files
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -159,19 +160,42 @@ android {
     compileSdk = libs.versions.android.compileSdk.get().toInt()
 
     signingConfigs {
-        // release 签名：密钥放 ~/Documents/秘钥/，密码等参数在项目根 keystore.properties（不入库）。
-        // 该文件不存在时跳过签名配置，方便直接构建 debug。
+        // release 签名机密来源（按优先级）：
+        //   1. 进程环境变量（CI：GitHub Secrets 直接注入，云端零文件）
+        //   2. 项目根 .env（gitignore，前端惯例位置）+ 项目根 mssh-release.jks（*.jks 已忽略）
+        //   3. keystore.properties（历史兼容）
+        // jks 文件不存在时从 ANDROID_KEYSTORE_BASE64 解码到 build/signing/。
+        // 都没有时跳过签名，不影响 debug 构建。
+        val fileEnv = mutableMapOf<String, String>()
+        val envFile = rootProject.file(".env")
+        if (envFile.exists()) {
+            envFile.readLines().forEach { line ->
+                val t = line.trim()
+                if (t.isNotEmpty() && !t.startsWith("#") && '=' in t) {
+                    fileEnv[t.substringBefore('=').trim()] = t.substringAfter('=').trim()
+                }
+            }
+        }
         val props = Properties().apply {
             val f = rootProject.file("keystore.properties")
             if (f.exists()) f.inputStream().use { load(it) }
         }
+        fun secret(envKey: String, propKey: String): String? =
+            System.getenv(envKey)?.takeIf { it.isNotEmpty() } ?: fileEnv[envKey] ?: props.getProperty(propKey)
         create("release") {
-            if (props.containsKey("storeFile")) {
-                storeFile = file(props.getProperty("storeFile"))
-                storePassword = props.getProperty("storePassword")
-                keyAlias = props.getProperty("keyAlias")
-                keyPassword = props.getProperty("keyPassword")
+            var jks = file(secret("ANDROID_KEYSTORE_FILE", "storeFile") ?: "mssh-release.jks")
+            if (!jks.isFile) jks = rootProject.file("mssh-release.jks")
+            val b64 = secret("ANDROID_KEYSTORE_BASE64", "keystoreBase64")
+            if (!jks.isFile && b64 != null) {
+                val out = layout.buildDirectory.dir("signing").get().asFile.apply { mkdirs() }
+                    .resolve("mssh-release.jks")
+                if (!out.isFile) out.writeBytes(Base64.getDecoder().decode(b64))
+                jks = out
             }
+            storeFile = jks
+            storePassword = secret("ANDROID_KEYSTORE_PASSWORD", "storePassword")
+            keyAlias = secret("ANDROID_KEY_ALIAS", "keyAlias")
+            keyPassword = secret("ANDROID_KEY_PASSWORD", "keyPassword")
         }
     }
 
@@ -205,7 +229,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.findByName("release")?.takeIf { it.storeFile?.isFile == true }
+            signingConfig = signingConfigs.findByName("release")?.takeIf {
+                it.storeFile?.isFile == true && it.storePassword != null && it.keyAlias != null && it.keyPassword != null
+            }
         }
     }
     compileOptions {

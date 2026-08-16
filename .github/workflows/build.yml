@@ -39,19 +39,6 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Configure release signing
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
-        env:
-          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          # storeFile 在 composeApp/build.gradle.kts 里相对模块目录解析
-          printf '%s' "$KEYSTORE_B64" | base64 -d > composeApp/android-release.jks
-          printf 'storeFile=android-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
-            "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
-
       # 发版 tag 必须与仓库里的版本号一致，防止「tag 0.3.0、包还是 0.2.0」
       - name: Verify version matches tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -82,8 +69,15 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :composeApp:assembleDebug
 
+      # release 签名：secrets 以环境变量注入，build.gradle.kts 直接读取并解码 base64，
+      # 云端零文件落地（本地则走 secrets/.env，见 signingConfigs 注释）
       - name: Build release APK and AAB
         if: github.event_name != 'pull_request'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           ./gradlew \
             :composeApp:assembleRelease \
@@ -148,8 +142,8 @@ jobs:
         run: choco install wixtoolset --yes --no-progress
 
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
-      # 失败则本平台不打包。集成测试需要本地 sshd + mosh，
-      # 所以先安装并启动测试 sshd，再以 MSSH_TEST_RUN=1 跑（否则测试会 SKIP 空跑）
+      # 失败则本平台不打包。集成测试需要本地 sshd + mosh：
+      # 先安装并启动测试 sshd，desktopTest 会按 2222 端口/mosh 可用性自动跑或 SKIP
       - name: Install sshd + mosh for integration tests
         if: matrix.platform == 'Linux'
         run: |
@@ -162,7 +156,8 @@ jobs:
 
       - name: Run desktop tests
         if: matrix.platform == 'Linux'
-        run: MSSH_TEST_RUN=1 ./gradlew :composeApp:desktopTest
+        # 集成测试按 sshd(2222)/mosh 可用性自我探测，无需 MSSH_TEST_RUN
+        run: ./gradlew :composeApp:desktopTest
 
       - name: Package (${{ matrix.platform }})
         if: github.event_name != 'pull_request'
