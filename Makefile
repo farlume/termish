@@ -63,10 +63,6 @@ bump: ## 三平台版本号联动，用法: make bump V=1.0.1（预览: DRY=1）
 ios-native: ## 交叉编译 OpenSSL + libssh2 → iosApp/native/
 	./scripts/build-ios-native.sh
 
-.PHONY: ios-mosh
-ios-mosh: ## 交叉编译 mosh-client（sim/device）+ libmoshpty.a
-	./scripts/build-ios-mosh.sh
-
 .PHONY: ios-framework
 ios-framework: ## 编译 Kotlin framework（模拟器 + 真机 debug）
 	$(GRADLEW) :composeApp:linkDebugFrameworkIosSimulatorArm64 \

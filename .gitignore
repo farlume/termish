@@ -41,6 +41,3 @@ iosApp/native/
 iosApp/Pods/
 iosApp/Podfile.lock
 iosApp/iosApp.xcworkspace/
-
-# Android mosh 原生库（由 scripts/build-android-mosh.sh 交叉编译生成）
-composeApp/src/androidMain/jniLibs/**/*.so

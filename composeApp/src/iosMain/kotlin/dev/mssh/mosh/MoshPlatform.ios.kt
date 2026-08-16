@@ -2,6 +2,8 @@ package dev.mssh.mosh
 
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointerVar
+import kotlinx.cinterop.ULongVar
+import kotlinx.cinterop.UByteVar
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
@@ -11,9 +13,15 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
+import platform.zlib.Z_DEFAULT_COMPRESSION
+import platform.zlib.Z_OK
+import platform.zlib.Z_STREAM_END
+import platform.zlib.compress2
+import platform.zlib.uncompress
 import platform.posix.IPPROTO_UDP
 import platform.posix.EMSGSIZE
 import platform.posix.SOCK_DGRAM
@@ -88,22 +96,26 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
 internal actual fun zlibCompress(data: ByteArray): ByteArray = memScoped {
     // mosh compressor：compress() 默认级别；目标缓冲留 size + 12.5% + 256 余量
     val cap = data.size + data.size / 8 + 256
-    val out = allocArray<ByteVar>(cap)
-    val n = data.usePinned { pinned ->
-        moshpty.mssh_zlib_compress(pinned.addressOf(0), data.size, out, cap)
+    val out = allocArray<UByteVar>(cap)
+    val destLen = alloc<ULongVar>()
+    destLen.value = cap.toULong()
+    val rc = data.usePinned { pinned ->
+        compress2(out, destLen.ptr, pinned.addressOf(0).reinterpret(), data.size.toULong(), Z_DEFAULT_COMPRESSION)
     }
-    require(n >= 0) { "zlib compress 失败" }
-    ByteArray(n) { i -> out[i] }
+    require(rc == Z_OK) { "zlib compress 失败 (rc=$rc)" }
+    ByteArray(destLen.value.toInt()) { i -> out[i].toByte() }
 }
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun zlibDecompress(data: ByteArray): ByteArray = memScoped {
     // 与 mosh compressor 一致：上限 2MB（终端尺寸上限）
     val cap = 2 * 1024 * 1024
-    val out = allocArray<ByteVar>(cap)
-    val n = data.usePinned { pinned ->
-        moshpty.mssh_zlib_uncompress(pinned.addressOf(0), data.size, out, cap)
+    val out = allocArray<UByteVar>(cap)
+    val destLen = alloc<ULongVar>()
+    destLen.value = cap.toULong()
+    val rc = data.usePinned { pinned ->
+        uncompress(out, destLen.ptr, pinned.addressOf(0).reinterpret(), data.size.toULong())
     }
-    require(n >= 0) { "zlib uncompress 失败" }
-    ByteArray(n) { i -> out[i] }
+    require(rc == Z_OK || rc == Z_STREAM_END) { "zlib uncompress 失败 (rc=$rc)" }
+    ByteArray(destLen.value.toInt()) { i -> out[i].toByte() }
 }

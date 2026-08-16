@@ -12,15 +12,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 纯 Kotlin 实现的 mosh 客户端会话（替代原生 libmoshclient.so）。
+ * 纯 Kotlin 实现的 mosh 客户端会话（SSP 协议，不依赖原生 mosh-client）。
  *
  * 线程模型：transport 非线程安全，全部访问限定在事件循环协程内。
  * UI 线程的输入/resize/close 与 socket 收包都经 [events] Channel 汇入，
  * 收包协程只负责阻塞读 socket 并投递，保证输入即时唤醒（不等 receive 超时）。
  *
- * 与原生路径的渲染差异：原生 mosh-client 输出 ANSI 字节流经 onOutput 喂给 UI
- * 模拟器；KMP 版本直接维护服务端状态的影子终端，状态推进时把影子 buffer
- * 内容同步给 UI buffer（[onStateUpdate]）。
+ * 渲染模型：直接维护服务端状态的影子终端，状态推进时把影子 buffer
+ * 内容同步给 UI buffer（[onStateUpdate]），不走 ANSI 字节流。
  */
 class KmpMoshSession(
     ip: String,

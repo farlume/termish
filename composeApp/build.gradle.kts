@@ -28,7 +28,7 @@ kotlin {
 
     val nativeRoot = rootProject.file("iosApp/native")
     val libssh2Def = project.file("src/nativeInterop/cinterop/libssh2.def")
-    val moshptyDef = project.file("src/nativeInterop/cinterop/moshpty.def")
+    val zlibDef = project.file("src/nativeInterop/cinterop/zlib.def")
 
     val iosArm64 = iosArm64()
     val iosSimulatorArm64 = iosSimulatorArm64()
@@ -43,7 +43,7 @@ kotlin {
             binaryOption("bundleId", "dev.mssh.app.Mssh")
             linkerOpts(
                 "-L$libDir",
-                "-lssh2", "-lssl", "-lcrypto", "-lmoshpty", "-lz",
+                "-lssh2", "-lssl", "-lcrypto", "-lz",
                 "-framework", "Security",
             )
         }
@@ -51,12 +51,8 @@ kotlin {
             defFile(libssh2Def)
             compilerOpts("-I${nativeRoot.resolve("include")}")
         }
-        target.compilations.getByName("main").cinterops.create("moshpty") {
-            defFile(moshptyDef)
-            compilerOpts(
-                "-I${rootProject.file("scripts/ios")}",
-                "-I${nativeRoot.resolve("include")}",
-            )
+        target.compilations.getByName("main").cinterops.create("zlib") {
+            defFile(zlibDef)
         }
     }
 
@@ -111,7 +107,6 @@ kotlin {
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.slf4j.nop)
-            implementation(libs.pty4j)
         }
     }
 }
@@ -207,11 +202,6 @@ android {
         versionName = "1.0.0"
     }
     packaging {
-        jniLibs {
-            // 强制解压原生库：否则 .so 留在 APK 内，app 无法执行 mosh-client
-            // （SELinux 禁止 untrusted_app 执行 app_data_file）
-            useLegacyPackaging = true
-        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/META-INF/versions/**"

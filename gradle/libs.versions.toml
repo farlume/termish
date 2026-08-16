@@ -14,7 +14,6 @@ android-targetSdk = "35"
 junit = "4.13.2"
 # JVM SSH transport (Android + desktop)
 sshj = "0.40.0"
-pty4j = "0.13.12"
 slf4j = "2.0.17"
 bouncycastle = "1.80"
 
@@ -30,7 +29,6 @@ junit = { module = "junit:junit", version.ref = "junit" }
 
 # JVM SSH transport
 sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }
-pty4j = { module = "org.jetbrains.pty4j:pty4j", version.ref = "pty4j" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }
 slf4j-nop = { module = "org.slf4j:slf4j-nop", version.ref = "slf4j" }
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
