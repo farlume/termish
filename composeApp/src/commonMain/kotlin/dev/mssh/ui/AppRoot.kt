@@ -380,9 +380,9 @@ fun AppRoot(repository: HostRepository) {
                     val sftpTabs = sftpSessions
                         .filter { it.first.id == s.hostId }
                         .map { SessionTab.Sftp(it.first, it.second) }
-                    val terminalTabs = all
-                        .filter { isActiveStatus(it.status) }
-                        .map { SessionTab.Terminal(it) }
+                    // 终端会话 tab 不过滤状态：断开/失败也保留（tab 内状态点体现），
+                    // 关闭 tab 时才从列表移除；否则创建 SFTP 后重组会把非活跃终端 tab 丢掉
+                    val terminalTabs = all.map { SessionTab.Terminal(it) }
                     val current = currentTab?.takeIf { tab ->
                         tab.id in (terminalTabs.map { it.id } + sftpTabs.map { it.id })
                     } ?: (terminalTabs + sftpTabs).firstOrNull()
@@ -414,7 +414,7 @@ fun AppRoot(repository: HostRepository) {
                                     }
                                 }
                                 val remaining = (sessionManager.sessions
-                                    .filter { c: TerminalController -> c.host.id == s.hostId && isActiveStatus(c.status) }
+                                    .filter { c: TerminalController -> c.host.id == s.hostId }
                                     .map { c: TerminalController -> SessionTab.Terminal(c) } +
                                     sftpSessions
                                         .filter { e: Pair<Host, SftpSession> -> e.first.id == s.hostId }
