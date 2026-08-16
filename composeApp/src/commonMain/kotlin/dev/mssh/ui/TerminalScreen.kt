@@ -498,7 +498,6 @@ private fun TerminalTabBar(
                 }
             }
         }
-        HorizontalDivider(color = theme.foreground().copy(alpha = 0.15f))
     }
 }
 
