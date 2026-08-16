@@ -1,4 +1,4 @@
-rootProject.name = "mssh"
+rootProject.name = "termish"
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 pluginManagement {

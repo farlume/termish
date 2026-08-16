@@ -25,7 +25,7 @@ labels: bug
 ## 日志 / 截图
 
 <!--
-终端输出、logcat（Android）、iOS 的 mssh-diag.log（位于 App 临时目录）。
+终端输出、logcat（Android）、iOS 的 termish-diag.log（位于 App 临时目录）。
 注意打码：主机名、IP、用户名等敏感信息。
 -->
 

@@ -10,15 +10,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
-        android:name="dev.mssh.MsshApplication"
+        android:name="dev.termish.TermishApplication"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="MSSH"
+        android:label="Termish"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Mssh"
+        android:theme="@style/Theme.Termish"
         android:usesCleartextTraffic="true">
         <activity
-            android:name="dev.mssh.MainActivity"
+            android:name="dev.termish.MainActivity"
             android:exported="true"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode"
             android:windowSoftInputMode="adjustNothing">
@@ -30,7 +30,7 @@
 
         <!-- SSH 会话保活：前台服务防止切后台断连 -->
         <service
-            android:name="dev.mssh.SessionService"
+            android:name="dev.termish.SessionService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
     </application>

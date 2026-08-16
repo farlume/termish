@@ -34,7 +34,7 @@ DerivedData/
 *.hprof
 
 # 测试密钥 / 临时文件
-/tmp/mssh_test/
+/tmp/termish_test/
 
 # iOS 原生依赖构建产物（用 scripts/build-ios-native.sh 生成）
 iosApp/native/

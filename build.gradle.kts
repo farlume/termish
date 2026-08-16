@@ -58,13 +58,13 @@ tasks.register("testIntegration") {
 abstract class RunDebugTask @Inject constructor() : ExecTask() {
     @TaskAction
     fun launch() {
-        run("adb", "shell", "am", "force-stop", "dev.mssh.app", ignoreExit = true)
-        run("adb", "shell", "monkey", "-p", "dev.mssh.app", "-c", "android.intent.category.LAUNCHER", "1")
+        run("adb", "shell", "am", "force-stop", "dev.termish.app", ignoreExit = true)
+        run("adb", "shell", "monkey", "-p", "dev.termish.app", "-c", "android.intent.category.LAUNCHER", "1")
     }
 }
 tasks.register<RunDebugTask>("runDebug") {
     group = "run"
-    description = "installDebug + 启动 dev.mssh.app"
+    description = "installDebug + 启动 dev.termish.app"
     dependsOn(":composeApp:installDebug")
 }
 
@@ -72,14 +72,14 @@ tasks.register<RunDebugTask>("runDebug") {
 abstract class ReinstallDebugTask @Inject constructor() : ExecTask() {
     @TaskAction
     fun reinstall() {
-        run("adb", "uninstall", "dev.mssh.app", ignoreExit = true)
+        run("adb", "uninstall", "dev.termish.app", ignoreExit = true)
         run("adb", "install", "-r", "composeApp/build/outputs/apk/debug/composeApp-debug.apk")
-        run("adb", "shell", "monkey", "-p", "dev.mssh.app", "-c", "android.intent.category.LAUNCHER", "1")
+        run("adb", "shell", "monkey", "-p", "dev.termish.app", "-c", "android.intent.category.LAUNCHER", "1")
     }
 }
 tasks.register<ReinstallDebugTask>("reinstallDebug") {
     group = "run"
-    description = "卸载 dev.mssh.app 后重新安装并启动"
+    description = "卸载 dev.termish.app 后重新安装并启动"
     dependsOn(":composeApp:assembleDebug")
 }
 

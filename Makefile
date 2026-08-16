@@ -1,4 +1,4 @@
-# MSSH 本地工作流入口（薄壳）
+# Termish 本地工作流入口（薄壳）
 #
 # 所有流程知识都在 Gradle tasks（根 build.gradle.kts）里，这里只做快捷别名；
 # 直接 ./gradlew <task> 等价可用，CI 亦复用同一组任务。

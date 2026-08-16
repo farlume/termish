@@ -3,13 +3,13 @@
 # 生成 host/client ed25519 密钥，用 client 公钥做 pubkey 认证。
 set -e
 
-DIR="${MSSH_TEST_DIR:-/tmp/mssh_test}"
-PORT="${MSSH_TEST_PORT:-2222}"
+DIR="${Termish_TEST_DIR:-/tmp/termish_test}"
+PORT="${Termish_TEST_PORT:-2222}"
 mkdir -p "$DIR"
 cd "$DIR"
 
-[ -f hostkey ] || ssh-keygen -q -t ed25519 -f hostkey -N "" -C "mssh-test-host"
-[ -f client ]  || ssh-keygen -q -t ed25519 -f client  -N "" -C "mssh-test-client"
+[ -f hostkey ] || ssh-keygen -q -t ed25519 -f hostkey -N "" -C "termish-test-host"
+[ -f client ]  || ssh-keygen -q -t ed25519 -f client  -N "" -C "termish-test-client"
 # CI 里 sshd 以 root 启动、测试进程是普通用户：私钥要可读（仅本地测试用途）
 chmod 644 client
 cat client.pub > authorized_keys

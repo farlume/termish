@@ -1,5 +1,5 @@
 import SwiftUI
-import Mssh
+import Termish
 
 struct ComposeView: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIViewController {
@@ -10,7 +10,7 @@ struct ComposeView: UIViewControllerRepresentable {
 }
 
 @main
-struct MsshIosApp: App {
+struct TermishIosApp: App {
     var body: some Scene {
         WindowGroup {
             ComposeView()

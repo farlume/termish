@@ -4,7 +4,7 @@
 <dict>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)dev.mssh.app</string>
+		<string>$(AppIdentifierPrefix)dev.termish.app</string>
 	</array>
 </dict>
 </plist>

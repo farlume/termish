@@ -12,7 +12,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		A00000000000000000000006 /* MSSH.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MSSH.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000006 /* Termish.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Termish.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000007 /* iosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iosApp.swift; sourceTree = "<group>"; };
 		A00000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -48,7 +48,7 @@
 		A00000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A00000000000000000000006 /* MSSH.app */,
+				A00000000000000000000006 /* Termish.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -81,7 +81,7 @@
 			);
 			name = iosApp;
 			productName = iosApp;
-			productReference = A00000000000000000000006 /* MSSH.app */;
+			productReference = A00000000000000000000006 /* Termish.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -242,13 +242,13 @@
 					"$(SRCROOT)/native/lib/sim",
 					"$(SRCROOT)/native/lib/device",
 				);
-				OTHER_LDFLAGS = "$(inherited) -framework Mssh -lssh2 -lssl -lcrypto -lz -framework Security";
-				PRODUCT_BUNDLE_IDENTIFIER = dev.mssh.app;
-				/* Swift target 模块名须与 Kotlin framework（Mssh）不同：Xcode 26 显式模块
-				   编译下 PRODUCT_NAME=MSSH 与 import Mssh 大小写碰撞，报
-				   "cannot load module 'MSSH' as 'Mssh'" */
-				PRODUCT_MODULE_NAME = MsshApp;
-				PRODUCT_NAME = MSSH;
+				OTHER_LDFLAGS = "$(inherited) -framework Termish -lssh2 -lssl -lcrypto -lz -framework Security";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.termish.app;
+				/* Swift target 模块名须与 Kotlin framework（Termish）不同：Xcode 26 显式模块
+				   编译下 PRODUCT_NAME=Termish 与 import Termish 大小写碰撞，报
+				   "cannot load module 'Termish' as 'Termish'" */
+				PRODUCT_MODULE_NAME = TermishApp;
+				PRODUCT_NAME = Termish;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -282,10 +282,10 @@
 					"$(SRCROOT)/native/lib/sim",
 					"$(SRCROOT)/native/lib/device",
 				);
-				OTHER_LDFLAGS = "$(inherited) -framework Mssh -lssh2 -lssl -lcrypto -lz -framework Security";
-				PRODUCT_BUNDLE_IDENTIFIER = dev.mssh.app;
-				PRODUCT_MODULE_NAME = MsshApp;
-				PRODUCT_NAME = MSSH;
+				OTHER_LDFLAGS = "$(inherited) -framework Termish -lssh2 -lssl -lcrypto -lz -framework Security";
+				PRODUCT_BUNDLE_IDENTIFIER = dev.termish.app;
+				PRODUCT_MODULE_NAME = TermishApp;
+				PRODUCT_NAME = Termish;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

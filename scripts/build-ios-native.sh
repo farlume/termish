@@ -1,7 +1,7 @@
 #!/bin/bash
 # 构建 iOS 原生 SSH 依赖：OpenSSL (静态) + libssh2 (静态)，产出到 iosApp/native。
 #
-# 为什么自己构建：NMSSH 自带的老预编译库与新版 Xcode 链接器不兼容（arm64 模拟器缺失、
+# 为什么自己构建：NTermish 自带的老预编译库与新版 Xcode 链接器不兼容（arm64 模拟器缺失、
 # 归档成员未对齐）；现代 libssh2 pod 又依赖 GitHub git 克隆（网络受限）。本脚本从
 # 官方源（openssl.org / libssh2.org）下载源码交叉编译，结果静态链接进 Kotlin framework。
 #

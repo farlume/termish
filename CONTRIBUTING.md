@@ -1,4 +1,4 @@
-# Contributing to MSSH
+# Contributing to Termish
 
 感谢你愿意贡献！本文件是参与开发的完整指引，README 的 Contributing 一节是速览版。
 
@@ -43,7 +43,7 @@ make release          # 已签名 release（需要 .env，见 .env.example）
 ## 报告问题
 
 - Bug：用 [Bug report 模板](.github/ISSUE_TEMPLATE/bug_report.md)，附版本号、
-  平台、复现步骤和日志（iOS 崩溃日志在 `<NSTemporaryDirectory>/mssh-diag.log`）
+  平台、复现步骤和日志（iOS 崩溃日志在 `<NSTemporaryDirectory>/termish-diag.log`）
 - 安全漏洞：**不要开公开 issue**，走 [SECURITY.md](SECURITY.md) 的私密渠道
 
 ## 行为准则

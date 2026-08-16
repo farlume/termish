@@ -11,7 +11,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>MSSH</string>
+	<string>Termish</string>
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
@@ -23,7 +23,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>MSSH 需要通过局域网连接你配置的 SSH/Mosh 服务器（NAS、Mac 等），用于远程终端与文件传输。</string>
+	<string>Termish 需要通过局域网连接你配置的 SSH/Mosh 服务器（NAS、Mac 等），用于远程终端与文件传输。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

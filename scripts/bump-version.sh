@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 一键升级 MSSH 版本号：Android / iOS / 桌面（DMG/MSI/DEB）一起升。
+# 一键升级 Termish 版本号：Android / iOS / 桌面（DMG/MSI/DEB）一起升。
 #
 # 用法:
 #   ./scripts/bump-version.sh 0.3.0            # 版本 0.3.0，构建号自动 +1

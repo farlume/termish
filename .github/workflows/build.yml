@@ -156,7 +156,7 @@ jobs:
 
       - name: Run desktop tests
         if: matrix.platform == 'Linux'
-        # 集成测试按 sshd(2222) 可用性自我探测，无需 MSSH_TEST_RUN
+        # 集成测试按 sshd(2222) 可用性自我探测，无需 TERMISH_TEST_RUN
         run: ./gradlew :composeApp:desktopTest
 
       - name: Package (${{ matrix.platform }})
@@ -194,7 +194,7 @@ jobs:
           cd dist
           for f in composeApp-*.apk composeApp-*.aab; do
             [ -e "$f" ] || continue
-            mv "$f" "MSSH-$VER-${f#composeApp-}"
+            mv "$f" "Termish-$VER-${f#composeApp-}"
           done
           ls -l
 

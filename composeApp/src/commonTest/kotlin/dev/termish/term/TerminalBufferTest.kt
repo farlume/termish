@@ -1,0 +1,308 @@
+package dev.termish.term
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+
+/** TerminalBuffer 回归测试：覆盖 resize 收缩、宽字符尾巴颜色继承等已修 bug。 */
+class TerminalBufferTest {
+
+    @Test
+    fun unlimitedScrollbackNotTruncated() {
+        // 影子终端用 Int.MAX_VALUE 表示无上限（mosh Framebuffer 语义），
+        // 滚动后不得丢行，否则 SSP diff 会与服务端 framebuffer 错位
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = Int.MAX_VALUE)
+        repeat(200) { b.scrollUp(1) }
+        assertEquals(200, b.scrollbackSize())
+
+        val capped = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(200) { capped.scrollUp(1) }
+        assertEquals(100, capped.scrollbackSize())
+    }
+
+    @Test
+    fun shallowForkSharesLinesAndCopiesOnWrite() {
+        // COW：fork 后行对象共享；任一 buffer 写共享行时先克隆，互不影响
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        val fork = b.shallowFork()
+        assertTrue(fork.lineAt(0) === b.lineAt(0)) // 未写前共享同一行对象
+
+        fork.putChar('b'.code) // 写第 0 行 → COW 克隆
+        assertTrue(fork.lineAt(0) !== b.lineAt(0))
+        assertEquals('a'.code, b.lineAt(0).cells[0].codePoint) // 原 buffer 不受影响
+        assertEquals('b'.code, fork.lineAt(0).cells[1].codePoint) // 克隆行独立写入
+    }
+
+    @Test
+    fun shallowForkPreservesExactLineCount() {
+        // 回归：shallowFork 曾在构造器预建的 rows 空行之后追加源行，每个分叉
+        // 顶部多出 rows 行幻影空行，且随分叉代数累积（会话越久越卡）
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(20) { b.scrollUp(1) } // 造 20 行回看
+        b.putChar('x'.code)
+        val fork = b.shallowFork()
+        assertEquals(b.totalLines(), fork.totalLines())
+        assertEquals(b.scrollbackSize(), fork.scrollbackSize())
+        // 逐行引用一致（幻影行会同时改变两者）
+        for (i in 0 until b.totalLines()) {
+            assertTrue(fork.absLine(i) === b.absLine(i), "line $i 应共享同一对象")
+        }
+        // 连续分叉不累积幻影行
+        val fork2 = fork.shallowFork()
+        assertEquals(b.totalLines(), fork2.totalLines())
+    }
+
+    @Test
+    fun lineVersionBumpsOnWriteNotOnCursorMove() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        val v0 = b.lineAt(0).version
+        // 光标移动 / 模式切换不改变内容，版本号不动
+        b.moveTo(2, 2)
+        b.setScrollRegion(0, 4)
+        assertEquals(v0, b.lineAt(0).version)
+        // 写入内容 → 版本递增
+        b.putChar('b'.code)
+        assertTrue(b.lineAt(0).version > v0)
+    }
+
+    @Test
+    fun lineVersionBumpsOnEraseAndResize() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('x'.code)
+        val v0 = b.lineAt(0).version
+        b.eraseLine()
+        assertTrue(b.lineAt(0).version > v0)
+        b.putChar('y'.code)
+        val v1 = b.lineAt(0).version
+        b.resize(6, 5)
+        assertTrue(b.lineAt(0).version > v1)
+    }
+
+    @Test
+    fun fullScreenScrollKeepsLineIdentityAndVersion() {
+        val b = TerminalBuffer(10, 5)
+        repeat(5) { r -> b.lineAt(r).let { it.cells[0].codePoint = 'a'.code + r; it.touch() } }
+        val first = b.lineAt(0)
+        val firstVersion = first.version
+        b.scrollUp(1)
+        // 旧首行进入回看，仍是同一实例、版本未变（内容未改写）
+        assertTrue(b.scrollbackSize() == 1)
+        assertTrue(b.absLine(0) === first)
+        assertEquals(firstVersion, b.absLine(0).version)
+        // 可见区首行是原第 2 行，实例未变
+        assertTrue(b.lineAt(0) !== first)
+    }
+
+    @Test
+    fun regionScrollBumpsDestinationLines() {
+        val b = TerminalBuffer(10, 5)
+        repeat(5) { r -> b.lineAt(r).touch() }
+        val versions = (0..4).map { b.lineAt(it).version }
+        b.setScrollRegion(1, 3)
+        b.scrollUp(1)
+        // 区域内的行内容被改写 → 版本递增；区域外不变
+        assertTrue(b.lineAt(1).version > versions[1])
+        assertTrue(b.lineAt(2).version > versions[2])
+        assertEquals(versions[4], b.lineAt(4).version)
+    }
+
+    @Test
+    fun cellWidthPrecomputed() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        assertEquals(1, b.lineAt(0).cells[0].width)
+        b.putChar('中'.code)
+        assertEquals(2, b.lineAt(0).cells[1].width)
+        assertTrue(b.lineAt(0).cells[1].isWide)
+        assertTrue(b.lineAt(0).cells[2].isWideTail)
+        assertEquals(1, b.lineAt(0).cells[2].width)
+        // 窄字符覆盖宽头 → 宽度复位、尾巴标记清除
+        b.moveTo(0, 1)
+        b.putChar('b'.code)
+        assertEquals(1, b.lineAt(0).cells[1].width)
+        assertFalse(b.lineAt(0).cells[2].isWideTail)
+    }
+
+    private fun TerminalBuffer.lineText(row: Int): String {
+        val sb = StringBuilder()
+        for (c in visibleLines()[row].cells) {
+            if (c.isWideTail) continue
+            sb.append(c.codePoint.toChar())
+        }
+        return sb.toString().trimEnd()
+    }
+
+    @Test
+    fun resizeShrinkKeepsCursorVisible() {
+        // 键盘弹起场景：收缩行数应丢弃光标下方空白行，提示符留在可视区
+        val b = TerminalBuffer(10, 5)
+        val e = TerminalEmulator(b)
+        e.writeText("line0\r\nline1\r\n$ ")
+        assertEquals(2, b.cursorRow)
+
+        b.resize(10, 3)
+
+        assertEquals(2, b.cursorRow)
+        assertEquals("line0", b.lineText(0))
+        assertEquals("line1", b.lineText(1))
+        assertEquals("$", b.lineText(2))
+        // 丢弃的是底部空白行，顶部内容不应被挤入回看
+        assertEquals(0, b.scrollbackSize())
+    }
+
+    @Test
+    fun resizeShrinkFullScreenFallsBackToScrollback() {
+        // 满屏文字没有空白行可丢：顶部行进入回看，光标钳在可视区
+        val b = TerminalBuffer(4, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("aaaa\r\nbbbb\r\ncccc")
+        b.resize(4, 2)
+        assertTrue(b.cursorRow in 0..1)
+        assertEquals("cccc", b.lineText(1))
+    }
+
+    @Test
+    fun wideCharTailInheritsColors() {
+        // 宽字符尾巴必须继承头的颜色/属性，否则带底色的行上右半格露默认背景
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("[47m中[0m")
+        val line = b.visibleLines()[0]
+        assertEquals('中'.code, line.cells[0].codePoint)
+        assertTrue(line.cells[1].isWideTail)
+        assertEquals(line.cells[0].bg, line.cells[1].bg)
+        assertEquals(line.cells[0].attrs, line.cells[1].attrs)
+    }
+
+    @Test
+    fun narrowOverwriteWideHeadClearsTail() {
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("中文\rxy")
+        val line = b.visibleLines()[0]
+        assertEquals('x'.code, line.cells[0].codePoint)
+        assertFalse(line.cells[1].isWideTail)
+        assertEquals('y'.code, line.cells[1].codePoint)
+    }
+
+    @Test
+    fun writeOnWideTailClearsHead() {
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("中")   // 占 0-1 列，光标到 2
+        e.writeText("[1D") // 光标左移一格，落在尾巴上
+        e.writeText("x")
+        val line = b.visibleLines()[0]
+        // 头被清掉，x 写在前尾巴位置
+        assertEquals(' '.code, line.cells[0].codePoint)
+        assertEquals('x'.code, line.cells[1].codePoint)
+        assertFalse(line.cells[1].isWideTail)
+    }
+
+    @Test
+    fun bracketedPasteModeTracked() {
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        assertFalse(b.bracketedPaste)
+        e.writeText("[?2004h")
+        assertTrue(b.bracketedPaste)
+        e.writeText("[?2004l")
+        assertFalse(b.bracketedPaste)
+    }
+
+    @Test
+    fun osc52WritesClipboard() {
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        var clip = ""
+        e.onClipboardWrite = { clip = it }
+        // "hi" 的 base64 是 aGk=
+        e.writeText("]52;c;aGk=")
+        assertEquals("hi", clip)
+    }
+
+    @Test
+    fun mouseTrackingModesNegotiated() {
+        // herdr 实际发送的协商序列：先 reset 再 enable 1000/1002/1003/1015/1006
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("\u001b[?1006l\u001b[?1000l")
+        assertEquals(0, b.mouseTracking)
+        assertFalse(b.mouseSgr)
+        e.writeText("\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1015h\u001b[?1006h")
+        assertEquals(1003, b.mouseTracking)
+        assertTrue(b.mouseSgr)
+    }
+
+    @Test
+    fun autoWrapMovesToNextLineAfterLastColumn() {
+        val b = TerminalBuffer(5, 3)
+        // 写满第一行后再写一个字符：应换到第二行第一列
+        "abcde".forEach { b.putChar(it.code) }
+        assertTrue(b.pendingWrap)
+        assertEquals(4, b.cursorCol)
+        b.putChar('f'.code)
+        assertEquals(1, b.cursorRow)
+        assertEquals(1, b.cursorCol)
+        assertEquals('f'.code, b.lineAt(1).cells[0].codePoint)
+        assertTrue(b.lineAt(0).wrapped)
+    }
+
+    @Test
+    fun autoWrapDisabledOverwritesLastColumn() {
+        val b = TerminalBuffer(5, 3)
+        b.autoWrap = false
+        "abcde".forEach { b.putChar(it.code) }
+        b.putChar('X'.code)
+        // DECAWM 关闭：不换行，覆盖最后一格
+        assertEquals(0, b.cursorRow)
+        assertEquals(4, b.cursorCol)
+        assertEquals('X'.code, b.lineAt(0).cells[4].codePoint)
+    }
+
+    @Test
+    fun wideCharWrapAfterPendingWrap() {
+        val b = TerminalBuffer(4, 3)
+        "abcd".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中
+        assertEquals(1, b.cursorRow)
+        assertEquals(2, b.cursorCol)
+        assertEquals(0x4E2D, b.lineAt(1).cells[0].codePoint)
+        assertTrue(b.lineAt(1).cells[1].isWideTail)
+    }
+
+    @Test
+    fun wideCharAtLastColumnWithAutoWrapOffDoesNotWrap() {
+        val b = TerminalBuffer(4, 3)
+        b.autoWrap = false
+        "abcd".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中：DECAWM 关闭时不换行，覆盖最后一格
+        assertEquals(0, b.cursorRow)
+        assertEquals(0x4E2D, b.lineAt(0).cells[3].codePoint)
+    }
+
+    @Test
+    fun eraseScreenKeepsCursor() {
+        val b = TerminalBuffer(10, 3)
+        b.moveTo(1, 4)
+        b.eraseScreen()
+        assertEquals(1, b.cursorRow)
+        assertEquals(4, b.cursorCol)
+    }
+
+    @Test
+    fun saveRestoreCursorKeepsPendingWrap() {
+        val b = TerminalBuffer(5, 3)
+        "abcde".forEach { b.putChar(it.code) }
+        assertTrue(b.pendingWrap)
+        b.saveCursor()
+        b.moveTo(0, 0)
+        b.restoreCursor()
+        assertTrue(b.pendingWrap)
+        assertEquals(4, b.cursorCol)
+    }
+}

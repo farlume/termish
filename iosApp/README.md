@@ -22,4 +22,4 @@ xcodebuild -project iosApp.xcodeproj -scheme iosApp -destination 'generic/platfo
 ```
 
 SSH 传输引擎：`libssh2`（静态链接 OpenSSL），实现见
-`composeApp/src/iosMain/kotlin/dev/mssh/ssh/SshSessionLibssh2.kt`。
+`composeApp/src/iosMain/kotlin/dev/termish/ssh/SshSessionLibssh2.kt`。

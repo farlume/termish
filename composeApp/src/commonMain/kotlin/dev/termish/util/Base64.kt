@@ -1,0 +1,40 @@
+package dev.termish.util
+
+/** RFC 4648 标准 Base64 编码（无换行）。 */
+fun base64Encode(data: ByteArray): String {
+    val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    val sb = StringBuilder((data.size + 2) / 3 * 4)
+    var i = 0
+    while (i < data.size) {
+        val b0 = data[i].toInt() and 0xff
+        val b1 = if (i + 1 < data.size) data[i + 1].toInt() and 0xff else 0
+        val b2 = if (i + 2 < data.size) data[i + 2].toInt() and 0xff else 0
+        sb.append(chars[b0 ushr 2])
+        sb.append(chars[((b0 and 0x3) shl 4) or (b1 ushr 4)])
+        sb.append(if (i + 1 < data.size) chars[((b1 and 0xf) shl 2) or (b2 ushr 6)] else '=')
+        sb.append(if (i + 2 < data.size) chars[b2 and 0x3f] else '=')
+        i += 3
+    }
+    return sb.toString()
+}
+
+/** RFC 4648 标准 Base64 解码（容忍空白与缺省填充；非法输入返回空）。 */
+fun base64Decode(s: String): ByteArray {
+    val clean = s.filter { !it.isWhitespace() }
+    val table = IntArray(128) { -1 }
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".forEachIndexed { i, c -> table[c.code] = i }
+    val out = ArrayList<Byte>((clean.length * 3) / 4 + 3)
+    var acc = 0
+    var bits = 0
+    for (ch in clean) {
+        if (ch == '=') break
+        if (ch.code >= 128 || table[ch.code] < 0) return ByteArray(0)
+        acc = (acc shl 6) or table[ch.code]
+        bits += 6
+        if (bits >= 8) {
+            bits -= 8
+            out.add(((acc ushr bits) and 0xff).toByte())
+        }
+    }
+    return out.toByteArray()
+}
