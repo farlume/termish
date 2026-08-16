@@ -190,6 +190,7 @@ fun SftpContent(
                     visible = searching,
                     enter = expandHorizontally() + fadeIn(),
                     exit = shrinkHorizontally() + fadeOut(),
+                    modifier = Modifier.weight(1f),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = { searching = false; query = "" }) {
@@ -214,97 +215,112 @@ fun SftpContent(
                     visible = !searching,
                     enter = fadeIn(),
                     exit = fadeOut(),
+                    modifier = Modifier.weight(1f),
                 ) {
-                    // 可点击面包屑：每段跳转对应目录；… 下拉父级目录列表
+                    // 整组放同一行：面包屑 + 上传 + 菜单 + 搜索（AnimatedVisibility 内容非 RowScope，
+                    // 多个并列子项会被垂直堆叠，必须包一个 Row）
                     Row(
-                        Modifier.weight(1f),
+                        Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        breadcrumbs.forEachIndexed { i, crumb ->
-                            if (crumb == "...") {
-                                Box {
-                                    Text(
-                                        "...",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        fontFamily = monospaceFontFamily(),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .clickable { showParents = true }
-                                            .padding(horizontal = 2.dp),
-                                    )
-                                    DropdownMenu(
-                                        expanded = showParents,
-                                        onDismissRequest = { showParents = false },
-                                    ) {
-                                        hiddenParents.forEach { parent ->
-                                            DropdownMenuItem(
-                                                text = { Text(parent, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                                leadingIcon = {
-                                                    Icon(
-                                                        painterResource(Res.drawable.folder),
-                                                        null,
-                                                        modifier = Modifier.size(18.dp),
-                                                        tint = MaterialTheme.colorScheme.primary,
-                                                    )
-                                                },
-                                                onClick = {
-                                                    showParents = false
-                                                    path = pathForBreadcrumb(displayParts.indexOf(parent))
-                                                },
-                                            )
+                        // 可点击面包屑：每段跳转对应目录；… 下拉父级目录列表
+                        Row(
+                            Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            breadcrumbs.forEachIndexed { i, crumb ->
+                                if (crumb == "...") {
+                                    Box {
+                                        Text(
+                                            "...",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontFamily = monospaceFontFamily(),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .clickable { showParents = true }
+                                                .padding(horizontal = 2.dp),
+                                        )
+                                        DropdownMenu(
+                                            expanded = showParents,
+                                            onDismissRequest = { showParents = false },
+                                        ) {
+                                            hiddenParents.forEach { parent ->
+                                                DropdownMenuItem(
+                                                    text = { Text(parent, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            painterResource(Res.drawable.folder),
+                                                            null,
+                                                            modifier = Modifier.size(18.dp),
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        showParents = false
+                                                        path = pathForBreadcrumb(displayParts.indexOf(parent))
+                                                    },
+                                                )
+                                            }
                                         }
                                     }
-                                }
-                            } else {
-                                Text(
-                                    crumb,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontFamily = monospaceFontFamily(),
-                                    color = if (i == breadcrumbs.lastIndex) {
-                                        MaterialTheme.colorScheme.onSurface
-                                    } else {
-                                        MaterialTheme.colorScheme.primary
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .clickable { path = pathForBreadcrumb(displayParts.indexOf(crumb)) }
-                                        .padding(horizontal = 2.dp),
-                                )
-                                if (i < breadcrumbs.lastIndex) {
+                                    if (i < breadcrumbs.lastIndex) {
+                                        Text(
+                                            " > ",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                } else {
                                     Text(
-                                        " > ",
+                                        crumb,
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontFamily = monospaceFontFamily(),
+                                        color = if (i == breadcrumbs.lastIndex) {
+                                            MaterialTheme.colorScheme.onSurface
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .clickable { path = pathForBreadcrumb(displayParts.indexOf(crumb)) }
+                                            .padding(horizontal = 2.dp),
                                     )
+                                    if (i < breadcrumbs.lastIndex) {
+                                        Text(
+                                            " > ",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                    TextButton(onClick = { pickFile() }) {
-                        Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-                        Spacer(Modifier.size(4.dp))
-                        Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
-                    }
-                    SftpMoreMenu(
-                        sort = sort,
-                        showHidden = showHidden,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        onSort = { sort = it },
-                        onToggleHidden = { showHidden = !showHidden },
-                        onNewFolder = { newFolderDialog = true },
-                        onCopyPath = {
-                            clipboard.setText(AnnotatedString(path))
-                            scope.launch { snackbar.showSnackbar(s.sftpCopied) }
-                        },
-                        onChangeDownload = {
-                            scope.launch { snackbar.showSnackbar("TODO: ${s.sftpChangeDownload}") }
-                        },
-                    )
-                    IconButton(onClick = { searching = true }) {
-                        Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = MaterialTheme.colorScheme.onSurface)
+                        TextButton(onClick = { pickFile() }) {
+                            Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                            Spacer(Modifier.size(4.dp))
+                            Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
+                        }
+                        SftpMoreMenu(
+                            sort = sort,
+                            showHidden = showHidden,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            onSort = { sort = it },
+                            onToggleHidden = { showHidden = !showHidden },
+                            onNewFolder = { newFolderDialog = true },
+                            onCopyPath = {
+                                clipboard.setText(AnnotatedString(path))
+                                scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                            },
+                            onChangeDownload = {
+                                scope.launch { snackbar.showSnackbar("TODO: ${s.sftpChangeDownload}") }
+                            },
+                        )
+                        IconButton(onClick = { searching = true }) {
+                            Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = MaterialTheme.colorScheme.onSurface)
+                        }
                     }
                 }
             }

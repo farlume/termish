@@ -233,15 +233,15 @@ fun AppRoot(repository: HostRepository) {
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         MsshTheme(settings.theme) {
-            // 状态栏图标颜色跟随实际页面背景：
-            // - 终端 tab（终端主题深色背景）→ 浅色图标
-            // - 其余页面（应用浅色主题）→ 深色图标
-            val terminalDark = screen is Screen.Terminal &&
-                currentTab is SessionTab.Terminal &&
+            // 状态栏图标颜色只看当前页面实际背景亮度：
+            // - 终端 tab → 按终端主题背景亮度
+            // - 其余页面 → 按应用主题亮度
+            val pageDark = if (screen is Screen.Terminal && currentTab is SessionTab.Terminal) {
                 terminalTheme.background().luminance() < 0.5f
-            PlatformStatusBarIcons(
-                lightIcons = terminalDark || settings.theme != ThemeMode.LIGHT,
-            )
+            } else {
+                settings.theme != ThemeMode.LIGHT
+            }
+            PlatformStatusBarIcons(lightIcons = pageDark)
             Box(Modifier.fillMaxSize()) {
             // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
             // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
