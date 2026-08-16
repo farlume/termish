@@ -61,6 +61,23 @@ class SftpSessionSshj(
         c.put(source, remotePath)
     }
 
+    override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {
+        val c = clientOrThrow()
+        val remote = c.open(remotePath)
+        try {
+            val buf = ByteArray(64 * 1024)
+            var offset = 0L
+            while (true) {
+                val n = remote.read(offset, buf, 0, buf.size)
+                if (n <= 0) break
+                onChunk(buf.copyOf(n))
+                offset += n
+            }
+        } finally {
+            remote.close()
+        }
+    }
+
     override fun close() {
         try {
             client?.close()

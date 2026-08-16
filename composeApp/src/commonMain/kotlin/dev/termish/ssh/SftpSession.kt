@@ -26,6 +26,12 @@ interface SftpSession {
     /** 上传字节内容到远端路径。 */
     fun upload(remotePath: String, content: ByteArray)
 
+    /**
+     * 下载远端文件到本地：以 64KB 左右的分块回调 [onChunk]（阻塞调用）。
+     * 由 UI 层负责把分块写入本地文件并 close 保存通道。
+     */
+    fun download(remotePath: String, onChunk: (ByteArray) -> Unit)
+
     fun close()
 }
 

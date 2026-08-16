@@ -14,6 +14,7 @@ import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.toKString
 import libssh2.LIBSSH2_ERROR_EAGAIN
 import libssh2.LIBSSH2_FXF_CREAT
+import libssh2.LIBSSH2_FXF_READ
 import libssh2.LIBSSH2_FXF_TRUNC
 import libssh2.LIBSSH2_FXF_WRITE
 import libssh2.LIBSSH2_SFTP
@@ -25,6 +26,7 @@ import libssh2.libssh2_sftp_init
 import libssh2.libssh2_sftp_close_handle
 import libssh2.libssh2_sftp_mkdir_ex
 import libssh2.libssh2_sftp_open_ex
+import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
 import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_write
@@ -123,6 +125,28 @@ private class SftpSessionLibssh2(
             val text = content.decodeToString()
             val n = libssh2_sftp_write(h, text, text.length.toULong())
             if (n < 0) throw SshException("SFTP 写入失败: $remotePath")
+        } finally {
+            libssh2_sftp_close_handle(h)
+        }
+    }
+
+    override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {
+        val s = sftpOrThrow()
+        val h = libssh2_sftp_open_ex(s, remotePath, remotePath.length.toUInt(), LIBSSH2_FXF_READ.toULong(), 0L, 0)
+            ?: throw SshException("SFTP 打开文件失败: $remotePath")
+        try {
+            memScoped {
+                val buf = allocArray<ByteVar>(64 * 1024)
+                while (true) {
+                    val n = libssh2_sftp_read(h, buf, (64 * 1024).toULong())
+                    when {
+                        n > 0 -> onChunk(buf.readBytes(n.toInt()))
+                        n == 0L -> return
+                        n.toInt() == LIBSSH2_ERROR_EAGAIN -> usleep(30_000u)
+                        else -> throw SshException("SFTP 读取失败: $remotePath")
+                    }
+                }
+            }
         } finally {
             libssh2_sftp_close_handle(h)
         }

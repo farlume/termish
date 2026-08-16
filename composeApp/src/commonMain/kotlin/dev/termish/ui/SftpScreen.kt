@@ -109,6 +109,10 @@ fun SftpContent(
     var searching by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var newFolderDialog by remember { mutableStateOf(false) }
+    /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
+    var fileMenu by remember { mutableStateOf<SftpEntry?>(null) }
+    /** 等待用户选择保存位置后开始下载的文件（保存回调异步，不能依赖 fileMenu）。 */
+    var pendingDownload by remember { mutableStateOf<SftpEntry?>(null) }
 
     fun joinPath(base: String, name: String): String =
         if (base == "/") "/$name" else "$base/$name"
@@ -136,6 +140,32 @@ fun SftpContent(
                 snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "upload"))
             }
         }
+    }
+
+    // 选择保存位置后流式下载；取消保存则完全不回调（不产生下载流量）
+    val savePicker = rememberFileSaver { _, sink ->
+        val target = pendingDownload ?: return@rememberFileSaver
+        val remotePath = joinPath(path, target.name)
+        scope.launch {
+            try {
+                withContext(ioDispatcher()) {
+                    session.download(remotePath) { chunk -> sink.write(chunk) }
+                    sink.close()
+                }
+                snackbar.showSnackbar(s.sftpDownloaded)
+            } catch (e: Exception) {
+                try {
+                    sink.close()
+                } catch (_: Exception) {
+                }
+                snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
+            }
+        }
+    }
+
+    fun startDownload(entry: SftpEntry) {
+        pendingDownload = entry
+        savePicker(entry.name)
     }
 
     // 首次进入：优先用户主目录，失败回退根目录
@@ -356,17 +386,49 @@ fun SftpContent(
                             }
                         }
                         items(visible, key = { it.name }) { entry ->
-                            SftpRowItem(
-                                name = entry.name,
-                                permissions = entry.permissions,
-                                time = formatTime(entry.modifiedAt),
-                                isDirectory = entry.isDirectory,
-                                onClick = {
-                                    if (entry.isDirectory) {
+                            if (entry.isDirectory) {
+                                SftpRowItem(
+                                    name = entry.name,
+                                    permissions = entry.permissions,
+                                    time = formatTime(entry.modifiedAt),
+                                    isDirectory = true,
+                                    onClick = {
                                         path = joinPath(path, entry.name)
+                                    },
+                                )
+                            } else {
+                                Box {
+                                    SftpRowItem(
+                                        name = entry.name,
+                                        permissions = entry.permissions,
+                                        time = formatTime(entry.modifiedAt),
+                                        isDirectory = false,
+                                        onClick = { fileMenu = entry },
+                                    )
+                                    DropdownMenu(
+                                        expanded = fileMenu?.name == entry.name,
+                                        onDismissRequest = { fileMenu = null },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(s.sftpDownload) },
+                                            leadingIcon = { Icon(Icons.Filled.Download, null) },
+                                            onClick = {
+                                                fileMenu = null
+                                                startDownload(entry)
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(s.sftpCopyPath) },
+                                            leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
+                                            onClick = {
+                                                fileMenu = null
+                                                clipboard.setText(AnnotatedString(joinPath(path, entry.name)))
+                                                scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                                            },
+                                        )
                                     }
-                                },
-                            )
+                                }
+                            }
                         }
                     }
                 }
