@@ -45,6 +45,7 @@ import dev.mssh.data.Host
 import dev.mssh.data.HostRepository
 import dev.mssh.data.SECRET_SERVICE
 import dev.mssh.data.SecretStore
+import dev.mssh.data.ThemeMode
 import dev.mssh.data.secretAccountFor
 import dev.mssh.ssh.AuthPrompt
 import dev.mssh.ssh.HostKeyInfo
@@ -231,6 +232,8 @@ fun AppRoot(repository: HostRepository) {
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         MsshTheme(settings.theme) {
+            // 状态栏图标颜色跟随主题：浅色主题 → 深色图标
+            PlatformStatusBarIcons(lightIcons = settings.theme != ThemeMode.LIGHT)
             Box(Modifier.fillMaxSize()) {
             // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
             // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
