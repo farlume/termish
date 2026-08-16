@@ -54,22 +54,36 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
     fun selectedText(): String {
         if (!isActive) return ""
         val (r1, c1, r2, c2) = normalized()
-        val lines = ArrayList<String>()
+        val sb = StringBuilder()
+        var paragraphStart = true
         for (r in r1..minOf(r2, buffer.totalLines() - 1)) {
             if (r < 0) continue
             val line = buffer.absLine(r)
             val from = if (r == r1) c1.coerceIn(0, buffer.cols - 1) else 0
             val to = if (r == r2) c2.coerceIn(0, buffer.cols - 1) else buffer.cols - 1
-            if (from > to) { lines.add(""); continue }
-            val sb = StringBuilder()
-            for (c in from..to) {
-                val cell = line.cells[c]
-                if (cell.isWideTail) continue
-                sb.appendCodePointSafely(cell.codePoint)
+            val rowText = if (from > to) {
+                ""
+            } else {
+                val sbRow = StringBuilder()
+                for (c in from..to) {
+                    val cell = line.cells[c]
+                    if (cell.isWideTail) continue
+                    sbRow.appendCodePointSafely(cell.codePoint)
+                }
+                sbRow.toString().trimEnd()
             }
-            lines.add(sb.toString().trimEnd())
+            // wrapped 是行尾标记：上一行自动折行时置位。
+            // 续行直接接续上一段，不插入换行；但选区若从续行中间开始，
+            // 则以该行为新段落起始（前面未选中的内容不接进来）。
+            if (r > r1 && buffer.absLine(r - 1).wrapped) {
+                sb.append(rowText)
+            } else {
+                if (!paragraphStart) sb.append('\n')
+                sb.append(rowText)
+                paragraphStart = false
+            }
         }
-        return lines.joinToString("\n").trimEnd()
+        return sb.toString().trimEnd()
     }
 
     private data class SelectionBounds(val r1: Int, val c1: Int, val r2: Int, val c2: Int)

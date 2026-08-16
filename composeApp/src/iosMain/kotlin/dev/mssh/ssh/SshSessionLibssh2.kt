@@ -143,6 +143,7 @@ class SshSessionLibssh2(
     private var lastKeepaliveMs: Long = 0
 
     private var hostKeyInfo: HostKeyInfo? = null
+    private var authFailureReason: String? = null
 
     // 单线程串行调度器：libssh2 会话非线程安全，读循环 / 写 / resize / keepalive /
     // cleanup 全部编组到同一线程，杜绝并发进入同一 LIBSSH2_SESSION。
@@ -204,7 +205,7 @@ class SshSessionLibssh2(
         }
         if (!authenticate(s)) {
             cleanup()
-            throw SshException("认证失败")
+            throw SshException("认证失败${authFailureReason ?: ""}")
         }
         return s to banner
     }
@@ -214,12 +215,34 @@ class SshSessionLibssh2(
     private fun authenticate(s: CPointer<LIBSSH2_SESSION>?): Boolean {
         // cinterop 的 String 参数按 UTF-8 编码，长度必须是字节数，否则非 ASCII 凭据必败
         val usernameBytes = connection.username.encodeToByteArray()
+        var pubkeyError: String? = null
         connection.privateKeyPem?.let { pem ->
-            val rc = libssh2_userauth_publickey_frommemory(
+            val pemLen = pem.encodeToByteArray().size.toULong()
+            var rc = libssh2_userauth_publickey_frommemory(
                 s, connection.username, usernameBytes.size.toULong(),
-                null, 0u, pem, pem.encodeToByteArray().size.toULong(), "",
+                null, 0u, pem, pemLen, "",
             )
+            // 加密私钥：提示用户输入口令后带 passphrase 重试
+            if (rc != 0 && isEncryptedPem(pem)) {
+                val passphrase = runBlocking {
+                    callbacks.onPrompt(
+                        AuthPrompt(
+                            method = SshAuthMethod.PASSPHRASE,
+                            name = "私钥口令",
+                            instruction = "该私钥已加密（passphrase-protected），请输入口令。",
+                            prompts = listOf(PromptField("Passphrase", echo = false)),
+                        )
+                    )
+                }?.firstOrNull()
+                if (!passphrase.isNullOrEmpty()) {
+                    rc = libssh2_userauth_publickey_frommemory(
+                        s, connection.username, usernameBytes.size.toULong(),
+                        null, 0u, pem, pemLen, passphrase,
+                    )
+                }
+            }
             if (rc == 0) return true
+            pubkeyError = lastError(s)
         }
         connection.password?.let { pw ->
             if (libssh2_userauth_password_ex(
@@ -231,7 +254,7 @@ class SshSessionLibssh2(
             }
         }
         // KBI 兜底（含二次验证场景）。kbiHandler 为全局单例，加互斥避免并发会话串话。
-        return runBlocking {
+        val kbiOk = runBlocking {
             kbiMutex.withLock {
                 kbiHandler = callbacks::onPrompt
                 libssh2_userauth_keyboard_interactive_ex(
@@ -239,6 +262,17 @@ class SshSessionLibssh2(
                 ) == 0
             }
         }
+        if (kbiOk) return true
+        authFailureReason = buildString {
+            append("：")
+            if (pubkeyError != null) {
+                append("私钥认证失败（").append(pubkeyError).append("）")
+                append("；若私钥带 passphrase，请确认口令是否正确，或改用密码认证")
+            } else {
+                append("密码与 keyboard-interactive 均未通过")
+            }
+        }
+        return false
     }
 
     // ---------- 数据收发 ----------

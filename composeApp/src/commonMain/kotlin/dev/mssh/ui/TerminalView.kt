@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontFamily
@@ -101,6 +102,12 @@ private fun currentStartAbs(buffer: TerminalBuffer, scrollOffset: Int): Int {
     val scrollback = buffer.scrollbackSize()
     val offset = scrollOffset.coerceIn(0, scrollback)
     return (buffer.totalLines() - buffer.rows - offset).coerceAtLeast(0)
+}
+
+/** OSC 8 链接可打开的协议白名单：只放开常规 Web/邮件，避免远端内容触发 file://、intent:// 等。 */
+private fun isSafeLinkScheme(url: String): Boolean {
+    val scheme = url.substringBefore(':', "").lowercase()
+    return scheme in setOf("http", "https", "mailto")
 }
 
 @Composable
@@ -187,6 +194,7 @@ fun TerminalView(
 
     val buffer = controller.buffer
     val latestCanvasSize by rememberUpdatedState(canvasSize)
+    val uriHandler = LocalUriHandler.current
 
     // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY 尺寸，
     // 避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不触发平移，
@@ -405,7 +413,26 @@ fun TerminalView(
             }
             .pointerInput(Unit) {
                 detectTapGestures(
-                    // 点击不再拉起键盘（统一走工具栏 ⌨ 按钮，避免与 TUI 鼠标点击冲突）
+                    onTap = tap@{ pos ->
+                        // TUI 鼠标模式：点击事件由上面的鼠标 handler 全权上报，本地不拦截
+                        if (buffer.mouseTracking > 0) return@tap
+                        val startAbsNow = currentStartAbs(buffer, scrollOffset)
+                        val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
+                        val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
+                        val absRow = startAbsNow + row
+                        var opened = false
+                        if (absRow in 0 until buffer.totalLines()) {
+                            val link = buffer.absLine(absRow).cells[col].link
+                            if (link != null && isSafeLinkScheme(link)) {
+                                uriHandler.openUri(link)
+                                opened = true
+                            }
+                        }
+                        // 点空白处收起选区
+                        if (!opened && controller.selection.isActive) {
+                            controller.selection.clear()
+                        }
+                    },
                     onDoubleTap = tap@{ pos ->
                         // TUI 鼠标模式（herdr/vim 等）：选区由远端自己管理，
                         // 本地双击选词会与远端选区冲突，且长按/慢滑误触会整行复制

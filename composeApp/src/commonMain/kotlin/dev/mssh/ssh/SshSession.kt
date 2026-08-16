@@ -1,9 +1,11 @@
 package dev.mssh.ssh
 
+import dev.mssh.util.base64Decode
+
 /**
  * 认证方式。
  */
-enum class SshAuthMethod { PASSWORD, KEYBOARD_INTERACTIVE, PUBLIC_KEY, NONE }
+enum class SshAuthMethod { PASSWORD, KEYBOARD_INTERACTIVE, PUBLIC_KEY, PASSPHRASE, NONE }
 
 /** 认证交互提示（keyboard-interactive / password 变更）。 */
 data class AuthPrompt(
@@ -14,6 +16,44 @@ data class AuthPrompt(
 )
 
 data class PromptField(val label: String, val echo: Boolean)
+
+/**
+ * 判断 PEM 私钥是否加密（passphrase-protected）：
+ * - PKCS#8：`BEGIN ENCRYPTED PRIVATE KEY`
+ * - 传统 PEM：`Proc-Type: 4,ENCRYPTED`
+ * - OpenSSH：解码 `openssh-key-v1` 头部的 ciphername，非 `none` 即加密
+ */
+internal fun isEncryptedPem(pem: String): Boolean {
+    if (pem.contains("ENCRYPTED PRIVATE KEY") || pem.contains("Proc-Type: 4,ENCRYPTED")) return true
+    if (!pem.contains("OPENSSH PRIVATE KEY")) return false
+    return try {
+        val b64 = pem.lineSequence().filter { !it.startsWith("-----") }.joinToString("")
+        val bytes = base64Decode(b64)
+        // openssh-key-v1 的 magic 是 15 字节（含结尾 NUL），少一个字节会让
+        // ciphername 长度读取错位、把明文 key 误判为加密
+        val marker = "openssh-key-v1\u0000".encodeToByteArray()
+        if (bytes.size < marker.size + 8 || !bytes.copyOfRange(0, marker.size).contentEquals(marker)) {
+            return false
+        }
+        var off = marker.size
+        val clen = readIntBE(bytes, off)
+        off += 4
+        // ciphername 为 ASCII；跨平台不能用 JVM 的 Charsets
+        val cipher = buildString {
+            for (b in bytes.copyOfRange(off, off + clen)) append(b.toInt().toChar())
+        }
+        cipher != "none"
+    } catch (_: Exception) {
+        // 解析失败按明文处理，认证阶段自然失败后再提示口令
+        false
+    }
+}
+
+private fun readIntBE(b: ByteArray, at: Int): Int =
+    ((b[at].toInt() and 0xFF) shl 24) or
+        ((b[at + 1].toInt() and 0xFF) shl 16) or
+        ((b[at + 2].toInt() and 0xFF) shl 8) or
+        (b[at + 3].toInt() and 0xFF)
 
 /** 服务器主机密钥指纹（用于 TOFU / known-hosts 校验）。 */
 data class HostKeyInfo(

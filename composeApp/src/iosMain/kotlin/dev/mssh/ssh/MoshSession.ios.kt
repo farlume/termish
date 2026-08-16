@@ -174,8 +174,13 @@ private class IosMoshSession(
         val src = NSBundle.mainBundle.URLForResource(binName, withExtension = null)?.path
             ?: throw SshException("bundle 中缺少 $binName")
         val dst = "$dir/$binName"
-        if (!NSFileManager.defaultManager.fileExistsAtPath(dst)) {
-            NSFileManager.defaultManager.copyItemAtPath(src, toPath = dst, error = null)
+        // 二进制随版本变化：每次连接都重拷，避免 App 升级后仍用临时目录里的旧文件
+        val fm = NSFileManager.defaultManager
+        if (fm.fileExistsAtPath(dst)) {
+            fm.removeItemAtPath(dst, error = null)
+        }
+        if (!fm.copyItemAtPath(src, toPath = dst, error = null)) {
+            throw SshException("复制 $binName 到临时目录失败")
         }
         chmod(dst, 0x1EDu) // 0755
 

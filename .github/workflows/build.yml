@@ -77,7 +77,7 @@ jobs:
         run: |
           ./gradlew \
             :composeApp:testDebugUnitTest \
-            :composeApp:lintDebug
+            :composeApp:lintRelease
 
       - name: Build debug APK
         run: ./gradlew :composeApp:assembleDebug
@@ -148,10 +148,21 @@ jobs:
         run: choco install wixtoolset --yes --no-progress
 
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
-      # 失败则本平台不打包
+      # 失败则本平台不打包。集成测试需要本地 sshd + mosh，
+      # 所以先安装并启动测试 sshd，再以 MSSH_TEST_RUN=1 跑（否则测试会 SKIP 空跑）
+      - name: Install sshd + mosh for integration tests
+        if: matrix.platform == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openssh-server mosh netcat-openbsd
+
+      - name: Start test sshd
+        if: matrix.platform == 'Linux'
+        run: sudo bash scripts/test-sshd.sh
+
       - name: Run desktop tests
         if: matrix.platform == 'Linux'
-        run: ./gradlew :composeApp:desktopTest
+        run: MSSH_TEST_RUN=1 ./gradlew :composeApp:desktopTest
 
       - name: Package (${{ matrix.platform }})
         if: github.event_name != 'pull_request'

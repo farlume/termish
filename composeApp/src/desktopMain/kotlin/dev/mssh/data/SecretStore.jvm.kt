@@ -11,6 +11,7 @@ actual object SecretStore {
     private fun file(): File {
         val dir = File(System.getProperty("user.home"), ".mssh")
         dir.mkdirs()
+        lockDown(dir, directory = true)
         return File(dir, "secrets.properties")
     }
 
@@ -24,7 +25,22 @@ actual object SecretStore {
     }
 
     private fun save(p: Properties) {
-        file().outputStream().use { p.store(it, "MSSH desktop secrets (dev only)") }
+        val f = file()
+        f.outputStream().use { p.store(it, "MSSH desktop secrets (dev only)") }
+        // 明文存储但收紧权限：避免同机其他用户可读（POSIX 0600；Windows 上无效果）
+        lockDown(f, directory = false)
+    }
+
+    private fun lockDown(f: File, directory: Boolean) {
+        try {
+            f.setReadable(false, false)
+            f.setReadable(true, true)
+            f.setWritable(false, false)
+            f.setWritable(true, true)
+            f.setExecutable(false, false)
+            if (directory) f.setExecutable(true, true)
+        } catch (_: Exception) {
+        }
     }
 
     actual fun get(service: String, account: String): String? = load().getProperty("$service/$account")

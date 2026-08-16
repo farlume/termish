@@ -32,9 +32,11 @@ class MoshPtyIntegrationTest {
         if (System.getenv("MSSH_TEST_RUN") == null) return
 
         // 1. 前台启动 mosh-server（-s 不 daemon 化，随测试进程退出）
+        //    -i 127.0.0.1：macOS 上 mosh-server 默认绑 IPv6 双栈，IPv4 客户端
+        //    连 127.0.0.1 会报 "Nothing received from server"，显式绑 IPv4 保证两端一致
         val server = ProcessBuilder(
             findMoshClient().replace("mosh-client", "mosh-server"),
-            "new", "-s", "-c", "8", "-l", "LANG=en_US.UTF-8",
+            "new", "-s", "-i", "127.0.0.1", "-c", "8", "-l", "LANG=en_US.UTF-8",
         ).redirectErrorStream(true).start()
 
         val reader = server.inputStream.bufferedReader()

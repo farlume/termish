@@ -10,6 +10,8 @@ cd "$DIR"
 
 [ -f hostkey ] || ssh-keygen -q -t ed25519 -f hostkey -N "" -C "mssh-test-host"
 [ -f client ]  || ssh-keygen -q -t ed25519 -f client  -N "" -C "mssh-test-client"
+# CI 里 sshd 以 root 启动、测试进程是普通用户：私钥要可读（仅本地测试用途）
+chmod 644 client
 cat client.pub > authorized_keys
 
 cat > sshd_config <<EOF

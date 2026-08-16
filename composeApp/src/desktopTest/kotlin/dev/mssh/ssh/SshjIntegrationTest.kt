@@ -17,7 +17,7 @@ class SshjIntegrationTest {
 
     private fun env(key: String, default: String): String = System.getenv(key) ?: default
 
-    private fun runSession(connection: SshConnection) {
+    private fun runSession(connection: SshConnection, passphrase: String? = null) {
         val output = StringBuilder()
         val closed = AtomicBoolean(false)
         val closeReason = AtomicReference<String?>(null)
@@ -45,6 +45,9 @@ class SshjIntegrationTest {
 
                 override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
                     println("PROMPT: ${prompt.name} ${prompt.instruction}")
+                    if (prompt.method == SshAuthMethod.PASSPHRASE && passphrase != null) {
+                        return listOf(passphrase)
+                    }
                     return null
                 }
 
@@ -99,6 +102,28 @@ class SshjIntegrationTest {
                 username = System.getProperty("user.name"),
                 privateKeyPem = pemFile.readText(),
             )
+        )
+    }
+
+    @Test
+    fun encryptedPrivateKeyAuthWithPassphrase() {
+        if (env("MSSH_TEST_RUN", "0") != "1") {
+            println("SKIP: set MSSH_TEST_RUN=1")
+            return
+        }
+        val pemFile = File(env("MSSH_TEST_ENC_KEY", "/tmp/mssh_test/enc_client"))
+        if (!pemFile.exists()) {
+            println("SKIP: no encrypted key at ${pemFile.absolutePath}")
+            return
+        }
+        runSession(
+            SshConnection(
+                host = "127.0.0.1",
+                port = env("MSSH_TEST_PORT", "2222").toInt(),
+                username = System.getProperty("user.name"),
+                privateKeyPem = pemFile.readText(),
+            ),
+            passphrase = env("MSSH_TEST_ENC_PASSPHRASE", "mssh-test-pass"),
         )
     }
 }

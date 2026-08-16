@@ -48,6 +48,7 @@ class SshSessionSshj(
 
     private var hostKeyInfo: HostKeyInfo? = null
     private var serverVersion: String = ""
+    private var privateKeyError: String? = null
 
     override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
         connectTransport()
@@ -129,21 +130,67 @@ class SshSessionSshj(
         // keyboard-interactive：作为密码/二次验证的兜底
         methods.add(AuthKeyboardInteractive(kbiProvider))
 
-        client.auth(connection.username, methods)
+        try {
+            client.auth(connection.username, methods)
+        } catch (e: Exception) {
+            // 私钥若加载失败（格式不支持/口令错误/已取消输入），把原因拼进错误，
+            // 避免用户只看到「认证失败」却不知道私钥根本没参与认证
+            val hint = privateKeyError?.let { "（私钥加载失败：$it）" } ?: ""
+            throw SshException("SSH 认证失败$hint：${e.message}", e)
+        }
     }
 
     private fun loadKeyProvider(pem: String): FileKeyProvider? {
         val isOpenSsh = pem.contains("OPENSSH PRIVATE KEY")
-        return try {
-            val kp: FileKeyProvider = if (isOpenSsh) {
-                com.hierynomus.sshj.userauth.keyprovider.OpenSSHKeyV1KeyFile()
-            } else {
-                PKCS8KeyFile()
+        fun newProvider(): FileKeyProvider = if (isOpenSsh) {
+            com.hierynomus.sshj.userauth.keyprovider.OpenSSHKeyV1KeyFile()
+        } else {
+            PKCS8KeyFile()
+        }
+
+        // 加密私钥：sshj 的 init 对加密 key 不会抛异常（解密延迟到认证时），
+        // 必须先静态判断并提示用户输入口令
+        if (isEncryptedPem(pem)) {
+            val passphrase = runBlocking {
+                callbacks.onPrompt(
+                    AuthPrompt(
+                        method = SshAuthMethod.PASSPHRASE,
+                        name = "私钥口令",
+                        instruction = "该私钥已加密（passphrase-protected），请输入口令。",
+                        prompts = listOf(PromptField("Passphrase", echo = false)),
+                    )
+                )
+            }?.firstOrNull()
+            if (passphrase.isNullOrEmpty()) {
+                privateKeyError = "加密私钥需要口令，已取消输入"
+                return null
             }
+            return try {
+                val kp = newProvider()
+                kp.init(
+                    StringReader(pem),
+                    null,
+                    object : PasswordFinder {
+                        override fun reqPassword(resource: Resource<*>?): CharArray = passphrase.toCharArray()
+                        override fun shouldRetry(resource: Resource<*>?): Boolean = false
+                    },
+                )
+                privateKeyError = null
+                kp
+            } catch (e: Exception) {
+                privateKeyError = "口令错误或密钥无法解析：${e.message ?: e.javaClass.simpleName}"
+                null
+            }
+        }
+
+        // 明文私钥
+        return try {
+            val kp = newProvider()
             kp.init(StringReader(pem), null, null)
+            privateKeyError = null
             kp
         } catch (e: Exception) {
-            // 加密私钥暂不支持：交给上层提示
+            privateKeyError = e.message ?: e.javaClass.simpleName
             null
         }
     }
