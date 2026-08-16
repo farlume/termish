@@ -36,6 +36,11 @@ data class Host(
     val authMethod: HostAuthMethod = HostAuthMethod.PASSWORD,
     val tags: List<String> = emptyList(),
     val quickCommands: List<QuickCommand> = emptyList(),
+    /**
+     * 远端系统标识（头像显示用）：如 ubuntu / debian / macos / windows。
+     * 头像图标与颜色按关键词自动映射，未识别时显示通用图标。
+     */
+    val system: String = "",
     val colorIndex: Int = 0,
     val createdAt: Long = 0L,
     val lastConnectedAt: Long = 0L,

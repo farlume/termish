@@ -160,6 +160,10 @@ fun AppRoot(repository: HostRepository) {
                             when (homeTab) {
                                 HomeTab.HOSTS -> HostListScreen(
                                     hosts = hosts,
+                                    activeHostIds = sessionManager.sessions
+                                        .filter { isActiveStatus(it.status) }
+                                        .map { it.host.id }
+                                        .toSet(),
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
                                     onConnect = { host ->
