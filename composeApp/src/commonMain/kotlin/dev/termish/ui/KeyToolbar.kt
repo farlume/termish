@@ -15,10 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,6 +28,7 @@ enum class SpecialKey(val label: String) {
     UP("↑"), DOWN("↓"), LEFT("←"), RIGHT("→"),
     HOME("HOM"), END("END"), PGUP("PGU"), PGDN("PGD"),
     CTRL_C("⌃C"), CTRL_D("⌃D"), CTRL_L("⌃L"), CTRL_Z("⌃Z"),
+    CTRL_E("⌃E"),
     ENTER("ENT"), BACKSPACE("⌫"), DEL("DEL"),
     F1("F1"), F2("F2"), F3("F3"), F4("F4"), F5("F5"),
     F6("F6"), F7("F7"), F8("F8"), F9("F9"),
@@ -53,6 +50,7 @@ fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray 
     SpecialKey.CTRL_C -> byteArrayOf(0x03)
     SpecialKey.CTRL_D -> byteArrayOf(0x04)
     SpecialKey.CTRL_L -> byteArrayOf(0x0c)
+    SpecialKey.CTRL_E -> byteArrayOf(0x05)
     SpecialKey.CTRL_Z -> byteArrayOf(0x1a)
     SpecialKey.ENTER -> byteArrayOf(0x0d)
     SpecialKey.BACKSPACE -> byteArrayOf(0x7f)
@@ -75,12 +73,13 @@ fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray 
 private fun escapeSeq(suffix: String): ByteArray = ("[" + suffix).encodeToByteArray()
 
 /**
- * 终端功能键工具栏：默认两行常驻 + ▾ 展开全功能。
+ * 终端功能键工具栏：固定两行（无展开层）。
  *
- * 常驻（高频）：⌨ CTRL ALT ESC TAB ⌃C + 方向键倒 T + ENT/⌫/PST/HOM/END。
- * 展开（低频）：F1-F12、PGU/PGD/DEL、⌃D/⌃Z/⌃L。
+ * 行 1（修饰/控制）：CTRL ALT ESC TAB ⌃C ↑ ⌃L ⌨（两行均 8 列，按钮更宽）。
+ * 行 2（编辑/导航）：⌃D PST / + 一个空位 + ← ↓ → ENT；
+ * ↑ 与 ↓ 上下对齐，⌨ 与 ENT 同在右上/右下角拇指区。
  * 粘性 CTRL/ALT + 系统键盘字母即可敲出 ⌃A/⌃E/⌃R 等组合，不设专用按钮；
- * 符号键由系统键盘提供。
+ * 符号键由系统键盘提供；画布惯性滚动替代 PgUp/PgDn。
  */
 @Composable
 fun KeyToolbar(
@@ -92,62 +91,36 @@ fun KeyToolbar(
     onKey: (SpecialKey) -> Unit,
     onToggleKeyboard: () -> Unit = {},
     onPaste: () -> Unit = {},
+    /** 普通字符键（如 /），直接作为终端输入发送。 */
+    onChar: (String) -> Unit = {},
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (expanded) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                KeyButton("F1", false, theme) { onKey(SpecialKey.F1) }
-                KeyButton("F2", false, theme) { onKey(SpecialKey.F2) }
-                KeyButton("F3", false, theme) { onKey(SpecialKey.F3) }
-                KeyButton("F4", false, theme) { onKey(SpecialKey.F4) }
-                KeyButton("F5", false, theme) { onKey(SpecialKey.F5) }
-                KeyButton("F6", false, theme) { onKey(SpecialKey.F6) }
-                KeyButton("F7", false, theme) { onKey(SpecialKey.F7) }
-                KeyButton("F8", false, theme) { onKey(SpecialKey.F8) }
-                KeyButton("F9", false, theme) { onKey(SpecialKey.F9) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                KeyButton("F10", false, theme) { onKey(SpecialKey.F10) }
-                KeyButton("F11", false, theme) { onKey(SpecialKey.F11) }
-                KeyButton("F12", false, theme) { onKey(SpecialKey.F12) }
-                KeyButton("PGU", false, theme) { onKey(SpecialKey.PGUP) }
-                KeyButton("PGD", false, theme) { onKey(SpecialKey.PGDN) }
-                KeyButton("DEL", false, theme) { onKey(SpecialKey.DEL) }
-                KeyButton("⌃D", false, theme) { onKey(SpecialKey.CTRL_D) }
-                KeyButton("⌃Z", false, theme) { onKey(SpecialKey.CTRL_Z) }
-                KeyButton("⌃L", false, theme) { onKey(SpecialKey.CTRL_L) }
-            }
-        }
-        // 常驻行 1：高频功能键 + ↑（第 8 列）+ 展开/收起
+        // 行 1：修饰/控制 + ↑（第 6 列，与行 2 的 ↓ 上下对齐）+ ⌨（右上角）
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton("⌨", false, theme) { onToggleKeyboard() }
             KeyButton("CTRL", ctrlActive, theme) { onToggleCtrl() }
             KeyButton("ALT", altActive, theme) { onToggleAlt() }
             KeyButton("ESC", false, theme) { onKey(SpecialKey.ESC) }
             KeyButton("TAB", false, theme) { onKey(SpecialKey.TAB) }
             KeyButton("⌃C", false, theme) { onKey(SpecialKey.CTRL_C) }
-            Spacer(Modifier.weight(1f))
             KeyButton("↑", false, theme) { onKey(SpecialKey.UP) }
-            KeyButton(if (expanded) "▴" else "▾", false, theme) { expanded = !expanded }
+            KeyButton("⌃L", false, theme) { onKey(SpecialKey.CTRL_L) }
+            KeyButton("⌨", false, theme) { onToggleKeyboard() }
         }
-        // 常驻行 2：编辑/导航键 + ← ↓ →（↓ 与上行 ↑ 对齐）
+        // 行 2：⌃D/PST 左侧、两个空位、方向键 + ENT 右侧（8 列均分，按钮与行 1 等宽）
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton("ENT", false, theme) { onKey(SpecialKey.ENTER) }
-            KeyButton("⌫", false, theme) { onKey(SpecialKey.BACKSPACE) }
+            KeyButton("⌃D", false, theme) { onKey(SpecialKey.CTRL_D) }
             KeyButton("PST", false, theme) { onPaste() }
-            KeyButton("HOM", false, theme) { onKey(SpecialKey.HOME) }
-            KeyButton("END", false, theme) { onKey(SpecialKey.END) }
-            Spacer(Modifier.weight(1f))
+            KeyButton("/", false, theme) { onChar("/") }
+            KeyButton("⌃E", false, theme) { onKey(SpecialKey.CTRL_E) }
             KeyButton("←", false, theme) { onKey(SpecialKey.LEFT) }
             KeyButton("↓", false, theme) { onKey(SpecialKey.DOWN) }
             KeyButton("→", false, theme) { onKey(SpecialKey.RIGHT) }
+            KeyButton("ENT", false, theme) { onKey(SpecialKey.ENTER) }
         }
     }
 }

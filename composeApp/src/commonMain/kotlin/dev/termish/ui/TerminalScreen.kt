@@ -381,6 +381,7 @@ private fun TerminalBody(
                             ctrlActive = false
                             altActive = false
                         },
+                        onChar = { text -> controller.sendBytes(text.encodeToByteArray()) },
                         theme = theme,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
