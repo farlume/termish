@@ -472,11 +472,10 @@ private fun HostCard(
                         Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-            } else if (sessions.any { it.isActive }) {
-                // 活跃会话数 + 下拉：新建连接 / 重入活跃会话 / 全部关闭
+            } else if (sessions.isNotEmpty()) {
+                // 全部会话数 + 下拉：新建连接 / 重入会话（含断开，带状态标注）/ 全部关闭
                 SessionCountMenu(
                     sessions = sessions,
-                    activeOnly = true,
                     onConnect = onNewSession,
                     onOpenTerminal = onOpenSession,
                     onOpenSftp = onOpenSftp,
@@ -491,7 +490,6 @@ private fun HostCard(
 @Composable
 private fun SessionCountMenu(
     sessions: List<HostSessionItem>,
-    activeOnly: Boolean,
     onConnect: () -> Unit,
     onOpenTerminal: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession) -> Unit,
@@ -499,7 +497,6 @@ private fun SessionCountMenu(
 ) {
     val s = LocalAppStrings.current
     var open by remember { mutableStateOf(false) }
-    val listed = if (activeOnly) sessions.filter { it.isActive } else sessions
     Box {
         Row(
             Modifier
@@ -509,7 +506,7 @@ private fun SessionCountMenu(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                listed.size.toString(),
+                sessions.size.toString(),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -528,7 +525,9 @@ private fun SessionCountMenu(
                 },
             )
             HorizontalDivider()
-            listed.forEach { item ->
+            sessions.forEach { item ->
+                val statusLabel = if (item.isActive) s.hostsActive else s.connStatusClosed
+                val statusColor = if (item.isActive) Color(0xFF34C759) else Color(0xFF9E9E9E)
                 when (item) {
                     is HostSessionItem.Terminal -> DropdownMenuItem(
                         text = {
@@ -536,6 +535,13 @@ private fun SessionCountMenu(
                                 "${item.controller.host.username}@${item.controller.host.hostname}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        trailingIcon = {
+                            Text(
+                                statusLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = statusColor,
                             )
                         },
                         onClick = {
@@ -549,6 +555,13 @@ private fun SessionCountMenu(
                                 "${item.host.username}@${item.host.hostname}",
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        trailingIcon = {
+                            Text(
+                                statusLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = statusColor,
                             )
                         },
                         onClick = {
