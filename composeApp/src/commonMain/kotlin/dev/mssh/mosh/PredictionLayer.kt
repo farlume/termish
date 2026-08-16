@@ -12,7 +12,11 @@ package dev.mssh.mosh
  *   避免"字符出现→确认帧不含回显→消失→回显帧到→再出现"的回退闪烁
  * - echo_ack >= 承载帧（mosh ECHO_TIMEOUT=50ms 后的 late ack）即收编：
  *   回显（或"无回显"的事实，如密码输入）已包含在确认态里
- * - 备用屏（vim/tmux 等全屏程序）不预测；含不支持的控制字节放弃本段；
+ * - echo_ack >= 承载帧（mosh ECHO_TIMEOUT=50ms 后的 late ack）即收编：
+ *   回显（或"无回显"的事实，如密码输入）已包含在确认态里
+ * - 备用屏（vim/tmux/herdr 等全屏程序）只预测可打印字符：pane 内 shell /
+ *   vim 插入模式的回显路径受益；控制字节语义因程序而异不预测（mosh 原生
+ *   则全量预测 + per-cell 收编）；普通屏含不支持的控制字节放弃本段；
  *   大粘贴（>128 字节，mosh 阈值 100）不预测
  */
 internal class PredictionLayer(
@@ -74,13 +78,23 @@ internal class PredictionLayer(
 
         val base = confirmed ?: return false
         if (!srttTrigger) return false
-        if (base.buffer.altScreen) return false // 全屏程序不预测
+        val altScreen = base.buffer.altScreen
 
         pending += bytes
         pendingCarriedBy = lastSentNum + 1u
         if (pending.size > maxPending) {
             // 大粘贴：放弃预测（mosh process_user_input 里 paste 直接 reset）
             pending = ByteArray(0)
+            predicted = null
+            return false
+        }
+        if (altScreen && pending.any {
+                val v = it.toInt() and 0xff
+                v < 0x20 || v == 0x7f
+            }
+        ) {
+            // alt 屏只预测可打印字符段：控制字节在全屏程序里语义各异
+            //（vim 普通模式 x 是删字符不是退格），等回显；pending 保留待收编
             predicted = null
             return false
         }

@@ -28,7 +28,13 @@ internal class ShadowTerminal internal constructor(
             emulator.onClipboardWrite = v
         }
 
-    /** 应用 HostMessage diff（hostbytes → 终端；resize → 改尺寸；echoack → 记录）。 */
+    /** 应用 HostMessage diff（hostbytes → 终端；resize → 改尺寸；echoack → 记录）。
+     *
+     *  注意：本影子的 resize/alt 屏语义（xterm 式底锚定、回看保留、1049 恢复
+     *  屏幕）有意【不】镜像 mosh 服务端——mosh Framebuffer 无回看、无 alt 屏
+     *  （1049 被忽略，退出 vim 留残影是其著名缺陷）、resize 顶锚定丢底部行。
+     *  服务端模型更穷，逐字节镜像反而降级体验；diff 只按行号作用可见区，
+     *  语义差异不会破坏协议。不要为“对齐服务端”改这里。 */
     fun applyDiff(diff: ByteArray) {
         for (ev in decodeHostMessage(diff)) {
             when (ev) {

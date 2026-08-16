@@ -98,12 +98,16 @@ class PredictionTest {
     }
 
     @Test
-    fun altScreenDisablesPrediction() {
+    fun altScreenPredictsPrintableOnly() {
         val base = ShadowTerminal.create(80, 24)
         base.buffer.enterAltScreen(true)
         val l = layer()
         l.onConfirmed(base)
-        assertFalse(l.onUserInput("a".encodeToByteArray(), 100, 0u)) // vim/tmux 等不预测
+        // alt 屏（vim/tmux pane 内的 shell 等回显路径）：可打印字符仍预测
+        assertTrue(l.onUserInput("a".encodeToByteArray(), 100, 0u))
+        assertEquals('a'.code, l.currentForDisplay()!!.buffer.lineAt(0).cells[0].codePoint)
+        // 控制字节不预测：全屏程序里语义各异，等回显
+        assertFalse(l.onUserInput(byteArrayOf(0x7f), 100, 0u))
     }
 
     @Test
