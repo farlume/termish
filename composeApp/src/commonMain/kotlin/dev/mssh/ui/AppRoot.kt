@@ -136,9 +136,25 @@ fun AppRoot(repository: HostRepository) {
                         return req.deferred.await()
                     }
                     override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                        // 与终端连接同源：已授信指纹匹配自动通过，不重复弹窗
+                        val known = repository.getHost(host.id)?.knownHostFingerprint
+                            ?: host.knownHostFingerprint
+                        if (known != null) {
+                            if (known == hostKey.fingerprintSha256) return true
+                            // 指纹变更：弹窗让用户核对新旧指纹
+                            val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                            sftpHostKey = req
+                            val accepted = runBlocking { req.deferred.await() }
+                            if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                            return accepted
+                        }
+                        // 首次连接：设置关闭首次确认则直接信任
+                        if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
                         val req = HostKeyRequest(hostKey)
                         sftpHostKey = req
-                        return runBlocking { req.deferred.await() }
+                        val accepted = runBlocking { req.deferred.await() }
+                        if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                        return accepted
                     }
                 }
                 val conn = SshConnection(

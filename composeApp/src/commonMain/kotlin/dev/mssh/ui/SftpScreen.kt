@@ -19,13 +19,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.DataUsage
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -52,6 +59,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -66,7 +74,6 @@ import dev.mssh.generated.resources.Res
 import dev.mssh.generated.resources.folder
 import dev.mssh.util.monospaceFontFamily
 import dev.mssh.util.ioDispatcher
-import dev.mssh.ui.theme.TerminalTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
@@ -81,7 +88,6 @@ private enum class SftpSort { NAME, DATE, SIZE, KIND }
 fun SftpContent(
     host: Host,
     session: SftpSession,
-    theme: TerminalTheme,
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -150,7 +156,8 @@ fun SftpContent(
             }
         }
 
-    Box(Modifier.fillMaxSize().background(theme.background())) {
+    // SFTP 是独立页面类型的 tab：主题随应用（浅色页面），不随终端主题
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize()) {
             // 精简头部：无边框、小字体、图标用终端前景色（深色背景下可见）
             Row(
@@ -159,7 +166,7 @@ fun SftpContent(
             ) {
                 if (searching) {
                     IconButton(onClick = { searching = false; query = "" }) {
-                        Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = theme.foreground())
+                        Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = MaterialTheme.colorScheme.onSurface)
                     }
                     OutlinedTextField(
                         value = query,
@@ -173,20 +180,20 @@ fun SftpContent(
                         "${s.sftpUser} > $segment",
                         style = MaterialTheme.typography.labelLarge,
                         fontFamily = monospaceFontFamily(),
-                        color = theme.foreground(),
+                        color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     TextButton(onClick = { pickFile() }) {
-                        Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = theme.foreground())
+                        Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.size(4.dp))
-                        Text(s.sftpUpload, color = theme.foreground())
+                        Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
                     }
                     SftpMoreMenu(
                         sort = sort,
                         showHidden = showHidden,
-                        tint = theme.foreground(),
+                        tint = MaterialTheme.colorScheme.onSurface,
                         onSort = { sort = it },
                         onToggleHidden = { showHidden = !showHidden },
                         onNewFolder = { newFolderDialog = true },
@@ -199,13 +206,13 @@ fun SftpContent(
                         },
                     )
                     IconButton(onClick = { searching = true }) {
-                        Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = theme.foreground())
+                        Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
             when {
                 entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.sftpConnecting, color = theme.foreground().copy(alpha = 0.7f))
+                    Text(s.sftpConnecting, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(s.sftpLoadFailed(loadError!!), color = MaterialTheme.colorScheme.error)
@@ -300,13 +307,14 @@ private fun SftpMoreMenu(
                 },
             )
             HorizontalDivider()
-            SftpSortItem(s.sftpSortName, sort == SftpSort.NAME) { onSort(SftpSort.NAME) }
-            SftpSortItem(s.sftpSortDate, sort == SftpSort.DATE) { onSort(SftpSort.DATE) }
-            SftpSortItem(s.sftpSortSize, sort == SftpSort.SIZE) { onSort(SftpSort.SIZE) }
-            SftpSortItem(s.sftpSortKind, sort == SftpSort.KIND) { onSort(SftpSort.KIND) }
+            SftpSortItem(s.sftpSortName, Icons.Filled.SortByAlpha, sort == SftpSort.NAME) { onSort(SftpSort.NAME) }
+            SftpSortItem(s.sftpSortDate, Icons.Filled.Schedule, sort == SftpSort.DATE) { onSort(SftpSort.DATE) }
+            SftpSortItem(s.sftpSortSize, Icons.Filled.DataUsage, sort == SftpSort.SIZE) { onSort(SftpSort.SIZE) }
+            SftpSortItem(s.sftpSortKind, Icons.Filled.Description, sort == SftpSort.KIND) { onSort(SftpSort.KIND) }
             HorizontalDivider()
             DropdownMenuItem(
                 text = { Text(s.sftpChangeDownload) },
+                leadingIcon = { Icon(Icons.Filled.Download, null) },
                 onClick = {
                     open = false
                     onChangeDownload()
@@ -314,6 +322,7 @@ private fun SftpMoreMenu(
             )
             DropdownMenuItem(
                 text = { Text(s.sftpCopyPath) },
+                leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
                 onClick = {
                     open = false
                     onCopyPath()
@@ -321,9 +330,8 @@ private fun SftpMoreMenu(
             )
             DropdownMenuItem(
                 text = { Text(s.sftpHiddenFiles) },
-                leadingIcon = {
-                    if (showHidden) Icon(Icons.Filled.Check, null)
-                },
+                leadingIcon = { Icon(Icons.Filled.Visibility, null) },
+                trailingIcon = { if (showHidden) Icon(Icons.Filled.Check, null) },
                 onClick = {
                     open = false
                     onToggleHidden()
@@ -334,10 +342,16 @@ private fun SftpMoreMenu(
 }
 
 @Composable
-private fun SftpSortItem(label: String, selected: Boolean, onClick: () -> Unit) {
+private fun SftpSortItem(
+    label: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     DropdownMenuItem(
         text = { Text(label) },
-        leadingIcon = { if (selected) Icon(Icons.Filled.Check, null) },
+        leadingIcon = { Icon(icon, null) },
+        trailingIcon = { if (selected) Icon(Icons.Filled.Check, null) },
         onClick = onClick,
     )
 }
@@ -356,7 +370,7 @@ private fun SftpRowItem(
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(

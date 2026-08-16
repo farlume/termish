@@ -138,7 +138,6 @@ fun TerminalScreen(
             is SessionTab.Sftp -> SftpContent(
                 host = tab.host,
                 session = tab.session,
-                theme = theme,
             )
         }
     }
