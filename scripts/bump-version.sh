@@ -10,7 +10,8 @@
 # 更新位置:
 #   - composeApp/build.gradle.kts
 #       Android: versionName / versionCode
-#       桌面:    packageVersion
+#       桌面:    packageVersion（jpackage 要求主版本号 > 0，
+#                因此 App 0.Y.Z 会映射为桌面包 1.Y.Z）
 #   - iosApp/iosApp.xcodeproj/project.pbxproj
 #       MARKETING_VERSION / CURRENT_PROJECT_VERSION（Debug + Release 两处）
 #   - iosApp/iosApp/Info.plist
@@ -37,6 +38,12 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "版本号格式应为 x.y.z，收到: $VERSION" >&2
   exit 1
 fi
+# 桌面包版本：jpackage 打 DMG 要求 MAJOR > 0，App 0.Y.Z 映射为 1.Y.Z
+if [[ "$VERSION" =~ ^0\.([0-9]+\.[0-9]+)$ ]]; then
+  DESKTOP_VERSION="1.${BASH_REMATCH[1]}"
+else
+  DESKTOP_VERSION="$VERSION"
+fi
 
 GRADLE="composeApp/build.gradle.kts"
 PBXPROJ="iosApp/iosApp.xcodeproj/project.pbxproj"
@@ -54,7 +61,7 @@ if ! [[ "$BUILD" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-echo "版本: $VERSION  构建号: $BUILD  ($([ "$DRY_RUN" = 1 ] && echo DRY-RUN 仅预览 || echo 写入))"
+echo "版本: $VERSION  桌面包版本: $DESKTOP_VERSION  构建号: $BUILD  ($([ "$DRY_RUN" = 1 ] && echo DRY-RUN 仅预览 || echo 写入))"
 echo
 
 apply() {
@@ -78,7 +85,7 @@ apply() {
 
 apply "Android versionName -> $VERSION" "$GRADLE" "s/versionName = \"[^\"]*\"/versionName = \"$VERSION\"/"
 apply "Android versionCode -> $BUILD" "$GRADLE" "s/versionCode = [0-9][0-9]*/versionCode = $BUILD/"
-apply "桌面 packageVersion -> $VERSION" "$GRADLE" "s/packageVersion = \"[^\"]*\"/packageVersion = \"$VERSION\"/"
+apply "桌面 packageVersion -> $DESKTOP_VERSION" "$GRADLE" "s/packageVersion = \"[^\"]*\"/packageVersion = \"$DESKTOP_VERSION\"/"
 apply "iOS MARKETING_VERSION -> $VERSION" "$PBXPROJ" "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $VERSION;/g"
 apply "iOS CURRENT_PROJECT_VERSION -> $BUILD" "$PBXPROJ" "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $BUILD;/g"
 apply "iOS CFBundleShortVersionString -> $VERSION" "$INFO_PLIST" "/CFBundleShortVersionString/{n;s/<string>[^<]*<\\/string>/<string>$VERSION<\\/string>/;}"

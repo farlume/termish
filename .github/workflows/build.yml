@@ -59,12 +59,18 @@ jobs:
           TAG="${GITHUB_REF_NAME#v}"
           VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
           PV=$(sed -n 's/^[[:space:]]*packageVersion = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
-          if [ "$TAG" != "$VN" ] || [ "$TAG" != "$PV" ]; then
+          # 桌面 jpackage 要求主版本号 > 0：App 0.Y.Z 对应桌面包 1.Y.Z
+          if [[ "$TAG" =~ ^0\.([0-9]+\.[0-9]+)$ ]]; then
+            PV_EXPECTED="1.${BASH_REMATCH[1]}"
+          else
+            PV_EXPECTED="$TAG"
+          fi
+          if [ "$TAG" != "$VN" ] || [ "$PV" != "$PV_EXPECTED" ]; then
             echo "::error::tag=$TAG 与构建配置不一致 (Android versionName=$VN, 桌面 packageVersion=$PV)"
-            echo "::error::请先运行 ./scripts/bump-version.sh $TAG 并提交，再重新打 tag"
+            echo "::error::请先运行 ./scripts/bump-version.sh $TAG 并提交（桌面包版本应为 $PV_EXPECTED），再重新打 tag"
             exit 1
           fi
-          echo "版本一致：$TAG"
+          echo "版本一致：$TAG（桌面包 $PV）"
 
       # 检查先行：单测失败即停，不产出包
       - name: Run checks (unit tests + lint)
