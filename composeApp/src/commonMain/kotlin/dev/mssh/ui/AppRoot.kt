@@ -81,7 +81,7 @@ private sealed interface Screen {
     data class Edit(val hostId: String?) : Screen
 
     /** 直接持有 controller 引用：会话由 SessionManager 管理，跨页面存活。 */
-    data class Terminal(val controller: TerminalController) : Screen
+    data class Terminal(val hostId: String) : Screen
 }
 
 @Composable
@@ -89,6 +89,8 @@ fun AppRoot(repository: HostRepository) {
     var settings by remember { mutableStateOf(repository.loadSettings()) }
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    /** 终端页当前显示的会话（同主机多会话 tab 切换用）。 */
+    var terminalCurrent by remember { mutableStateOf<TerminalController?>(null) }
     val sessionManager = remember { SessionManager(repository) }
     // 恢复上次运行时的会话列表（仅一次；进程死亡连接必死，恢复为未连接可重连）
     var sessionsRestored by remember { mutableStateOf(false) }
@@ -162,18 +164,37 @@ fun AppRoot(repository: HostRepository) {
                             when (homeTab) {
                                 HomeTab.HOSTS -> HostListScreen(
                                     hosts = hosts,
-                                    activeHostIds = sessionManager.sessions
-                                        .filter { isActiveStatus(it.status) }
-                                        .map { it.host.id }
-                                        .toSet(),
+                                    hostSessions = sessionManager.sessions.groupBy { it.host.id },
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
                                     onConnect = { host ->
                                         val controller = sessionManager.open(host, settings.autoReconnect) {
                                             hosts = repository.listHosts()
                                         }
-                                        sessionManager.cancelScheduledClose(controller)
-                                        screen = Screen.Terminal(controller)
+                                        terminalCurrent = controller
+                                        screen = Screen.Terminal(host.id)
+                                    },
+                                    onConnectBatch = { batch ->
+                                        // 批处理连接：逐个建立会话（后台运行），不跳转终端页
+                                        batch.forEach { host ->
+                                            sessionManager.open(host, settings.autoReconnect) {
+                                                hosts = repository.listHosts()
+                                            }
+                                        }
+                                    },
+                                    onDisconnect = { host ->
+                                        sessionManager.sessions
+                                            .firstOrNull { it.host.id == host.id }
+                                            ?.let { sessionManager.disconnect(it) }
+                                    },
+                                    onOpenSession = {
+                                        terminalCurrent = it
+                                        screen = Screen.Terminal(it.host.id)
+                                    },
+                                    onCloseAllSessions = { host ->
+                                        sessionManager.sessions
+                                            .filter { it.host.id == host.id }
+                                            .forEach { sessionManager.disconnect(it) }
                                     },
                                     onDelete = { host ->
                                         sessionManager.closeForHost(host.id)
@@ -187,8 +208,8 @@ fun AppRoot(repository: HostRepository) {
                                 HomeTab.CONNECTIONS -> ConnectionsScreen(
                                     sessions = sessionManager.sessions,
                                     onOpen = {
-                                        sessionManager.cancelScheduledClose(it)
-                                        screen = Screen.Terminal(it)
+                                        terminalCurrent = it
+                                        screen = Screen.Terminal(it.host.id)
                                     },
                                     onClose = {
                                         // 活跃会话 → 断开（保留列表）；已断开 → 移除
@@ -229,27 +250,43 @@ fun AppRoot(repository: HostRepository) {
                     )
                 }
 
-                // 返回主页不断开：会话保留在 SessionManager，由前台服务保活，
-                // 从「连接」页可重新进入（终端缓冲原样保留）
-                is Screen.Terminal -> TerminalScreen(
-                    controller = s.controller,
-                    theme = terminalTheme,
-                    settings = settings,
-                    onBack = {
-                        refreshHosts()
-                        screen = Screen.Home
-                    },
-                    onBackWithPolicy = { policy ->
-                        when (policy) {
-                            SessionKeepPolicy.KEEP_10_MIN ->
-                                sessionManager.scheduleClose(s.controller, 10 * 60 * 1000L)
-                            SessionKeepPolicy.DISCONNECT -> sessionManager.disconnect(s.controller)
-                            SessionKeepPolicy.KEEP_ALIVE -> {}
-                        }
-                        refreshHosts()
-                        screen = Screen.Home
-                    },
-                )
+                // 返回主页不断开：默认后台运行，会话保留在 SessionManager，
+                // 由前台服务保活，从「连接」页可重新进入（终端缓冲原样保留）
+                is Screen.Terminal -> {
+                    val host = hosts.firstOrNull { it.id == s.hostId }
+                    val tabs = sessionManager.sessions.filter { it.host.id == s.hostId }
+                    val current = terminalCurrent ?: tabs.firstOrNull()
+                    if (host != null && current != null) {
+                        TerminalScreen(
+                            controller = current,
+                            sessions = tabs,
+                            theme = terminalTheme,
+                            settings = settings,
+                            onBack = {
+                                terminalCurrent = null
+                                refreshHosts()
+                                screen = Screen.Home
+                            },
+                            onSwitchTab = { terminalCurrent = it },
+                            onAddSession = {
+                                val c = sessionManager.open(host, settings.autoReconnect) {
+                                    hosts = repository.listHosts()
+                                }
+                                terminalCurrent = c
+                            },
+                            onCloseTab = { c ->
+                                sessionManager.remove(c)
+                                val remaining = sessionManager.sessions.firstOrNull { it.host.id == s.hostId }
+                                terminalCurrent = remaining
+                                if (remaining == null) {
+                                    refreshHosts()
+                                    screen = Screen.Home
+                                }
+                            },
+                            onSftp = {},
+                        )
+                    }
+                }
             }
         }
     }

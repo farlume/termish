@@ -1,45 +1,57 @@
 package dev.mssh.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LaptopMac
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneIphone
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,14 +63,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.mssh.data.ConnectionMode
+import dev.mssh.data.Host
 import dev.mssh.generated.resources.Res
 import dev.mssh.generated.resources.host_centos
 import dev.mssh.generated.resources.host_linux
 import dev.mssh.generated.resources.host_mac
 import dev.mssh.generated.resources.host_ubuntu
 import dev.mssh.generated.resources.host_windows
-import dev.mssh.data.ConnectionMode
-import dev.mssh.data.Host
+import dev.mssh.util.monospaceFontFamily
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
@@ -70,11 +83,15 @@ internal fun isActiveStatus(status: ConnStatus): Boolean =
 @Composable
 fun HostListScreen(
     hosts: List<Host>,
-    activeHostIds: Set<String>,
+    hostSessions: Map<String, List<TerminalController>>,
     onAdd: () -> Unit,
     onEdit: (Host) -> Unit,
     onConnect: (Host) -> Unit,
+    onConnectBatch: (List<Host>) -> Unit,
+    onDisconnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
+    onOpenSession: (TerminalController) -> Unit,
+    onCloseAllSessions: (Host) -> Unit,
 ) {
     val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
@@ -89,17 +106,61 @@ fun HostListScreen(
         }
         .sortedWith(compareByDescending<Host> { it.lastConnectedAt }.thenBy { it.name.lowercase() })
 
+    // 批处理（多选）模式：头像点击 / 长按卡片进入
+    var selectionMode by remember { mutableStateOf(false) }
+    val selected = remember { mutableStateMapOf<String, Host>() }
+
+    fun enterSelection(host: Host) {
+        selected.clear()
+        selected[host.id] = host
+        selectionMode = true
+    }
+
+    fun exitSelection() {
+        selectionMode = false
+        selected.clear()
+    }
+
+    // 多选模式下系统返回键先退出批处理，而不是退到桌面
+    PlatformBackHandler(enabled = selectionMode, onBack = { exitSelection() })
+
     Scaffold(
         topBar = {
-            MsshLargeHeader(title = "MSSH")
+            if (selectionMode) {
+                SelectionHeader(
+                    count = selected.size,
+                    onClose = { exitSelection() },
+                    onEdit = {
+                        selected.values.firstOrNull()?.let(onEdit)
+                        exitSelection()
+                    },
+                    onSelectAll = { filtered.forEach { selected[it.id] = it } },
+                    onConnect = {
+                        onConnectBatch(selected.values.toList())
+                        exitSelection()
+                    },
+                    onDisconnect = {
+                        selected.values.forEach(onDisconnect)
+                        exitSelection()
+                    },
+                    onRemove = {
+                        selected.values.forEach(onDelete)
+                        exitSelection()
+                    },
+                )
+            } else {
+                MsshLargeHeader(title = "MSSH")
+            }
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onAdd,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                shape = RoundedCornerShape(16.dp),
-            ) { Icon(Icons.Default.Add, s.hostsAdd) }
+            if (!selectionMode) {
+                FloatingActionButton(
+                    onClick = onAdd,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                    shape = RoundedCornerShape(16.dp),
+                ) { Icon(Icons.Default.Add, s.hostsAdd) }
+            }
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
@@ -121,12 +182,35 @@ fun HostListScreen(
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(filtered, key = { it.id }) { host ->
+                        val isSelected = host.id in selected
+                        val sessions = hostSessions[host.id].orEmpty()
                         HostCard(
                             host = host,
-                            active = host.id in activeHostIds,
-                            onConnect = { onConnect(host) },
-                            onEdit = { onEdit(host) },
-                            onDelete = { onDelete(host) },
+                            sessions = sessions,
+                            active = sessions.any { isActiveStatus(it.status) },
+                            selectionMode = selectionMode,
+                            selected = isSelected,
+                            onCardClick = {
+                                if (selectionMode) {
+                                    if (isSelected) selected.remove(host.id) else selected[host.id] = host
+                                } else {
+                                    // 有活跃会话直接进入第一个，没有则新建
+                                    val active = sessions.firstOrNull { isActiveStatus(it.status) }
+                                    if (active != null) onOpenSession(active) else onConnect(host)
+                                }
+                            },
+                            onAvatarClick = {
+                                if (selectionMode) {
+                                    if (isSelected) selected.remove(host.id) else selected[host.id] = host
+                                } else {
+                                    enterSelection(host)
+                                }
+                            },
+                            onLongClick = {
+                                if (!selectionMode) enterSelection(host)
+                            },
+                            onOpenSession = onOpenSession,
+                            onCloseAllSessions = { onCloseAllSessions(host) },
                         )
                     }
                 }
@@ -135,24 +219,112 @@ fun HostListScreen(
     }
 }
 
+/** 批处理模式页头：左侧关闭，中间「x selected」，右侧编辑 + 三点菜单。 */
+@Composable
+private fun SelectionHeader(
+    count: Int,
+    onClose: () -> Unit,
+    onEdit: () -> Unit,
+    onSelectAll: () -> Unit,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val s = LocalAppStrings.current
+    var moreOpen by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Close, contentDescription = s.navBack)
+            }
+            Text(
+                s.hostsSelectedCount(count),
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = monospaceFontFamily(),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.weight(1f))
+            // 编辑：仅单选时可用（编辑当前选中的主机）
+            IconButton(onClick = onEdit, enabled = count == 1) {
+                Icon(
+                    Icons.Default.Edit,
+                    contentDescription = s.hostsEdit,
+                    tint = if (count == 1) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                )
+            }
+            Box {
+                IconButton(onClick = { moreOpen = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = s.navMore)
+                }
+                DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(s.hostsSelectAll) },
+                        leadingIcon = { Icon(Icons.Filled.SelectAll, null) },
+                        onClick = {
+                            moreOpen = false
+                            onSelectAll()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.hostsConnect) },
+                        leadingIcon = { Icon(Icons.Filled.Link, null) },
+                        onClick = {
+                            moreOpen = false
+                            onConnect()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.hostsDisconnect) },
+                        leadingIcon = { Icon(Icons.Filled.LinkOff, null) },
+                        onClick = {
+                            moreOpen = false
+                            onDisconnect()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(s.hostsRemove, color = MaterialTheme.colorScheme.error) },
+                        leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                        onClick = {
+                            moreOpen = false
+                            onRemove()
+                        },
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    }
+}
+
 /**
  * 主机卡片（Termius 风格）：系统头像 + 两行信息。
- * - 行 1：主机 IP/地址
- * - 行 2：有活跃会话 → 绿色 Active；否则「协议, 用户名, 系统」
- * - 点击卡片连接；长按卡片弹出编辑/删除；点击头像直接编辑
+ * - 行 1：主机 IP/地址；行 2：Active 或「协议, 用户名, 系统」
+ * - 点击卡片连接；长按卡片或点击头像进入批处理模式
+ * - 批处理模式下点击切换选中，选中卡片高亮主色边框
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HostCard(
     host: Host,
+    sessions: List<TerminalController>,
     active: Boolean,
-    onConnect: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
+    selectionMode: Boolean,
+    selected: Boolean,
+    onCardClick: () -> Unit,
+    onAvatarClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onOpenSession: (TerminalController) -> Unit,
+    onCloseAllSessions: () -> Unit,
 ) {
     val s = LocalAppStrings.current
-    var menuOpen by remember { mutableStateOf(false) }
-
+    val sys = host.system.ifBlank { host.hostname }
     val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
     val detail = if (active) {
         s.hostsActive
@@ -169,90 +341,171 @@ private fun HostCard(
         }
     }
 
-    Box {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                .combinedClickable(
-                    onClick = onConnect,
-                    onLongClick = { menuOpen = true },
-                ),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            border = BorderStroke(1.dp, Color(0xFFE8E8ED)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .combinedClickable(
+                onClick = onCardClick,
+                onLongClick = onLongClick,
+            ),
+        shape = RoundedCornerShape(14.dp),
+        // 跟随主题：浅色=白、暗黑=深色；批处理选中项用主色边框高亮
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+        ),
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.outlineVariant,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            // 系统头像（圆角正方形 + 白色图标）：点击进入/切换批处理选择
+            Box(
+                Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(systemColor(sys))
+                    .clickable(onClick = onAvatarClick),
+                contentAlignment = Alignment.Center,
             ) {
-                // 系统头像（圆角正方形 + 白色图标）：点击直接进入编辑
-                val sys = host.system.ifBlank { host.hostname }
-                Box(
-                    Modifier
-                        .size(42.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(systemColor(sys))
-                        .clickable(onClick = onEdit),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    val svg = systemSvg(sys)
-                    if (svg != null) {
-                        Icon(
-                            painterResource(svg),
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    } else {
-                        Icon(
-                            systemIcon(sys),
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        address,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF1C1C1E),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                val svg = systemSvg(sys)
+                if (svg != null) {
+                    Icon(
+                        painterResource(svg),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
                     )
-                    Text(
-                        detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (active) {
-                            Color(0xFF34C759)
-                        } else {
-                            Color(0xFF6E6E73)
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                } else {
+                    Icon(
+                        systemIcon(sys),
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
+            Column(Modifier.weight(1f)) {
+                Text(
+                    address,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (active) {
+                        Color(0xFF34C759)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (selectionMode) {
+                // 选中状态标记：勾选圆
+                Box(
+                    Modifier.size(22.dp).clip(RoundedCornerShape(11.dp))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (selected) {
+                        Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            } else if (sessions.any { isActiveStatus(it.status) }) {
+                // 活跃会话数 + 下拉：新建连接 / 重入活跃会话 / 全部关闭
+                SessionCountMenu(
+                    sessions = sessions,
+                    activeOnly = true,
+                    onConnect = onCardClick,
+                    onOpen = onOpenSession,
+                    onCloseAll = onCloseAllSessions,
+                )
+            }
         }
-        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+    }
+}
+
+/** 卡片右侧会话下拉：显示会话数量，展开可新建连接、重入会话或全部关闭。 */
+@Composable
+private fun SessionCountMenu(
+    sessions: List<TerminalController>,
+    activeOnly: Boolean,
+    onConnect: () -> Unit,
+    onOpen: (TerminalController) -> Unit,
+    onCloseAll: () -> Unit,
+) {
+    val s = LocalAppStrings.current
+    var open by remember { mutableStateOf(false) }
+    val listed = if (activeOnly) sessions.filter { isActiveStatus(it.status) } else sessions
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { open = true }
+                .padding(horizontal = 8.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                listed.size.toString(),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Icon(
+                Icons.Filled.ArrowDropDown,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
-                text = { Text(s.hostsEdit) },
-                leadingIcon = { Icon(Icons.Default.Edit, null) },
+                text = { Text(s.hostsConnect) },
                 onClick = {
-                    menuOpen = false
-                    onEdit()
+                    open = false
+                    onConnect()
                 },
             )
+            HorizontalDivider()
+            listed.forEach { controller ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            "${controller.host.username}@${controller.host.hostname}",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onOpen(controller)
+                    },
+                )
+            }
+            HorizontalDivider()
             DropdownMenuItem(
-                text = { Text(s.hostsDelete, color = MaterialTheme.colorScheme.error) },
-                leadingIcon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+                text = { Text(s.hostsCloseAll, color = MaterialTheme.colorScheme.error) },
                 onClick = {
-                    menuOpen = false
-                    onDelete()
+                    open = false
+                    onCloseAll()
                 },
             )
         }

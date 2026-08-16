@@ -105,6 +105,8 @@ class TerminalController(
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
     private var lastCols = 80
     private var lastRows = 24
+    /** 会话唯一标识（同主机多会话区分；Compose key() 重组用）。 */
+    val sessionId: String = "${host.id}:${kotlin.random.Random.nextLong()}"
     private var reconnectAttempts = 0
     private var keepAliveActive = false
     /** 自动重连的延迟任务：close() 时取消，防止关闭后仍被延迟协程拉起。 */

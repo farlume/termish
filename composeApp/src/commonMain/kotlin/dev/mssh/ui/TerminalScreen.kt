@@ -21,14 +21,21 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,22 +77,27 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.mssh.ssh.AuthPrompt
 import dev.mssh.term.argbToRgb
 import dev.mssh.ui.theme.TerminalTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.jetbrains.compose.resources.painterResource
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
     controller: TerminalController,
+    sessions: List<TerminalController>,
     theme: TerminalTheme,
     settings: dev.mssh.data.AppSettings,
     onBack: () -> Unit,
-    /** 非空时，连接中的会话返回先弹「保留策略」选择。 */
-    onBackWithPolicy: ((SessionKeepPolicy) -> Unit)? = null,
+    onSwitchTab: (TerminalController) -> Unit,
+    onAddSession: () -> Unit,
+    onCloseTab: (TerminalController) -> Unit,
+    onSftp: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
@@ -123,18 +136,9 @@ fun TerminalScreen(
         b.defaultCursorRgb = argbToRgb(theme.cursor)
     }
 
-    // 返回：连接中的会话先弹保留策略（常驻/保留 10 分钟/断开）；其余直接回退
-    var showLeaveDialog by remember { mutableStateOf(false) }
-    val requestBack = {
-        if (controller.isConnected() && onBackWithPolicy != null) {
-            showLeaveDialog = true
-        } else {
-            onBack()
-        }
-    }
-
-    // 拦截系统返回（手势/返回键），与点击返回按钮一致
-    PlatformBackHandler(enabled = true, onBack = requestBack)
+    // 返回即退到列表：会话默认在后台保持运行（SessionManager/前台服务保活），
+    // 不弹保留策略选择。拦截系统返回（手势/返回键）与点击返回按钮一致。
+    PlatformBackHandler(enabled = true, onBack = onBack)
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 
@@ -143,10 +147,6 @@ fun TerminalScreen(
     controller.onRemoteClipboard = { text ->
         clipboard.setText(AnnotatedString(text))
     }
-
-    // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
-    // 让 herdr 等远端复用器附着瞬间按错误窗口尺寸布局。
-    var connectSent by remember { mutableStateOf(false) }
 
     // 光标闪烁：连接建立后周期性切换可见性并重绘
     LaunchedEffect(controller.status, settings.cursorBlink) {
@@ -165,35 +165,6 @@ fun TerminalScreen(
         }
     }
 
-    // 离开终端页的会话保留策略选择
-    if (showLeaveDialog && onBackWithPolicy != null) {
-        AlertDialog(
-            onDismissRequest = { showLeaveDialog = false },
-            title = { Text(s.terminalLeaveTitle) },
-            text = {
-                Column {
-                    LeavePolicyOption(
-                        s.terminalKeepAlive,
-                        s.terminalKeepAliveSub,
-                    ) {
-                        showLeaveDialog = false
-                        onBackWithPolicy(SessionKeepPolicy.KEEP_ALIVE)
-                    }
-                    LeavePolicyOption(
-                        s.terminalDisconnect,
-                        s.terminalDisconnectSub,
-                    ) {
-                        showLeaveDialog = false
-                        onBackWithPolicy(SessionKeepPolicy.DISCONNECT)
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showLeaveDialog = false }) { Text(s.terminalCancel) }
-            },
-        )
-    }
-
     val hostKey = controller.hostKeyPrompt
     if (hostKey != null) {
         HostKeyDialog(
@@ -207,24 +178,26 @@ fun TerminalScreen(
 
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // 头部：返回 + 标题 + 实时连接状态（通用紧凑页头，终端配色）
-        MsshHeader(
-            title = controller.title,
-            onBack = requestBack,
-            containerColor = theme.background(),
-            contentColor = theme.foreground(),
-            statusBarPadding = false,
-        ) {
-            MouseModeIndicator(controller)
-            ConnectionStatusIndicator(
-                status = controller.status,
-                reconnecting = controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0,
-                linkLostSeconds = controller.linkLostSeconds,
-                modifier = Modifier.padding(end = 12.dp),
-            )
-        }
+        // 头部：返回 + 多会话 tab（系统 logo + user@host + X）+ 添加菜单
+        TerminalTabBar(
+            sessions = sessions,
+            current = controller,
+            onBack = onBack,
+            onSwitch = onSwitchTab,
+            onAdd = onAddSession,
+            onClose = onCloseTab,
+            onSftp = onSftp,
+            theme = theme,
+        )
 
-        // 重连/错误飘条：重连中=琥珀色，失败=红色；跟随终端主题背景
+        // 会话主体：切换 tab 时按会话唯一 id 整体重组（输入框/局部状态独立）
+        key(controller.sessionId) {
+            // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
+            // 让 herdr 等远端复用器附着瞬间按错误窗口尺寸布局。
+            // 放 key 块内：每个会话独立，切换/新建 tab 都会重新建连。
+            var connectSent by remember { mutableStateOf(false) }
+
+            // 重连/错误飘条：重连中=琥珀色，失败=红色；跟随终端主题背景
         val bannerText = when {
             controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
                 s.terminalReconnectingN(controller.reconnectCount)
@@ -416,6 +389,7 @@ fun TerminalScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -447,28 +421,143 @@ private fun ConnectionStatusIndicator(
     }
 }
 
-/** 离开会话弹窗的选项行。 */
+/**
+ * 终端页多会话 tab 栏：返回 + 可滑动的会话 tab（系统 logo + user@host + X）
+ * + 添加按钮（Connect / Connect via SFTP，均有图标）。
+ */
 @Composable
-private fun LeavePolicyOption(title: String, subtitle: String, onClick: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 10.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.bodyLarge)
-        Text(
-            subtitle,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-        )
+private fun TerminalTabBar(
+    sessions: List<TerminalController>,
+    current: TerminalController,
+    onBack: () -> Unit,
+    onSwitch: (TerminalController) -> Unit,
+    onAdd: () -> Unit,
+    onClose: (TerminalController) -> Unit,
+    onSftp: () -> Unit,
+    theme: TerminalTheme,
+) {
+    val s = LocalAppStrings.current
+    var addOpen by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().background(theme.background())) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = s.navBack,
+                    tint = theme.foreground(),
+                )
+            }
+            // 会话 tab：水平滑动
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                sessions.forEach { c ->
+                    SessionTabChip(
+                        controller = c,
+                        selected = c === current,
+                        theme = theme,
+                        onClick = { onSwitch(c) },
+                        onClose = { onClose(c) },
+                    )
+                }
+            }
+            Box {
+                IconButton(onClick = { addOpen = true }) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = s.hostsAdd,
+                        tint = theme.foreground(),
+                    )
+                }
+                DropdownMenu(expanded = addOpen, onDismissRequest = { addOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(s.hostsConnect) },
+                        leadingIcon = { Icon(Icons.Filled.Link, null) },
+                        onClick = {
+                            addOpen = false
+                            onAdd()
+                        },
+                    )
+                    // SFTP 尚未实现：菜单项展示但置灰不可点
+                    DropdownMenuItem(
+                        text = { Text(s.hostsConnectSftp) },
+                        leadingIcon = { Icon(Icons.Filled.FolderOpen, null) },
+                        enabled = false,
+                        onClick = {
+                            addOpen = false
+                            onSftp()
+                        },
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = theme.foreground().copy(alpha = 0.15f))
     }
 }
 
-/** 头部鼠标模式指示：TUI 开启鼠标上报时显示，提示触摸已映射为鼠标事件。 */
+/** 单个会话 tab：系统小头像 + user@host + 关闭 X；当前 tab 高亮并显示连接状态点。 */
 @Composable
-private fun MouseModeIndicator(controller: TerminalController) {
-    // buffer 非 Compose 状态，读取 frame 让模式切换随输出帧重组
-    @Suppress("UNUSED_VARIABLE") val f = controller.frame
-    if (controller.buffer.mouseTracking > 0) {
-        Text("\ud83d\uddb1", modifier = Modifier.padding(end = 12.dp))
+private fun SessionTabChip(
+    controller: TerminalController,
+    selected: Boolean,
+    theme: TerminalTheme,
+    onClick: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val sys = controller.host.system.ifBlank { controller.host.hostname }
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                if (selected) theme.foreground().copy(alpha = 0.18f)
+                else theme.foreground().copy(alpha = 0.07f),
+            )
+            .clickable(onClick = onClick)
+            .padding(start = 8.dp, top = 5.dp, bottom = 5.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 系统小头像
+        Box(
+            Modifier.size(18.dp).clip(RoundedCornerShape(5.dp)).background(systemColor(sys)),
+            contentAlignment = Alignment.Center,
+        ) {
+            val svg = systemSvg(sys)
+            if (svg != null) {
+                Icon(painterResource(svg), null, tint = Color.White, modifier = Modifier.size(11.dp))
+            } else {
+                Icon(systemIcon(sys), null, tint = Color.White, modifier = Modifier.size(11.dp))
+            }
+        }
+        Spacer(Modifier.size(6.dp))
+        Text(
+            "${controller.host.username}@${controller.host.hostname}",
+            style = MaterialTheme.typography.labelSmall,
+            color = theme.foreground(),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.size(4.dp))
+        if (selected) {
+            Box(
+                Modifier.size(8.dp).clip(CircleShape)
+                    .background(statusColor(controller.status, controller.linkLostSeconds)),
+            )
+        }
+        IconButton(onClick = onClose, modifier = Modifier.size(22.dp)) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = null,
+                tint = theme.foreground().copy(alpha = 0.7f),
+                modifier = Modifier.size(14.dp),
+            )
+        }
     }
 }
 

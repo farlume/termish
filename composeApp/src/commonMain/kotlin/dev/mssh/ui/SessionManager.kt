@@ -5,13 +5,8 @@ import dev.mssh.data.Host
 import dev.mssh.data.HostRepository
 import dev.mssh.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/** 离开终端页时的会话保留策略。 */
-enum class SessionKeepPolicy { KEEP_ALIVE, KEEP_10_MIN, DISCONNECT }
 
 /**
  * 会话管理器：持有所有活跃 [TerminalController]，跨页面存活。
@@ -23,7 +18,6 @@ class SessionManager(private val repository: HostRepository) {
     val sessions = mutableStateListOf<TerminalController>()
 
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
-    private val autoCloseJobs = HashMap<String, Job>()
     /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
     private val activeAtBackground = HashSet<String>()
 
@@ -80,41 +74,14 @@ class SessionManager(private val repository: HostRepository) {
         autoReconnect: Boolean,
         onSystemDetected: ((Host) -> Unit)? = null,
     ): TerminalController {
-        val existing = sessions.firstOrNull {
-            it.host.id == host.id && it.status != ConnStatus.CLOSED && it.status != ConnStatus.ERROR
-        }
+        // 同一主机支持多个会话（Termius 风格）：每次打开都新建，
+        // 旧的保留在列表，可从卡片下拉/连接页重入。
         val (pw, key) = resolveCredentials(host)
-        if (existing != null) {
-            existing.onSystemDetected = onSystemDetected
-            // 编辑主机后凭据/连接参数可能已变化：旧会话仍持有旧凭据，
-            // 直接复用会带着过期认证重连（如改密码后仍用旧私钥）。签名不同则重建。
-            if (existing.credentialKey == credentialSignature(host, pw, key)) return existing
-            // 取消该主机挂起的定时断开，避免旧任务到点误伤新会话（job 按 host.id 索引）
-            autoCloseJobs.remove(host.id)?.cancel()
-            existing.close()
-            sessions.remove(existing)
-        }
         val controller = TerminalController(host, pw, key, repository, autoReconnect)
         controller.onSystemDetected = onSystemDetected
-        sessions.removeAll { it.host.id == host.id }
         sessions.add(controller)
         persist()
         return controller
-    }
-
-    /** 定时自动断开（如离开终端页时选择「保留 10 分钟」），断开后保留在列表。 */
-    fun scheduleClose(controller: TerminalController, delayMs: Long) {
-        autoCloseJobs[controller.host.id]?.cancel()
-        autoCloseJobs[controller.host.id] = scope.launch {
-            delay(delayMs)
-            disconnect(controller)
-            autoCloseJobs.remove(controller.host.id)
-        }
-    }
-
-    /** 重新进入会话时取消定时断开。 */
-    fun cancelScheduledClose(controller: TerminalController) {
-        autoCloseJobs.remove(controller.host.id)?.cancel()
     }
 
     /** 断开但保留在列表中（灰点，点击可重连，缓冲保留）。 */
@@ -131,7 +98,6 @@ class SessionManager(private val repository: HostRepository) {
 
     /** 主机被删除时，连带断开并移除其会话。 */
     fun closeForHost(hostId: String) {
-        autoCloseJobs.remove(hostId)?.cancel()
         sessions.filter { it.host.id == hostId }.forEach { it.close() }
         sessions.removeAll { it.host.id == hostId }
         persist()
