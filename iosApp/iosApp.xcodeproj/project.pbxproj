@@ -244,6 +244,10 @@
 				);
 				OTHER_LDFLAGS = "$(inherited) -framework Mssh -lssh2 -lssl -lcrypto -lz -framework Security";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.mssh.app;
+				/* Swift target 模块名须与 Kotlin framework（Mssh）不同：Xcode 26 显式模块
+				   编译下 PRODUCT_NAME=MSSH 与 import Mssh 大小写碰撞，报
+				   "cannot load module 'MSSH' as 'Mssh'" */
+				PRODUCT_MODULE_NAME = MsshApp;
 				PRODUCT_NAME = MSSH;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -280,6 +284,7 @@
 				);
 				OTHER_LDFLAGS = "$(inherited) -framework Mssh -lssh2 -lssl -lcrypto -lz -framework Security";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.mssh.app;
+				PRODUCT_MODULE_NAME = MsshApp;
 				PRODUCT_NAME = MSSH;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
