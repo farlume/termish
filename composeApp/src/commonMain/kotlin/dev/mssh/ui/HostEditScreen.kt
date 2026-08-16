@@ -47,7 +47,6 @@ fun HostEditScreen(
     var hostname by remember { mutableStateOf(existing?.hostname ?: "") }
     var port by remember { mutableStateOf((existing?.port ?: 22).toString()) }
     var username by remember { mutableStateOf(existing?.username ?: "root") }
-    var system by remember { mutableStateOf(existing?.system ?: "") }
     var authMethod by remember { mutableStateOf(existing?.authMethod ?: HostAuthMethod.PASSWORD) }
     var connectionMode by remember { mutableStateOf(existing?.connectionMode ?: ConnectionMode.SSH) }
     var password by remember { mutableStateOf("") }
@@ -74,7 +73,9 @@ fun HostEditScreen(
                             hostname = hostname.trim(),
                             port = port.toIntOrNull() ?: 22,
                             username = username.ifBlank { "root" },
-                            system = system.trim(),
+                            // 系统由连接后自动探测写入（Termius 式），编辑页不手填；
+                            // 保留已探测到的值，不覆盖。
+                            system = existing?.system ?: "",
                             authMethod = authMethod,
                             connectionMode = connectionMode,
                             tags = tags.split(",").map { it.trim() }.filter { it.isNotEmpty() },
@@ -102,12 +103,6 @@ fun HostEditScreen(
                 OutlinedTextField(port, { port = it }, Modifier.weight(1f), label = { Text(s.editPort) }, singleLine = true)
                 OutlinedTextField(username, { username = it }, Modifier.weight(2f), label = { Text(s.editUsername) }, singleLine = true)
             }
-            OutlinedTextField(
-                system, { system = it }, Modifier.fillMaxWidth(),
-                label = { Text(s.editSystem) },
-                placeholder = { Text(s.editSystemPlaceholder) },
-                singleLine = true,
-            )
 
             Text(s.editAuthMethod, style = MaterialTheme.typography.labelLarge)
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
