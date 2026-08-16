@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -42,7 +43,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import dev.mssh.term.CellAttr
-import dev.mssh.term.CharWidth
 import dev.mssh.term.DEFAULT_CURSOR
 import dev.mssh.term.DEFAULT_BG
 import dev.mssh.term.DEFAULT_FG
@@ -54,9 +54,13 @@ import dev.mssh.ui.theme.TerminalTheme
 import dev.mssh.util.cjkFontFamily
 import dev.mssh.util.monospaceFontFamily
 
+// 基础 16 色值 → ANSI 索引的预计算映射（替代每帧线性 indexOf）
+private val BASIC_16_INDEX: Map<Int, Int> =
+    TerminalPalette.BASIC_16.mapIndexed { i, v -> v to i }.toMap()
+
 private fun cellColor(c: Int, theme: TerminalTheme): Color {
-    val idx = TerminalPalette.BASIC_16.indexOf(c)
-    return if (idx >= 0) theme.ansi(idx) else Color(0xFF000000.toInt() or c)
+    val idx = BASIC_16_INDEX[c]
+    return if (idx != null) theme.ansi(idx) else Color(0xFF000000.toInt() or c)
 }
 
 /** 按背景亮度取黑/白前景，保证「远端只设底色、留默认前景」时叠加场景可读。 */
@@ -132,7 +136,9 @@ fun TerminalView(
     val fontFamily = monospaceFontFamily()
     val cjkFont = cjkFontFamily()
     // 目标列数模式：字形宽度与字号成线性关系，用 12sp 参考测量反算所需字号
-    val effectiveFontSizeSp = remember(canvasSize.width, targetCols, fontSizeSp, fontFamily) {
+    // 注意：不能用 fontFamily 做键——monospaceFontFamily() 每次组合都返回新实例，
+    // 用它做键会导致这里和下面的 sample 每帧重算。
+    val effectiveFontSizeSp = remember(canvasSize.width, targetCols, fontSizeSp) {
         if (targetCols > 0 && canvasSize.width > 0) {
             val ref = textMeasurer.measure("0".repeat(16), TextStyle(fontFamily = fontFamily, fontSize = 12.sp))
             val refCellW = ref.size.width.toFloat() / 16f
@@ -163,10 +169,21 @@ fun TerminalView(
     // 格宽仍按 JetBrains Mono 度量，宽字符天然占 2 格。
     val wideStyle = style.copy(fontFamily = cjkFont)
     // 用较长采样串测单格宽度：避免小字号下单字符宽度像素取整带来的累积误差
-    val sample = remember(effectiveFontSizeSp, fontFamily) { textMeasurer.measure("0".repeat(16), style) }
+    val sample = remember(effectiveFontSizeSp) { textMeasurer.measure("0".repeat(16), style) }
     val cellW = (sample.size.width.toFloat() / 16f).coerceAtLeast(1f)
     val cellH = (sample.size.height.toFloat() * 1.2f).coerceAtLeast(1f)
     val textTop = (cellH - sample.size.height) / 2f
+
+    // 按 (ARGB, bold, 窄/宽字体) 缓存 TextStyle，避免每帧每个 run 都 style.copy
+    val textStyleCache = remember(style, wideStyle) { HashMap<Long, TextStyle>() }
+    fun cachedTextStyle(base: TextStyle, fg: Color, bold: Boolean): TextStyle {
+        val key = ((fg.toArgb().toLong() and 0xffffffffL) shl 2) or
+            (if (bold) 2L else 0L) or
+            (if (base === wideStyle) 1L else 0L)
+        return textStyleCache.getOrPut(key) {
+            base.copy(color = fg, fontWeight = if (bold) FontWeight.Bold else null)
+        }
+    }
 
     val buffer = controller.buffer
     val latestCanvasSize by rememberUpdatedState(canvasSize)
@@ -549,13 +566,13 @@ fun TerminalView(
                 if (cell.codePoint == ' '.code && cell.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) { i++; continue }
 
                 val (fgColor, _) = cellColors(cell, theme)
-                val runStyle = style.copy(color = fgColor, fontWeight = runFontWeight(cell.attrs))
+                val runStyle = cachedTextStyle(style, fgColor, cell.attrs and CellAttr.BOLD != 0)
                 var j = i
                 val sb = StringBuilder()
                 while (j < buffer.cols) {
                     val c2 = line.cells[j]
                     if (c2.isWideTail || c2.fg != cell.fg || c2.attrs != cell.attrs) break
-                    if (CharWidth.wcwidth(c2.codePoint) != 1) break
+                    if (c2.width != 1) break
                     if (c2.codePoint == ' '.code && c2.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) break
                     sb.appendCodePoint(c2.codePoint)
                     j++
@@ -564,12 +581,12 @@ fun TerminalView(
                     drawTextInBounds(sb.toString(), Offset(i * cellW, y + textTop), runStyle)
                 }
                 // 宽字符单独绘制
-                if (j < buffer.cols && !line.cells[j].isWideTail && CharWidth.wcwidth(line.cells[j].codePoint) == 2) {
+                if (j < buffer.cols && !line.cells[j].isWideTail && line.cells[j].width == 2) {
                     val wide = line.cells[j]
                     drawTextInBounds(
                         codePointToString(wide.codePoint),
                         Offset(j * cellW, y + textTop),
-                        wideStyle.copy(color = cellColors(wide, theme).first, fontWeight = runFontWeight(wide.attrs)),
+                        cachedTextStyle(wideStyle, cellColors(wide, theme).first, wide.attrs and CellAttr.BOLD != 0),
                     )
                     j += 2
                 }
@@ -686,7 +703,7 @@ fun TerminalView(
                                 drawTextInBounds(
                                     codePointToString(cell.codePoint),
                                     Offset(cursorColPx, cursorRowPx + textTop),
-                                    (if (CharWidth.wcwidth(cell.codePoint) == 2) wideStyle else style)
+                                    (if (cell.width == 2) wideStyle else style)
                                         .copy(color = bg, fontWeight = runFontWeight(cell.attrs)),
                                 )
                             }

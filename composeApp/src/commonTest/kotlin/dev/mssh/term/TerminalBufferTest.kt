@@ -64,6 +64,23 @@ class TerminalBufferTest {
         assertEquals(versions[4], b.lineAt(4).version)
     }
 
+    @Test
+    fun cellWidthPrecomputed() {
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        assertEquals(1, b.lineAt(0).cells[0].width)
+        b.putChar('中'.code)
+        assertEquals(2, b.lineAt(0).cells[1].width)
+        assertTrue(b.lineAt(0).cells[1].isWide)
+        assertTrue(b.lineAt(0).cells[2].isWideTail)
+        assertEquals(1, b.lineAt(0).cells[2].width)
+        // 窄字符覆盖宽头 → 宽度复位、尾巴标记清除
+        b.moveTo(0, 1)
+        b.putChar('b'.code)
+        assertEquals(1, b.lineAt(0).cells[1].width)
+        assertFalse(b.lineAt(0).cells[2].isWideTail)
+    }
+
     private fun TerminalBuffer.lineText(row: Int): String {
         val sb = StringBuilder()
         for (c in visibleLines()[row].cells) {

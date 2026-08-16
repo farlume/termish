@@ -10,10 +10,13 @@ class TerminalCell {
     /** 该单元是前一个宽字符（占 2 列）的“尾巴”。 */
     var isWideTail: Boolean = false
 
+    /** 该单元占用的列数（1=窄，2=宽字符头部），写入时预计算，渲染不再调 wcwidth。 */
+    var width: Int = 1
+
     /** OSC 8 超链接目标；非超链接单元为 null。 */
     var link: String? = null
 
-    val isWide: Boolean get() = CharWidth.wcwidth(codePoint) > 1
+    val isWide: Boolean get() = width == 2
 
     fun clear() {
         codePoint = ' '.code
@@ -21,6 +24,7 @@ class TerminalCell {
         fg = DEFAULT_FG
         bg = DEFAULT_BG
         isWideTail = false
+        width = 1
         link = null
     }
 
@@ -30,6 +34,7 @@ class TerminalCell {
         fg = o.fg
         bg = o.bg
         isWideTail = o.isWideTail
+        width = o.width
         link = o.link
     }
 }
@@ -227,6 +232,7 @@ class TerminalBuffer(
             c.attrs = currentAttrs
             c.fg = currentFg
             c.bg = currentBg
+            c.width = 2
             c.link = currentLink
             val tail = line.cells[col + 1]
             tail.clear()
