@@ -119,6 +119,9 @@ fun AppRoot(repository: HostRepository) {
     var sftpHostKey by remember { mutableStateOf<HostKeyRequest?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // 语言文案（提前声明供 connectSftp 等 lambda 使用）
+    val appStrings = remember(settings.language) { appStringsFor(settings.language) }
+
     // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）
     val connectSftp: (Host) -> Unit = { host ->
         val (pw, key) = resolveCredentials(host)
@@ -170,7 +173,7 @@ fun AppRoot(repository: HostRepository) {
                 currentTab = SessionTab.Sftp(host, session)
                 screen = Screen.Terminal(host.id)
             } catch (e: Exception) {
-                snackbarHostState.showSnackbar("SFTP 连接失败：${e.message}")
+                snackbarHostState.showSnackbar(appStrings.sftpConnectFailed(e.message ?: ""))
             }
         }
     }
@@ -191,7 +194,7 @@ fun AppRoot(repository: HostRepository) {
             screen = Screen.Terminal(target.host.id)
         } else if (target.status == ConnStatus.ERROR) {
             // 连接失败（IP 不可达 / 认证失败等）：留在列表并提示原因
-            snackbarHostState.showSnackbar(target.errorMessage ?: "连接失败")
+            snackbarHostState.showSnackbar(target.errorMessage ?: appStrings.hostsConnectFailed)
         }
     }
     val sessionManager = remember { SessionManager(repository) }
@@ -228,9 +231,6 @@ fun AppRoot(repository: HostRepository) {
     }
 
     val terminalTheme = TerminalThemes.ALL.getOrElse(settings.terminalThemeIndex) { TerminalThemes.ALL[0] }
-
-    // 语言设置：跟随系统或用户显式选择，全树文案由 LocalAppStrings 提供
-    val appStrings = remember(settings.language) { appStringsFor(settings.language) }
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         MsshTheme(settings.theme) {

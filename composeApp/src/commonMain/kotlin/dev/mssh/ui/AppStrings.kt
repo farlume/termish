@@ -36,6 +36,10 @@ data class AppStrings(
     val hostsCloseAll: String,
     /** 终端页添加菜单：通过 SFTP 连接（暂未实现）。 */
     val hostsConnectSftp: String,
+    /** 首页连接失败 Snackbar 兜底文案。 */
+    val hostsConnectFailed: String,
+    /** SFTP 连接失败（带原因）。 */
+    val sftpConnectFailed: (String) -> String,
     // SFTP
     val sftpNewTitle: String,
     val sftpUser: String,
@@ -177,6 +181,8 @@ private val EnStrings = AppStrings(
     hostsRemove = "Remove",
     hostsCloseAll = "Close",
     hostsConnectSftp = "Connect via SFTP",
+    hostsConnectFailed = "Connection failed",
+    sftpConnectFailed = { "SFTP connection failed: $it" },
     sftpNewTitle = "New SFTP connection",
     sftpUser = "User",
     sftpUpload = "Upload",
@@ -302,6 +308,8 @@ private val ZhStrings = AppStrings(
     hostsRemove = "移除",
     hostsCloseAll = "关闭",
     hostsConnectSftp = "连接 SFTP",
+    hostsConnectFailed = "连接失败",
+    sftpConnectFailed = { "SFTP 连接失败：$it" },
     sftpNewTitle = "新建 SFTP 连接",
     sftpUser = "User",
     sftpUpload = "上传",
