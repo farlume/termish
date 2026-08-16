@@ -158,25 +158,6 @@ fun TerminalScreen(
         }
     }
 
-    val prompt = controller.authPrompt
-    if (prompt != null) {
-        AuthPromptDialog(prompt.prompt) { answers ->
-            controller.respondToPrompt(answers)
-        }
-    }
-
-    val hostKey = controller.hostKeyPrompt
-    if (hostKey != null) {
-        HostKeyDialog(
-            key = hostKey.key,
-            changed = hostKey.changed,
-            previousFingerprint = hostKey.previousFingerprint,
-        ) { accept ->
-            controller.respondToHostKey(accept)
-        }
-    }
-
-
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // 头部：返回 + 多会话 tab（系统 logo + user@host + X）+ 添加菜单
         TerminalTabBar(
@@ -393,34 +374,6 @@ fun TerminalScreen(
     }
 }
 
-/** 头部右侧实时连接状态指示：彩色圆点 + 文案。 */
-@Composable
-private fun ConnectionStatusIndicator(
-    status: ConnStatus,
-    reconnecting: Boolean,
-    linkLostSeconds: Int,
-    modifier: Modifier = Modifier,
-) {
-    val s = LocalAppStrings.current
-    val (dotColor, label) = when {
-        // 会话保持中但链路失联（mosh 漫游等待恢复）：与 banner 同源，不能仍显示「已连接」
-        status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS ->
-            Color(0xFFFFA726) to s.terminalLinkLost
-        status == ConnStatus.CONNECTED -> Color(0xFF4CAF50) to s.terminalConnected
-        status == ConnStatus.CONNECTING -> Color(0xFFFFA726) to
-            if (reconnecting) s.terminalReconnecting else s.terminalConnecting
-        status == ConnStatus.AUTH -> Color(0xFFFFA726) to s.terminalAuthing
-        status == ConnStatus.CLOSED -> Color(0xFF9E9E9E) to s.terminalDisconnected
-        status == ConnStatus.ERROR -> Color(0xFFEF5350) to s.terminalFailed
-        else -> return
-    }
-    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
-        Spacer(Modifier.size(6.dp))
-        Text(label, color = Color(0xFF9E9E9E), style = MaterialTheme.typography.labelMedium)
-    }
-}
-
 /**
  * 终端页多会话 tab 栏：返回 + 可滑动的会话 tab（系统 logo + user@host + X）
  * + 添加按钮（Connect / Connect via SFTP，均有图标）。
@@ -589,73 +542,4 @@ private fun QuickCommandsBar(controller: TerminalController) {
             )
         }
     }
-}
-
-@Composable
-private fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Unit) {
-    val s = LocalAppStrings.current
-    var values by remember { mutableStateOf(List(prompt.prompts.size) { "" }) }
-    AlertDialog(
-        onDismissRequest = { onResult(null) },
-        title = { Text(if (prompt.name.isNotEmpty()) prompt.name else s.terminalAuthRequired) },
-        text = {
-            Column {
-                if (prompt.instruction.isNotEmpty()) {
-                    Text(prompt.instruction, style = MaterialTheme.typography.bodySmall)
-                }
-                prompt.prompts.forEachIndexed { i, field ->
-                    OutlinedTextField(
-                        value = values.getOrElse(i) { "" },
-                        onValueChange = { v ->
-                            val list = values.toMutableList()
-                            list[i] = v
-                            values = list
-                        },
-                        label = { Text(field.label) },
-                        visualTransformation = if (field.echo) androidx.compose.ui.text.input.VisualTransformation.None
-                        else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                        singleLine = true,
-                    )
-                }
-            }
-        },
-        confirmButton = { Button(onClick = { onResult(values) }) { Text(s.terminalConfirm) } },
-        dismissButton = { TextButton(onClick = { onResult(null) }) { Text(s.terminalCancel) } },
-    )
-}
-
-@Composable
-private fun HostKeyDialog(
-    key: dev.mssh.ssh.HostKeyInfo,
-    changed: Boolean,
-    previousFingerprint: String?,
-    onResult: (Boolean) -> Unit,
-) {
-    val s = LocalAppStrings.current
-    AlertDialog(
-        onDismissRequest = { onResult(false) },
-        title = { Text(if (changed) s.terminalHostkeyChanged else s.terminalHostkeyConfirm) },
-        text = {
-            Column {
-                Text(
-                    if (changed) s.terminalHostkeyChangedBody
-                    else s.terminalHostkeyBody
-                )
-                if (changed && previousFingerprint != null) {
-                    Text(
-                        s.terminalHostkeySaved + " " + previousFingerprint,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-                Text(
-                    (if (changed) s.terminalHostkeyCurrent else key.algorithm) + "\n" + key.fingerprintSha256,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-        },
-        confirmButton = { Button(onClick = { onResult(true) }) { Text(s.terminalTrust) } },
-        dismissButton = { TextButton(onClick = { onResult(false) }) { Text(s.terminalCancel) } },
-    )
 }

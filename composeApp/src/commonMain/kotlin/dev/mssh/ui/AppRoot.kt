@@ -152,6 +152,24 @@ fun AppRoot(repository: HostRepository) {
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         MsshTheme(settings.theme) {
+            // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
+            // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
+            sessionManager.sessions.forEach { controller ->
+                controller.authPrompt?.let { prompt ->
+                    AuthPromptDialog(prompt.prompt) { answers ->
+                        controller.respondToPrompt(answers)
+                    }
+                }
+                controller.hostKeyPrompt?.let { hk ->
+                    HostKeyDialog(
+                        key = hk.key,
+                        changed = hk.changed,
+                        previousFingerprint = hk.previousFingerprint,
+                    ) { accept ->
+                        controller.respondToHostKey(accept)
+                    }
+                }
+            }
             when (val s = screen) {
                 Screen.Home -> {
                     Scaffold(
