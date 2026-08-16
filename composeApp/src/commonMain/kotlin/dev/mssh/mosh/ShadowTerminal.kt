@@ -50,7 +50,9 @@ internal class ShadowTerminal private constructor(
 
     companion object {
         fun create(cols: Int, rows: Int): ShadowTerminal {
-            val buf = TerminalBuffer(cols, rows, maxScrollbackLines = 10_000)
+            // 影子必须完整镜像服务端 framebuffer（mosh Framebuffer 无滚动上限）；
+            // UI 渲染层的回看上限由 uiBuffer 自行裁剪，影子不可截断，否则 diff 会错位
+            val buf = TerminalBuffer(cols, rows, maxScrollbackLines = Int.MAX_VALUE)
             val emu = TerminalEmulator(buf)
             return ShadowTerminal(buf, emu, 0u)
         }

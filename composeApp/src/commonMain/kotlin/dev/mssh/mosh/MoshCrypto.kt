@@ -11,6 +11,8 @@ import dev.mssh.util.base64Encode
  */
 internal class MoshCryptoSession(keyBase64: String) {
     private val ocb: Ocb
+    /** 加密块计数（mosh 协议实现：达到 2^47 块即终止会话，防 OCB 生日界）。 */
+    private var blocksEncrypted = 0L
 
     init {
         // mosh Base64Key：22 字符（16 字节 key 去掉 == 填充），且要求规范编码，
@@ -40,6 +42,10 @@ internal class MoshCryptoSession(keyBase64: String) {
         payload.copyInto(plain, 4)
         val nonce = nonceBytes(seq and SEQUENCE_MASK)
         val ct = ocb.encrypt(nonce, plain)
+        blocksEncrypted += (plain.size + 15) / 16
+        if (blocksEncrypted shr 47 != 0L) {
+            throw IllegalStateException("OCB 加密块数达到 2^47 上限，会话终止")
+        }
         val out = ByteArray(8 + ct.size)
         nonce.copyInto(out, 0, 4, 12) // 低 8 字节序号
         ct.copyInto(out, 8)

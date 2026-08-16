@@ -17,7 +17,7 @@ class TransportTest {
             initialRows = 24,
             key = dev.mssh.util.base64Encode(ByteArray(16)).substring(0, 22),
             nowMs = { now },
-            sendDatagram = { sent.add(it) },
+            sendDatagram = { sent.add(it); SendResult.OK },
             onNewState = { states++ },
         )
     }

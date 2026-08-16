@@ -499,7 +499,7 @@ class TerminalBuffer(
             // 全屏滚动：追加新行（进入滚动回看）
             repeat(n) {
                 normal.addLast(TerminalLine(cols))
-                if (normal.size > maxScrollbackLines + rows) {
+                if (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + rows) {
                     normal.removeFirst()
                 }
             }
@@ -628,8 +628,8 @@ class TerminalBuffer(
                 normal.addLast(TerminalLine(newCols))
             }
         }
-        // 限制回看总量
-        while (normal.size > maxScrollbackLines + newRows) {
+        // 限制回看总量（Int.MAX_VALUE = 无上限，影子终端用；普通 UI 缓冲保留上限）
+        while (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + newRows) {
             normal.removeFirst()
         }
 
@@ -660,6 +660,10 @@ class TerminalBuffer(
         rows = other.rows
         normal.clear()
         for (line in other.normal) normal.addLast(cloneLine(line))
+        // 目标缓冲若设了上限，拷贝后同样裁剪（影子无上限则保持完整）
+        while (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + rows) {
+            normal.removeFirst()
+        }
         alt = Array(other.rows) { cloneLine(other.alt[it]) }
         altScreen = other.altScreen
         cursorRow = other.cursorRow

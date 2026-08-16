@@ -15,12 +15,14 @@ import kotlinx.cinterop.sizeOf
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.value
 import platform.posix.IPPROTO_UDP
+import platform.posix.EMSGSIZE
 import platform.posix.SOCK_DGRAM
 import platform.posix.SOL_SOCKET
 import platform.posix.SO_RCVTIMEO
 import platform.posix.addrinfo
 import platform.posix.close
 import platform.posix.connect
+import platform.posix.errno
 import platform.posix.freeaddrinfo
 import platform.posix.getaddrinfo
 import platform.posix.recvfrom
@@ -53,16 +55,16 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
         }
     }
 
-    actual fun send(data: ByteArray) {
+    actual fun send(data: ByteArray): SendResult {
         data.usePinned { pinned ->
             val n = send(fd, pinned.addressOf(0), data.size.convert(), 0)
-            if (n.toInt() != data.size) {
-                error("mosh UDP send 只发送了 $n/${data.size} 字节")
-            }
+            if (n.toInt() == data.size) return SendResult.OK
+            // 报错时回传 errno：EMSGSIZE 让传输层把 MTU 降到保底值（mosh sendto 语义）
+            return if (errno == EMSGSIZE) SendResult.TOO_LARGE else SendResult.FAILED
         }
     }
 
-    actual fun receive(timeoutMillis: Int): ByteArray? {
+    actual fun receive(timeoutMillis: Int): UdpDatagram? {
         memScoped {
             val tv = alloc<timeval>()
             tv.tv_sec = (timeoutMillis / 1000).convert()
@@ -71,7 +73,7 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
             val buf = allocArray<ByteVar>(4096)
             val n = recvfrom(fd, buf, 4096.convert(), 0, null, null)
             if (n <= 0) return null // 超时或错误都按未收到处理
-            return ByteArray(n.toInt()) { i -> buf[i] }
+            return UdpDatagram(ByteArray(n.toInt()) { i -> buf[i] })
         }
     }
 

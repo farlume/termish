@@ -98,6 +98,10 @@ internal class Fragmenter {
     fun makeFragments(inst: TransportInstruction, mtu: Int): List<Fragment> {
         val usable = mtu - Fragment.HEADER_LEN
         val last = lastInstruction
+        // mosh transportfragment.cc：old/new 相同则 diff 必须一致（防重发内容漂移）
+        if (last != null && inst.oldNum == last.oldNum && inst.newNum == last.newNum) {
+            check(inst.diff.contentEquals(last.diff)) { "同 old/new 的 diff 不一致" }
+        }
         if (last == null || !inst.sameHeaderAs(last) || lastMtu != usable) {
             nextInstructionId++
         }
@@ -109,6 +113,7 @@ internal class Fragmenter {
         var num = 0
         var off = 0
         while (off < payload.size) {
+            check(num < 0x8000) { "分片数超限（fragment_num 高位是 final 标志位）" }
             val end = minOf(off + usable, payload.size)
             out.add(Fragment(nextInstructionId, num++, end == payload.size, payload.copyOfRange(off, end)))
             off = end

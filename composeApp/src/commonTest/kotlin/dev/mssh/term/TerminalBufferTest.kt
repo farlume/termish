@@ -10,6 +10,19 @@ import kotlin.test.assertTrue
 class TerminalBufferTest {
 
     @Test
+    fun unlimitedScrollbackNotTruncated() {
+        // 影子终端用 Int.MAX_VALUE 表示无上限（mosh Framebuffer 语义），
+        // 滚动后不得丢行，否则 SSP diff 会与服务端 framebuffer 错位
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = Int.MAX_VALUE)
+        repeat(200) { b.scrollUp(1) }
+        assertEquals(200, b.scrollbackSize())
+
+        val capped = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(200) { capped.scrollUp(1) }
+        assertEquals(100, capped.scrollbackSize())
+    }
+
+    @Test
     fun lineVersionBumpsOnWriteNotOnCursorMove() {
         val b = TerminalBuffer(10, 5)
         b.putChar('a'.code)

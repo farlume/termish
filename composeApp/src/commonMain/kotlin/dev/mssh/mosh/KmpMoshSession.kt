@@ -41,19 +41,29 @@ class KmpMoshSession(
     }
 
     private sealed class Event {
-        class Packet(val data: ByteArray) : Event()
+        class Packet(val data: ByteArray, val congestionExperienced: Boolean) : Event()
         class Input(val data: ByteArray) : Event()
         class Resize(val cols: Int, val rows: Int) : Event()
         object Close : Event()
     }
+
+    // ---- mosh Connection 客户端端口轮换（协议常量） ----
+    private val PORT_HOP_INTERVAL = 10_000L
+    private val MAX_OLD_SOCKET_AGE = 60_000L
+    private val MAX_PORTS_OPEN = 10
 
     private val mark = TimeSource.Monotonic.markNow()
     private fun nowMs(): Long = mark.elapsedNow().inWholeMilliseconds
 
     private val initialCols = columns
     private val initialRows = rows
+    private val remoteIp = ip
+    private val remotePort = port
 
-    private val socket = MoshUdpSocket(ip, port)
+    private val sockets = ArrayDeque<MoshUdpSocket>().apply { addLast(MoshUdpSocket(remoteIp, remotePort)) }
+    private var sendSocket = sockets.first()
+    private val socketJobs = ArrayDeque<Job>()
+    private var lastHopAt = 0L
     private val events = Channel<Event>(Channel.UNLIMITED)
 
     private val transport = MoshTransport(
@@ -64,9 +74,10 @@ class KmpMoshSession(
         nowMs = ::nowMs,
         sendDatagram = { data ->
             try {
-                socket.send(data)
+                sendSocket.send(data)
             } catch (e: Exception) {
                 println("mosh UDP 发送失败: ${e.message}")
+                SendResult.FAILED
             }
         },
         onNewState = { shadow ->
@@ -79,7 +90,6 @@ class KmpMoshSession(
     private var titleCallback: (String) -> Unit = {}
     private var clipboardCallback: (String) -> Unit = {}
     private var loopJob: Job? = null
-    private var readerJob: Job? = null
 
     /** 仅事件循环线程读写；close 后由循环线程置 false。跨线程读（close/UI）走 @Volatile。 */
     @Volatile
@@ -101,17 +111,7 @@ class KmpMoshSession(
         transport.setSendDelay(1) // mosh 客户端：击键尽快发出（默认 8ms 是服务端语义）
         // 初始窗口尺寸随第一帧上报（mosh 会话客户端::main_init 的 Resize 入队）
         events.trySend(Event.Resize(initialCols, initialRows))
-        // 收包协程：阻塞读，投递后由事件循环统一处理
-        readerJob = scope.launch(ioDispatcher()) {
-            try {
-                while (true) {
-                    val data = socket.receive(60_000) ?: continue
-                    events.send(Event.Packet(data))
-                }
-            } catch (_: Exception) {
-                // socket 关闭或错误：事件循环靠定时器/心跳退出，无需额外通知
-            }
-        }
+        launchReader(sendSocket)
         loopJob = scope.launch(Dispatchers.Default) {
             try {
                 loop()
@@ -123,6 +123,21 @@ class KmpMoshSession(
                 }
             }
         }
+    }
+
+    /** 每个 socket 一个收包协程：阻塞读，投递后由事件循环统一处理。 */
+    private fun launchReader(s: MoshUdpSocket) {
+        val job = scope.launch(ioDispatcher()) {
+            try {
+                while (true) {
+                    val dg = s.receive(60_000) ?: continue
+                    events.send(Event.Packet(dg.data, dg.congestionExperienced))
+                }
+            } catch (_: Exception) {
+                // socket 关闭或错误：事件循环靠定时器/心跳退出，无需额外通知
+            }
+        }
+        socketJobs.addLast(job)
     }
 
     private suspend fun loop() {
@@ -139,7 +154,7 @@ class KmpMoshSession(
                 is Event.Packet -> {
                     val pkt = transport.decryptDatagram(ev.data)
                     if (pkt != null) {
-                        transport.processPacket(pkt)
+                        transport.processPacket(pkt, ev.congestionExperienced)
                         peerSeen = true
                     }
                 }
@@ -149,6 +164,7 @@ class KmpMoshSession(
                 null -> {} // 超时，到点 tick
             }
             transport.tick()
+            maybeHopPort()
 
             // mosh-client：15s 无新远端状态 → 主动进入 shutdown（随后由超时兜底退出）
             if (transport.hasPeer() && !transport.shutdownInProgress &&
@@ -184,12 +200,54 @@ class KmpMoshSession(
         }
     }
 
-    private fun cleanup() {
-        try {
-            socket.close()
-        } catch (_: Exception) {
+    /**
+     * mosh Connection::send 的客户端端口轮换：
+     * 10s 无对端 ack 且 10s 没换过源端口 → 换新 socket；旧 socket 保留收包，
+     * 新端口稳定 60s 后清掉旧的（prune_sockets），最多同时开 10 个。
+     */
+    private fun maybeHopPort() {
+        val now = nowMs()
+        // 先剪除：最后一次 hop 后稳定超过 60s，说明链路已恢复，只留最新端口
+        if (sockets.size > 1 && now - lastHopAt >= MAX_OLD_SOCKET_AGE) {
+            while (sockets.size > 1) {
+                val old = sockets.removeFirst()
+                socketJobs.removeFirst()?.cancel()
+                try {
+                    old.close()
+                } catch (_: Exception) {
+                }
+            }
         }
-        readerJob?.cancel()
+        while (sockets.size > MAX_PORTS_OPEN) {
+            val old = sockets.removeFirst()
+            socketJobs.removeFirst()?.cancel()
+            try {
+                old.close()
+            } catch (_: Exception) {
+            }
+        }
+
+        if (transport.shutdownInProgress) return
+        if (now - lastHopAt < PORT_HOP_INTERVAL) return
+        if (now - transport.sentStateAckedTimestamp() < PORT_HOP_INTERVAL) return
+
+        val next = MoshUdpSocket(remoteIp, remotePort)
+        sockets.addLast(next)
+        launchReader(next)
+        sendSocket = next
+        lastHopAt = now
+    }
+
+    private fun cleanup() {
+        for (s in sockets) {
+            try {
+                s.close()
+            } catch (_: Exception) {
+            }
+        }
+        for (j in socketJobs) {
+            j.cancel()
+        }
     }
 
     fun isActive(): Boolean = active

@@ -16,7 +16,7 @@ internal class MoshTransport(
     initialRows: Int,
     key: String,
     private val nowMs: () -> Long,
-    private val sendDatagram: (ByteArray) -> Unit,
+    private val sendDatagram: (ByteArray) -> SendResult,
     /** 最新影子状态变化（有新帧可渲染）时回调。 */
     private val onNewState: (ShadowTerminal) -> Unit,
 ) {
@@ -27,11 +27,13 @@ internal class MoshTransport(
     private val ACK_DELAY = 100L
     private var sendMindelay = 8L
     private val ACTIVE_RETRY_TIMEOUT = 10000L
+    private val CONGESTION_TIMESTAMP_PENALTY = 500L
     private val MIN_RTO = 50L
     private val MAX_RTO = 1000L
     /** 应用层 MTU：mosh Connection 按地址族取 1252(IPv4)/1216(IPv6)，再扣
      *  Connection::ADDED_BYTES(12) + OCB 16；500 只是 mosh 在 EMSGSIZE 时的保底。 */
-    private val SEND_MTU: Int
+    private val MTU_FALLBACK = 500 - 12 - 16
+    private var sendMtu: Int
 
     private class SentState(var timestamp: Long, val num: ULong, val state: UserStream)
 
@@ -70,10 +72,13 @@ internal class MoshTransport(
     private var shutdownTries = 0
     private var shutdownStart = -1L
 
+    /** mosh -v 风格的帧发送诊断输出。 */
+    var verbose = false
+
     val latestRemote: ShadowTerminal get() = receivedStates.last().state
 
     init {
-        SEND_MTU = if (ip.contains(':')) 1216 - 12 - 16 else 1252 - 12 - 16
+        sendMtu = if (ip.contains(':')) 1216 - 12 - 16 else 1252 - 12 - 16
         val initial = UserStream()
         sentStates.addLast(SentState(nowMs(), 0u, initial))
         receivedStates.addLast(RecvState(nowMs(), 0u, ShadowTerminal.create(initialCols, initialRows)))
@@ -82,10 +87,12 @@ internal class MoshTransport(
     // ---- 上层输入 ----
 
     fun pushBytes(data: ByteArray) {
+        if (shutdownInProgress) return // mosh get_current_state 在 shutdown 时 assert
         for (b in data) currentState.pushByte(b)
     }
 
     fun pushResize(cols: Int, rows: Int) {
+        if (shutdownInProgress) return
         currentState.pushResize(cols, rows)
     }
 
@@ -115,6 +122,9 @@ internal class MoshTransport(
 
     fun lastHeardMs(): Long = lastHeard
 
+    /** 对端已确认状态（front）的发送时刻；客户端端口轮换判定用（mosh get_sent_state_acked_timestamp）。 */
+    fun sentStateAckedTimestamp(): Long = sentStates.first().timestamp
+
     // ---- RTT ----
 
     private fun timeout(): Long {
@@ -131,13 +141,17 @@ internal class MoshTransport(
 
     // ---- 收包（decrypt 之后调用） ----
 
-    fun processPacket(pkt: MoshCryptoSession.PlainPacket) {
+    fun processPacket(pkt: MoshCryptoSession.PlainPacket, congestionExperienced: Boolean = false) {
         val now = nowMs()
         // 旧包只用于时间戳/RTT，不进 SSP（mosh: out-of-order 提前 return）
         if (pkt.seq >= expectedReceiverSeq) {
             expectedReceiverSeq = pkt.seq + 1u
             if (pkt.timestamp != 0xffff) {
                 savedTimestamp = pkt.timestamp
+                if (congestionExperienced) {
+                    // mosh recv_one：CE 命中给时间戳减 500ms，让对端测到更大 RTT 从而降帧率
+                    savedTimestamp = (savedTimestamp - CONGESTION_TIMESTAMP_PENALTY.toInt()) and 0xffff
+                }
                 savedTimestampReceivedAt = now
             }
             if (pkt.timestampReply != 0xffff) {
@@ -351,8 +365,17 @@ internal class MoshTransport(
         )
         lastAckSent = inst.ackNum
         if (newNum == ULong.MAX_VALUE) shutdownTries++
-        for (frag in fragmenter.makeFragments(inst, SEND_MTU)) {
-            sendDatagram(encryptPacket(frag.toBytes()))
+        for (frag in fragmenter.makeFragments(inst, sendMtu)) {
+            if (sendDatagram(encryptPacket(frag.toBytes())) == SendResult.TOO_LARGE) {
+                // mosh Connection::send：EMSGSIZE 时把 MTU 回退到保底值
+                sendMtu = MTU_FALLBACK
+            }
+        }
+        if (verbose) {
+            println(
+                "[mosh] sent old=${inst.oldNum} new=${inst.newNum} ack=${inst.ackNum} " +
+                    "throwaway=${inst.throwawayNum} len=${diff.size} srtt=${srtt.toInt()} rto=${timeout()}",
+            )
         }
         pendingDataAck = false
     }

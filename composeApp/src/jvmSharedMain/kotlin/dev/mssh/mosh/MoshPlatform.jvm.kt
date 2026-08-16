@@ -13,16 +13,26 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
     }
     private val buf = ByteArray(4096)
 
-    actual fun send(data: ByteArray) {
+    actual fun send(data: ByteArray): SendResult = try {
         socket.send(DatagramPacket(data, data.size))
+        SendResult.OK
+    } catch (e: java.net.SocketException) {
+        // Linux/Android 的 Java 层不暴露 errno；"Message too long" 是 EMSGSIZE 的常见文本
+        if (e.message?.contains("too long", ignoreCase = true) == true) {
+            SendResult.TOO_LARGE
+        } else {
+            SendResult.FAILED
+        }
+    } catch (_: Exception) {
+        SendResult.FAILED
     }
 
-    actual fun receive(timeoutMillis: Int): ByteArray? {
+    actual fun receive(timeoutMillis: Int): UdpDatagram? {
         socket.soTimeout = timeoutMillis.coerceAtLeast(1)
         val pkt = DatagramPacket(buf, buf.size)
         return try {
             socket.receive(pkt)
-            pkt.data.copyOf(pkt.length)
+            UdpDatagram(pkt.data.copyOf(pkt.length))
         } catch (_: SocketTimeoutException) {
             null
         }
