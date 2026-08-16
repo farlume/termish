@@ -121,6 +121,13 @@ interface SshSession {
     /** 执行单条命令并等待退出（Mosh 引导等一次性调用；非交互 exec 通道）。 */
     fun connectAndRun(command: String, timeoutMs: Long = 15_000): CommandResult
 
+    /**
+     * 探测远端系统（Termius 式自动识别）。在已认证的同一连接上开临时 exec
+     * 通道执行 [SYSTEM_PROBE_COMMAND]，返回原始输出；失败返回 null。
+     * 不重新认证、不影响交互通道。
+     */
+    fun probeSystem(): String?
+
     /** 主动关闭会话。 */
     fun close()
 

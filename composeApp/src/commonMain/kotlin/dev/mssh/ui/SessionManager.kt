@@ -53,13 +53,20 @@ class SessionManager(private val repository: HostRepository) {
     }
 
     /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。 */
-    fun restoreRecent(hosts: List<Host>, autoReconnect: Boolean) {
+    fun restoreRecent(
+        hosts: List<Host>,
+        autoReconnect: Boolean,
+        onSystemDetected: ((Host) -> Unit)? = null,
+    ) {
         if (sessions.isNotEmpty()) return
         val byId = hosts.associateBy { it.id }
         repository.loadRecentSessionHostIds().forEach { id ->
             val host = byId[id] ?: return@forEach
             val (pw, key) = resolveCredentials(host)
-            sessions.add(TerminalController(host, pw, key, repository, autoReconnect))
+            TerminalController(host, pw, key, repository, autoReconnect).also {
+                it.onSystemDetected = onSystemDetected
+                sessions.add(it)
+            }
         }
     }
 
@@ -68,12 +75,17 @@ class SessionManager(private val repository: HostRepository) {
     }
 
     /** 打开主机：有活跃会话则复用，否则凭据解析后新建。 */
-    fun open(host: Host, autoReconnect: Boolean): TerminalController {
+    fun open(
+        host: Host,
+        autoReconnect: Boolean,
+        onSystemDetected: ((Host) -> Unit)? = null,
+    ): TerminalController {
         val existing = sessions.firstOrNull {
             it.host.id == host.id && it.status != ConnStatus.CLOSED && it.status != ConnStatus.ERROR
         }
         val (pw, key) = resolveCredentials(host)
         if (existing != null) {
+            existing.onSystemDetected = onSystemDetected
             // 编辑主机后凭据/连接参数可能已变化：旧会话仍持有旧凭据，
             // 直接复用会带着过期认证重连（如改密码后仍用旧私钥）。签名不同则重建。
             if (existing.credentialKey == credentialSignature(host, pw, key)) return existing
@@ -83,6 +95,7 @@ class SessionManager(private val repository: HostRepository) {
             sessions.remove(existing)
         }
         val controller = TerminalController(host, pw, key, repository, autoReconnect)
+        controller.onSystemDetected = onSystemDetected
         sessions.removeAll { it.host.id == host.id }
         sessions.add(controller)
         persist()

@@ -93,7 +93,9 @@ fun AppRoot(repository: HostRepository) {
     // 恢复上次运行时的会话列表（仅一次；进程死亡连接必死，恢复为未连接可重连）
     var sessionsRestored by remember { mutableStateOf(false) }
     if (!sessionsRestored) {
-        sessionManager.restoreRecent(hosts, settings.autoReconnect)
+        sessionManager.restoreRecent(hosts, settings.autoReconnect) {
+            hosts = repository.listHosts()
+        }
         sessionsRestored = true
     }
 
@@ -167,7 +169,9 @@ fun AppRoot(repository: HostRepository) {
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
                                     onConnect = { host ->
-                                        val controller = sessionManager.open(host, settings.autoReconnect)
+                                        val controller = sessionManager.open(host, settings.autoReconnect) {
+                                            hosts = repository.listHosts()
+                                        }
                                         sessionManager.cancelScheduledClose(controller)
                                         screen = Screen.Terminal(controller)
                                     },

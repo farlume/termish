@@ -9,12 +9,14 @@ import dev.mssh.ssh.AuthPrompt
 import dev.mssh.ssh.HostKeyInfo
 import dev.mssh.ssh.MOSH_SERVER_BOOTSTRAP
 import dev.mssh.ssh.MoshSession
+import dev.mssh.ssh.SYSTEM_PROBE_COMMAND
 import dev.mssh.ssh.SshException
 import dev.mssh.ssh.SshCallbacks
 import dev.mssh.ssh.SshConnection
 import dev.mssh.ssh.SshSession
 import dev.mssh.ssh.createKmpMoshSession
 import dev.mssh.ssh.createSshSession
+import dev.mssh.ssh.detectSystemFromOutput
 import dev.mssh.ssh.parseMoshConnect
 import dev.mssh.term.TerminalBuffer
 import dev.mssh.term.TerminalEmulator
@@ -91,6 +93,9 @@ class TerminalController(
 
     /** OSC 52：远端程序写剪贴板时回调（由 UI 层接入系统剪贴板）。 */
     var onRemoteClipboard: ((String) -> Unit)? = null
+
+    /** 自动探测到远端系统并已保存时回调（Termius 式识别；UI 据此刷新主机列表）。 */
+    var onSystemDetected: ((Host) -> Unit)? = null
 
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
@@ -180,6 +185,20 @@ class TerminalController(
                 reconnectCount = 0
                 errorMessage = null
                 startKeepAlive()
+                // 自动探测远端系统（Termius 式）：system 未知时在已认证连接上
+                // 后台 exec 一次，不重新认证、不阻塞交互；成功即保存并刷新列表。
+                if (host.system.isBlank()) {
+                    val ssh = s
+                    scope.launch {
+                        val raw = runCatching { ssh.probeSystem() }.getOrNull()
+                        val detected = raw?.let { detectSystemFromOutput(it) }
+                        if (detected != null && detected.isNotBlank() && status == ConnStatus.CONNECTED) {
+                            val updated = host.copy(system = detected)
+                            repository.upsertHost(updated)
+                            onSystemDetected?.invoke(updated)
+                        }
+                    }
+                }
                 // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
                 if (host.startupCommand.isNotBlank()) {
                     s.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
@@ -206,15 +225,25 @@ class TerminalController(
                 override fun onClosed(reason: String?) {}
             }
             val ssh = createSshSession(newConnection(), bootstrapCallbacks)
-            val bootstrap = if (host.moshUdpPort in 1024..65535) {
+            val baseBootstrap = if (host.moshUdpPort in 1024..65535) {
                 "mosh-server new -c 256 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
                 MOSH_SERVER_BOOTSTRAP
             }
+            // 引导同时探测远端系统：探测输出跟在 MOSH CONNECT 之后，
+            // 不影响 parseMoshConnect，自动识别系统（用户无需手填）。
+            val bootstrap = "$baseBootstrap; $SYSTEM_PROBE_COMMAND"
             val result = ssh.connectAndRun(bootstrap)
             result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
             val (moshPort, moshKey) = parseMoshConnect(result.output)
                 ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
+            detectSystemFromOutput(result.output)?.takeIf { it.isNotBlank() }?.let { detected ->
+                if (host.system.isBlank()) {
+                    val updated = host.copy(system = detected)
+                    repository.upsertHost(updated)
+                    onSystemDetected?.invoke(updated)
+                }
+            }
 
             prepareThemeSync()
             // 纯 Kotlin mosh 客户端：影子终端状态直接同步进 UI buffer，

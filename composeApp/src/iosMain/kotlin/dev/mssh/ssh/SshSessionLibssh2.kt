@@ -30,6 +30,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import libssh2.LIBSSH2_ERROR_EAGAIN
@@ -450,6 +451,50 @@ class SshSessionLibssh2(
             CommandResult(all.decodeToString(), hostKeyInfo)
         } finally {
             cleanup()
+        }
+    }
+
+    override fun probeSystem(): String? = runBlocking {
+        // libssh2 会话非线程安全：读循环/keepalive 在串行线程运行，
+        // 探测必须编组到同一线程，避免并发触碰 LIBSSH2_SESSION。
+        withContext(serialDispatcher) { doProbeSystem() }
+    }
+
+    /** 在已认证会话上开临时 exec 通道执行系统探测，不重新认证、不打断交互 shell。 */
+    private fun doProbeSystem(): String? {
+        val s = session ?: return null
+        if (closed || channel == null) return null
+        val ch = openChannel(s) ?: return null
+        return try {
+            if (retryUntilSuccess {
+                    libssh2_channel_process_startup(ch, "exec", 4u, SYSTEM_PROBE_COMMAND, SYSTEM_PROBE_COMMAND.length.toUInt())
+                } != 0
+            ) {
+                return null
+            }
+            val chunks = ArrayList<ByteArray>()
+            val buf = ByteArray(16 * 1024)
+            val deadline = Clock.System.now().toEpochMilliseconds() + 5_000
+            while (Clock.System.now().toEpochMilliseconds() < deadline) {
+                val n = buf.usePinned { pinned ->
+                    libssh2_channel_read_ex(ch, 0, pinned.addressOf(0), buf.size.toULong())
+                }
+                when {
+                    n > 0L -> chunks.add(buf.copyOf(n.toInt()))
+                    n == 0L -> break
+                    n.toInt() == LIBSSH2_ERROR_EAGAIN -> usleep(30_000u)
+                    else -> break
+                }
+            }
+            chunks.joinToString("") { it.decodeToString() }
+        } catch (_: Exception) {
+            null
+        } finally {
+            try {
+                libssh2_channel_close(ch)
+                libssh2_channel_free(ch)
+            } catch (_: Exception) {
+            }
         }
     }
 

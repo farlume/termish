@@ -269,7 +269,10 @@ internal fun systemSvg(system: String): DrawableResource? {
         s.contains("ubuntu") -> Res.drawable.host_ubuntu
         s.contains("linux") || s.contains("debian") || s.contains("fedora") || s.contains("arch") ||
             s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
-            s.contains("raspbian") -> Res.drawable.host_linux
+            s.contains("raspbian") || s.contains("opensuse") || s.contains("manjaro") ||
+            s.contains("gentoo") || s.contains("rocky") || s.contains("alma") ||
+            s.contains("mint") || s.contains("nixos") || s.contains("pop") || s.contains("elementary") ||
+            s.contains("suse") -> Res.drawable.host_linux
         else -> null
     }
 }

@@ -132,4 +132,41 @@ class SshjIntegrationTest {
             passphrase = env("MSSH_TEST_ENC_PASSPHRASE", "mssh-test-pass"),
         )
     }
+
+    /** 自动系统探测（Termius 式）：连接后 probeSystem 应返回并识别出远端系统。 */
+    @Test
+    fun probeSystemDetectsHostOs() {
+        if (!skipUnlessSshd()) return
+        val pemFile = File(env("MSSH_TEST_KEY", "/tmp/mssh_test/client"))
+        if (!pemFile.exists()) {
+            println("SKIP: no key at ${pemFile.absolutePath}")
+            return
+        }
+        val session = createSshSession(
+            SshConnection(
+                host = "127.0.0.1",
+                port = env("MSSH_TEST_PORT", "2222").toInt(),
+                username = System.getProperty("user.name"),
+                privateKeyPem = pemFile.readText(),
+            ),
+            object : SshCallbacks {
+                override fun onOutput(data: ByteArray) {}
+                override fun onStderr(data: ByteArray) {}
+                override fun onExitStatus(status: Int) {}
+                override fun onClosed(reason: String?) {}
+                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+            },
+        )
+        try {
+            session.connectAndStart(columns = 100, rows = 40)
+            val raw = session.probeSystem()
+            assertNotNull(raw, "probeSystem 应返回探测输出")
+            val detected = detectSystemFromOutput(raw!!)
+            assertNotNull(detected, "应从探测输出识别出系统，raw=${raw.take(200)}")
+            println("probe detected: $detected")
+        } finally {
+            session.close()
+        }
+    }
 }

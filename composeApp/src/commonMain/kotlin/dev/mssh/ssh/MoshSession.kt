@@ -26,6 +26,31 @@ fun parseMoshConnect(output: String): Pair<Int, String>? {
 const val MOSH_SERVER_BOOTSTRAP = "mosh-server new -c 256 -l LANG=en_US.UTF-8"
 
 /**
+ * 系统探测命令（Termius 同款思路：连接后用 exec 通道读取 /etc/os-release 与
+ * uname，自动识别远端系统，用户无需手动填写）。
+ */
+const val SYSTEM_PROBE_COMMAND = "cat /etc/os-release 2>/dev/null; uname -s"
+
+/**
+ * 从探测输出解析系统标识：
+ * - 优先取 os-release 的 `ID=`（ubuntu / debian / centos / fedora …）
+ * - 否则按 `uname -s` 归一到 linux / macos / freebsd / openbsd
+ */
+fun detectSystemFromOutput(output: String): String? {
+    val id = Regex("(?m)^ID=\"?([A-Za-z0-9_-]+)\"?$")
+        .find(output)?.groupValues?.get(1)?.lowercase()
+    if (!id.isNullOrBlank()) return id
+    // uname -s 输出在最后一行；trim 掉尾部换行/空白后取最后一段
+    return when (output.trim().substringAfterLast('\n').trim()) {
+        "Linux" -> "linux"
+        "Darwin" -> "macos"
+        "FreeBSD" -> "freebsd"
+        "OpenBSD" -> "openbsd"
+        else -> null
+    }
+}
+
+/**
  * 纯 Kotlin mosh 客户端（dev.mssh.mosh 包）：把影子终端状态同步进 [uiBuffer]。
  */
 fun createKmpMoshSession(
