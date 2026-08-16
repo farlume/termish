@@ -92,6 +92,9 @@ class TerminalBuffer(
 
     var savedCursorRow: Int = 0
     var savedCursorCol: Int = 0
+    /** DECSC 一并保存的延迟换行标记与当前字符集（tmux 等依赖完整状态恢复）。 */
+    var savedPendingWrap: Boolean = false
+    var savedCharset: Charset = Charset.ASCII
 
     var scrollTop: Int = 0
     var scrollBottom: Int = rows - 1
@@ -230,10 +233,14 @@ class TerminalBuffer(
 
         if (width == 2) {
             if (cols < 2) { writeNarrow(cp); return }
-            // 宽字符：若处于行末，先换行
+            // 宽字符：若处于行末，先换行（DECAWM 关闭时不换行，按窄字符覆盖最后一格）
             if (col >= cols - 1) {
-                newline()
-                putChar(cp)
+                if (autoWrap) {
+                    newline()
+                    putChar(cp)
+                } else {
+                    writeNarrow(cp)
+                }
                 return
             }
             lastPrintedCodePoint = cp
@@ -313,7 +320,9 @@ class TerminalBuffer(
         if (cursorRow == scrollBottom) {
             scrollUp(1)
         } else {
-            cursorRow++
+            // 光标可能位于滚动区域下方（CUP 移过去再收到 LF）：钳在 rows-1，
+            // 否则 cursorRow 越界后 lineAt() 直接崩溃
+            cursorRow = (cursorRow + 1).coerceAtMost(rows - 1)
         }
         pendingWrap = false
         markChanged()
@@ -364,12 +373,15 @@ class TerminalBuffer(
     fun saveCursor() {
         savedCursorRow = cursorRow
         savedCursorCol = cursorCol
+        savedPendingWrap = pendingWrap
+        savedCharset = currentCharset
     }
 
     fun restoreCursor() {
         cursorRow = savedCursorRow.coerceIn(0, rows - 1)
         cursorCol = savedCursorCol.coerceIn(0, cols - 1)
-        pendingWrap = false
+        pendingWrap = savedPendingWrap
+        currentCharset = savedCharset
         markChanged()
     }
 
@@ -406,10 +418,18 @@ class TerminalBuffer(
         markChanged()
     }
 
+    /** ED 2：清屏。xterm 语义：不移动光标。 */
     fun eraseScreen() {
         for (r in 0 until rows) lineAt(r).clear()
-        cursorRow = 0
-        cursorCol = 0
+        markChanged()
+    }
+
+    /** ED 3：清屏并清空滚动回看（普通屏）。 */
+    fun eraseScreenAndScrollback() {
+        eraseScreen()
+        if (!altScreen) {
+            repeat(normal.size - rows) { normal.removeFirst() }
+        }
         markChanged()
     }
 
@@ -528,9 +548,12 @@ class TerminalBuffer(
 
     // ---------- 模式切换 ----------
 
-    fun enterAltScreen() {
+    fun enterAltScreen(clear: Boolean = false) {
         if (altScreen) return
         altScreen = true
+        // 1049 进入备用屏应清屏（xterm 行为）；1047/47 不清。
+        // 不清的话上次 vim/tmux 的残留会在再次进入时闪一帧。
+        if (clear) alt.forEach { it.clear() }
         cursorRow = 0
         cursorCol = 0
         savedCursorRow = 0

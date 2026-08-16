@@ -28,6 +28,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import libssh2.LIBSSH2_ERROR_EAGAIN
@@ -80,6 +82,9 @@ import kotlin.concurrent.Volatile
 /** keyboard-interactive 回调的全局处理器（staticCFunction 不能捕获变量）。 */
 @Volatile
 private var kbiHandler: (suspend (AuthPrompt) -> List<String>?)? = null
+
+/** kbiHandler 是进程级单例：多会话并发 KBI 认证时串行化，避免 prompt 路由到错误会话。 */
+private val kbiMutex = Mutex()
 
 @OptIn(ExperimentalForeignApi::class)
 private val kbiCallback = staticCFunction { name: CPointer<ByteVar>?, nameLen: Int,
@@ -139,7 +144,10 @@ class SshSessionLibssh2(
 
     private var hostKeyInfo: HostKeyInfo? = null
 
-    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    // 单线程串行调度器：libssh2 会话非线程安全，读循环 / 写 / resize / keepalive /
+    // cleanup 全部编组到同一线程，杜绝并发进入同一 LIBSSH2_SESSION。
+    private val serialDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val scope = CoroutineScope(serialDispatcher + SupervisorJob())
 
     companion object {
         init {
@@ -204,27 +212,33 @@ class SshSessionLibssh2(
     // ---------- 认证 ----------
 
     private fun authenticate(s: CPointer<LIBSSH2_SESSION>?): Boolean {
+        // cinterop 的 String 参数按 UTF-8 编码，长度必须是字节数，否则非 ASCII 凭据必败
+        val usernameBytes = connection.username.encodeToByteArray()
         connection.privateKeyPem?.let { pem ->
             val rc = libssh2_userauth_publickey_frommemory(
-                s, connection.username, connection.username.length.toULong(),
-                null, 0u, pem, pem.length.toULong(), "",
+                s, connection.username, usernameBytes.size.toULong(),
+                null, 0u, pem, pem.encodeToByteArray().size.toULong(), "",
             )
             if (rc == 0) return true
         }
         connection.password?.let { pw ->
             if (libssh2_userauth_password_ex(
-                    s, connection.username, connection.username.length.toUInt(),
-                    pw, pw.length.toUInt(), null,
+                    s, connection.username, usernameBytes.size.toUInt(),
+                    pw, pw.encodeToByteArray().size.toUInt(), null,
                 ) == 0
             ) {
                 return true
             }
         }
-        kbiHandler = callbacks::onPrompt
-        val rc = libssh2_userauth_keyboard_interactive_ex(
-            s, connection.username, connection.username.length.toUInt(), kbiCallback,
-        )
-        return rc == 0
+        // KBI 兜底（含二次验证场景）。kbiHandler 为全局单例，加互斥避免并发会话串话。
+        return runBlocking {
+            kbiMutex.withLock {
+                kbiHandler = callbacks::onPrompt
+                libssh2_userauth_keyboard_interactive_ex(
+                    s, connection.username, usernameBytes.size.toUInt(), kbiCallback,
+                ) == 0
+            }
+        }
     }
 
     // ---------- 数据收发 ----------
@@ -292,32 +306,44 @@ class SshSessionLibssh2(
     private fun handleClosed() {
         if (closed) return
         closed = true
+        // 远端断开也要释放 channel/session/socket，否则每次重连泄漏一个 fd + libssh2 对象。
+        // 本函数在读线程（serialDispatcher）上执行，与读写无并发。
+        cleanup()
         callbacks.onClosed(null)
     }
 
     override fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
-        channel?.let { libssh2_channel_request_pty_size_ex(it, columns, rows, widthPx, heightPx) }
+        scope.launch {
+            channel?.let { libssh2_channel_request_pty_size_ex(it, columns, rows, widthPx, heightPx) }
+        }
     }
 
     override fun sendData(data: ByteArray) {
-        val ch = channel ?: return
         if (closed || data.isEmpty()) return
+        val copy = data.copyOf()
+        // 编组到串行线程：调用方在 UI 线程，不能在此直接触碰 libssh2 会话
+        scope.launch { writeAll(copy) }
+    }
+
+    /** 在 serialDispatcher 线程上执行的非阻塞完整写入。 */
+    private fun writeAll(data: ByteArray) {
+        val ch = channel ?: return
         // cinterop 把 write_ex 的 buf 映射为 String（按 UTF-8 编码 + 显式长度写入）。
-        // 非阻塞写：EAGAIN / 部分写都要补齐剩余字节，否则键盘输入会丢字节。
         // 终端输入均为本端编码的合法 UTF-8，decode 是无损的。
         val text = data.decodeToString()
-        var writtenBytes = 0
+        var bytesDone = 0 // 已确认写出的字节数（按完整字符计）
         var charOffset = 0
         var idleRounds = 0
-        while (writtenBytes < data.size && !closed) {
+        while (bytesDone < data.size && !closed) {
+            // length 参数 <= 剩余字符串实际字节数（bytesDone 只推进到字符边界）
             val rc = libssh2_channel_write_ex(
-                ch, 0, text.substring(charOffset), (data.size - writtenBytes).toULong(),
+                ch, 0, text.substring(charOffset), (data.size - bytesDone).toULong(),
             )
             when {
                 rc > 0 -> {
-                    // 按写入字节数推进字符偏移（每字符 UTF-8 长度 1-4 字节）
                     var n = rc.toInt()
-                    while (n > 0 && charOffset < text.length) {
+                    // 只越过完整写出的字符：rc 可能停在 UTF-8 字符中间
+                    while (charOffset < text.length) {
                         val c = text[charOffset]
                         val charLen = when {
                             c.code < 0x80 -> 1
@@ -325,10 +351,16 @@ class SshSessionLibssh2(
                             c.isHighSurrogate() -> 4
                             else -> 3
                         }
+                        if (charLen > n) break
                         n -= charLen
+                        bytesDone += charLen
                         charOffset += if (c.isHighSurrogate()) 2 else 1
                     }
-                    writtenBytes += rc.toInt()
+                    if (n > 0) {
+                        // rc 落在字符中间：已写出的部分字节会随整字符重发而重复
+                        // （String API 无法从字节中间续写，概率极低，容忍）
+                        bytesDone += n
+                    }
                     idleRounds = 0
                 }
                 rc.toInt() == LIBSSH2_ERROR_EAGAIN -> {
@@ -390,12 +422,12 @@ class SshSessionLibssh2(
     override fun close() {
         if (closed) return
         closed = true
-        // 先等读循环退出再释放 libssh2 资源，避免 channel_free 时读线程仍在 read_ex 中崩溃
-        val job = readerJob
-        if (job != null && job.isActive) {
-            runBlocking { withTimeoutOrNull(2000) { job.join() } }
+        // 不在调用线程（通常是 UI 主线程）阻塞等待：cleanup 里 channel_close 在死链路上
+        // 可能 EAGAIN 循环数秒。异步编组到串行线程，先等读循环退出再释放资源。
+        scope.launch {
+            withTimeoutOrNull(2000) { readerJob?.join() }
+            cleanup()
         }
-        cleanup()
         callbacks.onClosed(null)
     }
 
@@ -437,13 +469,10 @@ class SshSessionLibssh2(
             return@memScoped HostKeyInfo(typeName, "SHA256:", "")
         }
         val keyBytes = keyPtr.readBytes(keyLen)
-        val typeBytes = typeName.encodeToByteArray()
-        val blob = ByteArray(4 + typeBytes.size + keyBytes.size)
-        var v = typeBytes.size.toLong()
-        for (i in 0 until 4) blob[i] = (v ushr (24 - 8 * i)).toByte()
-        typeBytes.copyInto(blob, 4)
-        keyBytes.copyInto(blob, 4 + typeBytes.size)
-        HostKeyInfo(typeName, "SHA256:" + base64Encode(Sha256.digest(blob)).trimEnd('='), "")
+        // libssh2_session_hostkey 返回的 blob 本身已含算法字符串前缀
+        // （与 libssh2_hostkey_hash(SHA256) 一致，即 OpenSSH 指纹口径），
+        // 直接对整个 blob 做 SHA256，不要再手工拼一次类型前缀
+        HostKeyInfo(typeName, "SHA256:" + base64Encode(Sha256.digest(keyBytes)).trimEnd('='), "")
     }
 
     private fun hostKeyTypeName(type: Int): String = when (type) {

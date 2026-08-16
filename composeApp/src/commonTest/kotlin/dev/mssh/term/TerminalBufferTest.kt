@@ -228,4 +228,35 @@ class TerminalBufferTest {
         assertEquals(0x4E2D, b.lineAt(1).cells[0].codePoint)
         assertTrue(b.lineAt(1).cells[1].isWideTail)
     }
+
+    @Test
+    fun wideCharAtLastColumnWithAutoWrapOffDoesNotWrap() {
+        val b = TerminalBuffer(4, 3)
+        b.autoWrap = false
+        "abcd".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中：DECAWM 关闭时不换行，覆盖最后一格
+        assertEquals(0, b.cursorRow)
+        assertEquals(0x4E2D, b.lineAt(0).cells[3].codePoint)
+    }
+
+    @Test
+    fun eraseScreenKeepsCursor() {
+        val b = TerminalBuffer(10, 3)
+        b.moveTo(1, 4)
+        b.eraseScreen()
+        assertEquals(1, b.cursorRow)
+        assertEquals(4, b.cursorCol)
+    }
+
+    @Test
+    fun saveRestoreCursorKeepsPendingWrap() {
+        val b = TerminalBuffer(5, 3)
+        "abcde".forEach { b.putChar(it.code) }
+        assertTrue(b.pendingWrap)
+        b.saveCursor()
+        b.moveTo(0, 0)
+        b.restoreCursor()
+        assertTrue(b.pendingWrap)
+        assertEquals(4, b.cursorCol)
+    }
 }

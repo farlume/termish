@@ -403,4 +403,55 @@ class TerminalEmulatorTest {
         assertEquals('f'.code, b.lineAt(1).cells[0].codePoint)
         assertEquals(1, b.cursorRow)
     }
+
+    @Test
+    fun eraseDisplay2KeepsCursor() {
+        val (e, b) = emu(10, 3)
+        e.writeText("hello")
+        e.writeText("\u001b[2J")
+        // ED 2 清屏但不移动光标（xterm 语义）
+        assertEquals(0, b.cursorRow)
+        assertEquals(5, b.cursorCol)
+        assertEquals(' '.code, b.lineAt(0).cells[0].codePoint)
+    }
+
+    @Test
+    fun eraseDisplay3ClearsScrollback() {
+        val (e, b) = emu(10, 3)
+        e.writeText("1\n2\n3\n4\n5\n6") // 制造滚动回看
+        assertTrue(b.scrollbackSize() > 0)
+        e.writeText("\u001b[3J")
+        assertEquals(0, b.scrollbackSize())
+    }
+
+    @Test
+    fun csiZeroParamTreatedAsOne() {
+        val (e, b) = emu(10, 5)
+        e.writeText("\u001b[3;1H") // 光标到第 3 行
+        assertEquals(2, b.cursorRow)
+        e.writeText("\u001b[0A") // 显式 0：xterm 按 1 处理
+        assertEquals(1, b.cursorRow)
+    }
+
+    @Test
+    fun altScreen1049ClearsOnEntry() {
+        val (e, b) = emu(10, 3)
+        e.writeText("\u001b[?1049h")
+        e.writeText("vim-content")
+        e.writeText("\u001b[?1049l")
+        // 再次进入 1049：备用屏应为空白，不闪上次残留
+        e.writeText("\u001b[?1049h")
+        assertEquals(' '.code, b.lineAt(0).cells[0].codePoint)
+    }
+
+    @Test
+    fun lineFeedClampsAtBottomOutsideScrollRegion() {
+        val (e, b) = emu(10, 3)
+        e.writeText("\u001b[1;2r") // 滚动区域 1-2 行
+        e.writeText("\u001b[3;1H") // 光标移到区域外的最后一行
+        e.writeText("\n") // LF：钳在最后一行，不越界
+        assertEquals(2, b.cursorRow)
+        e.writeText("x") // 随后写入不得崩溃
+        assertEquals('x'.code, b.lineAt(2).cells[0].codePoint)
+    }
 }

@@ -223,26 +223,26 @@ class TerminalEmulator(
         val p = parseParams(params.toString(), isPrivate)
 
         when (finalByte) {
-            'A'.code -> buffer.moveCursor(-(p.getOrNull(0) ?: 1), 0)
-            'B'.code -> buffer.moveCursor(p.getOrNull(0) ?: 1, 0)
-            'C'.code -> buffer.moveCursor(0, p.getOrNull(0) ?: 1)
-            'D'.code -> buffer.moveCursor(0, -(p.getOrNull(0) ?: 1))
-            'E'.code -> { buffer.moveCursor(p.getOrNull(0) ?: 1, 0); buffer.carriageReturn() }
-            'F'.code -> { buffer.moveCursor(-(p.getOrNull(0) ?: 1), 0); buffer.carriageReturn() }
+            'A'.code -> buffer.moveCursor(-n1(p, 0), 0)
+            'B'.code -> buffer.moveCursor(n1(p, 0), 0)
+            'C'.code -> buffer.moveCursor(0, n1(p, 0))
+            'D'.code -> buffer.moveCursor(0, -n1(p, 0))
+            'E'.code -> { buffer.moveCursor(n1(p, 0), 0); buffer.carriageReturn() }
+            'F'.code -> { buffer.moveCursor(-n1(p, 0), 0); buffer.carriageReturn() }
             'G'.code -> buffer.moveTo(buffer.cursorRow, (p.getOrNull(0) ?: 1) - 1)
             'H'.code, 'f'.code -> buffer.moveTo((p.getOrNull(0) ?: 1) - 1, (p.getOrNull(1) ?: 1) - 1)
             'd'.code -> buffer.moveTo((p.getOrNull(0) ?: 1) - 1, buffer.cursorCol)
             'J'.code -> eraseDisplay(p.getOrNull(0) ?: 0)
             'K'.code -> eraseLine(p.getOrNull(0) ?: 0)
-            'L'.code -> buffer.insertLines(p.getOrNull(0) ?: 1)
-            'M'.code -> buffer.deleteLines(p.getOrNull(0) ?: 1)
-            'P'.code -> buffer.deleteCells(p.getOrNull(0) ?: 1)
-            '@'.code -> buffer.insertCells(p.getOrNull(0) ?: 1)
-            'X'.code -> buffer.eraseChars(p.getOrNull(0) ?: 1)
-            'S'.code -> buffer.scrollUp(p.getOrNull(0) ?: 1)
-            'T'.code -> buffer.scrollDown(p.getOrNull(0) ?: 1)
+            'L'.code -> buffer.insertLines(n1(p, 0))
+            'M'.code -> buffer.deleteLines(n1(p, 0))
+            'P'.code -> buffer.deleteCells(n1(p, 0))
+            '@'.code -> buffer.insertCells(n1(p, 0))
+            'X'.code -> buffer.eraseChars(n1(p, 0))
+            'S'.code -> buffer.scrollUp(n1(p, 0))
+            'T'.code -> buffer.scrollDown(n1(p, 0))
             'r'.code -> buffer.setScrollRegion(
-                (p.getOrNull(0) ?: 1) - 1,
+                n1(p, 0) - 1,
                 (p.getOrNull(1) ?: buffer.rows) - 1
             )
             's'.code -> buffer.saveCursor()
@@ -255,7 +255,7 @@ class TerminalEmulator(
                 if (isPrivate) onResponse("\u001b[>1;2;0c".encodeToByteArray())
                 else onResponse("\u001b[?1;2c".encodeToByteArray())
             }
-            'b'.code -> buffer.repeatChar(p.getOrNull(0) ?: 1)
+            'b'.code -> buffer.repeatChar(n1(p, 0))
             'q'.code -> {
                 val v = p.getOrNull(0) ?: 0
                 buffer.cursorStyle = if (v in 1..6) v else 0
@@ -269,9 +269,13 @@ class TerminalEmulator(
         when (mode) {
             0 -> buffer.eraseToEndOfScreen()
             1 -> buffer.eraseFromStartOfScreen()
-            2, 3 -> buffer.eraseScreen()
+            2 -> buffer.eraseScreen()
+            3 -> buffer.eraseScreenAndScrollback()
         }
     }
+
+    /** CSI 计数参数：缺省/显式 0 均按 1 处理（xterm 语义）。 */
+    private fun n1(p: List<Int>, i: Int): Int = (p.getOrNull(i) ?: 1).coerceAtLeast(1)
 
     private fun eraseLine(mode: Int) {
         when (mode) {
@@ -365,7 +369,7 @@ class TerminalEmulator(
                 private && p == 1047 -> if (set) buffer.enterAltScreen() else buffer.leaveAltScreen()
                 private && p == 1048 -> if (set) buffer.saveCursor() else buffer.restoreCursor()
                 private && p == 1049 -> {
-                    if (set) { buffer.saveCursor(); buffer.enterAltScreen() }
+                    if (set) { buffer.saveCursor(); buffer.enterAltScreen(clear = true) }
                     else { buffer.leaveAltScreen(); buffer.restoreCursor() }
                 }
                 private && p == 2004 -> buffer.bracketedPaste = set
@@ -645,5 +649,6 @@ class TerminalEmulator(
     fun reset() {
         fullReset()
         buffer.eraseScreen()
+        buffer.moveTo(0, 0) // eraseScreen 按 xterm 语义不再移动光标，reset 显式归位
     }
 }

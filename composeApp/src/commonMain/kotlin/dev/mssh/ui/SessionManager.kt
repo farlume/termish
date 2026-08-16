@@ -72,15 +72,16 @@ class SessionManager(private val repository: HostRepository) {
         val existing = sessions.firstOrNull {
             it.host.id == host.id && it.status != ConnStatus.CLOSED && it.status != ConnStatus.ERROR
         }
+        val (pw, key) = resolveCredentials(host)
         if (existing != null) {
-            val (pw, key) = resolveCredentials(host)
             // 编辑主机后凭据/连接参数可能已变化：旧会话仍持有旧凭据，
             // 直接复用会带着过期认证重连（如改密码后仍用旧私钥）。签名不同则重建。
             if (existing.credentialKey == credentialSignature(host, pw, key)) return existing
+            // 取消该主机挂起的定时断开，避免旧任务到点误伤新会话（job 按 host.id 索引）
+            autoCloseJobs.remove(host.id)?.cancel()
             existing.close()
             sessions.remove(existing)
         }
-        val (pw, key) = resolveCredentials(host)
         val controller = TerminalController(host, pw, key, repository, autoReconnect)
         sessions.removeAll { it.host.id == host.id }
         sessions.add(controller)
@@ -117,6 +118,7 @@ class SessionManager(private val repository: HostRepository) {
 
     /** 主机被删除时，连带断开并移除其会话。 */
     fun closeForHost(hostId: String) {
+        autoCloseJobs.remove(hostId)?.cancel()
         sessions.filter { it.host.id == hostId }.forEach { it.close() }
         sessions.removeAll { it.host.id == hostId }
         persist()

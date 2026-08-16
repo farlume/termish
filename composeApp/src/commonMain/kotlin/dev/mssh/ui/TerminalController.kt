@@ -162,6 +162,13 @@ class TerminalController(
                 val s = createSshSession(newConnection(), callbacks())
                 session = s
                 val info = s.connectAndStart(lastCols, lastRows)
+                // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须释放刚建好的连接
+                if (status == ConnStatus.CLOSED) {
+                    session = null
+                    try { s.close() } catch (_: Exception) {
+                    }
+                    return@launch
+                }
                 // TOFU：记录主机指纹
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
                 status = ConnStatus.CONNECTED
@@ -225,6 +232,12 @@ class TerminalController(
                 },
             )
             moshSession = client
+            // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须拉起后立即销毁
+            if (status == ConnStatus.CLOSED) {
+                moshSession = null
+                client.close()
+                return@doConnectMosh
+            }
             if (!client.isActive()) {
                 status = ConnStatus.ERROR
                 errorMessage = "mosh 连接失败：客户端已退出。若主机是域名或经 NAS/路由器端口转发，" +
@@ -362,6 +375,8 @@ class TerminalController(
                 hostKeyPrompt = req
                 return runBlockingAwait(req.deferred)
             }
+            // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
+            if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
             // TOFU：首次连接由用户确认
             val req = HostKeyRequest(hostKey)
             hostKeyPrompt = req

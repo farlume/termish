@@ -94,6 +94,9 @@ class HostRepository(
     private fun backupCorrupt(key: String, raw: String) {
         try {
             settings.putString("$key.corrupt.${currentTimeMillis()}", raw)
+            // 超出 3 份时删最旧的（key 含时间戳，字典序即时间序）
+            val corruptKeys = settings.keys.filter { it.startsWith("$key.corrupt.") }.sorted()
+            corruptKeys.dropLast(3).forEach { settings.remove(it) }
         } catch (_: Exception) {
         }
     }
