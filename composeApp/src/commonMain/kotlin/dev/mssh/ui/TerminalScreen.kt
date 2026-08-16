@@ -50,6 +50,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -70,6 +71,8 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -391,6 +394,23 @@ private fun TerminalTabBar(
 ) {
     val s = LocalAppStrings.current
     var addOpen by remember { mutableStateOf(false) }
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    // 滚动容器与各 tab 的布局位置：点击 tab 时滚动到居中
+    val containerX = remember { mutableStateOf(0f) }
+    val containerWidth = remember { mutableStateOf(0f) }
+    val chipLayout = remember { mutableStateMapOf<String, Pair<Float, Float>>() }
+
+    fun scrollToCenter(sessionId: String) {
+        val (x, w) = chipLayout[sessionId] ?: return
+        // chip 在内容中的偏移 = 渲染位置 - 容器位置 + 当前滚动量
+        val offsetInContent = x - containerX.value + scroll.value
+        val target = offsetInContent - (containerWidth.value - w) / 2
+        scope.launch {
+            scroll.animateScrollTo(target.toInt().coerceIn(0, scroll.maxValue))
+        }
+    }
+
     Column(Modifier.fillMaxWidth().background(theme.background())) {
         Row(
             Modifier
@@ -407,7 +427,11 @@ private fun TerminalTabBar(
             }
             // 会话 tab：水平滑动
             Row(
-                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                Modifier
+                    .weight(1f)
+                    .horizontalScroll(scroll)
+                    .onSizeChanged { containerWidth.value = it.width.toFloat() }
+                    .onGloballyPositioned { containerX.value = it.positionInRoot().x },
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -416,8 +440,12 @@ private fun TerminalTabBar(
                         controller = c,
                         selected = c === current,
                         theme = theme,
-                        onClick = { onSwitch(c) },
+                        onClick = {
+                            onSwitch(c)
+                            scrollToCenter(c.sessionId)
+                        },
                         onClose = { onClose(c) },
+                        onPositioned = { x, w -> chipLayout[c.sessionId] = x to w },
                     )
                 }
             }
@@ -462,6 +490,7 @@ private fun SessionTabChip(
     theme: TerminalTheme,
     onClick: () -> Unit,
     onClose: () -> Unit,
+    onPositioned: (x: Float, width: Float) -> Unit,
 ) {
     val sys = controller.host.system.ifBlank { controller.host.hostname }
     Row(
@@ -472,7 +501,10 @@ private fun SessionTabChip(
                 else theme.foreground().copy(alpha = 0.07f),
             )
             .clickable(onClick = onClick)
-            .padding(start = 8.dp, top = 5.dp, bottom = 5.dp, end = 2.dp),
+            .padding(start = 8.dp, top = 5.dp, bottom = 5.dp, end = 2.dp)
+            .onGloballyPositioned { coords ->
+                onPositioned(coords.positionInRoot().x, coords.size.width.toFloat())
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // 系统小头像

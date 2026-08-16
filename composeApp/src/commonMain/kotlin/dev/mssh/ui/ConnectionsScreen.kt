@@ -74,7 +74,9 @@ fun ConnectionsScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    items(filtered, key = { it.host.id }) { controller ->
+                    // 同一主机可多会话：key 必须用会话唯一 id，否则 LazyColumn 报
+                    // "Key was already used" 崩溃
+                    items(filtered, key = { it.sessionId }) { controller ->
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
