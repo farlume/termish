@@ -43,6 +43,10 @@ class SshSessionSshj(
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     // 单线程写调度器：既避免在主线程做 socket 写（Android 会抛 NetworkOnMainThreadException），又保证输入顺序
     private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
+    // 单线程读调度器：stdout/stderr 两个 reader 若并发回调 onOutput/onStderr，
+    // 会同时进入无锁的 TerminalEmulator 状态机（转义序列被打断、UTF-8 跨块错乱），
+    // 必须串行喂给上层
+    private val readerDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -231,7 +235,7 @@ class SshSessionSshj(
     // ---------- 数据收发 ----------
 
     private fun startReaders(sh: Session.Shell) {
-        scope.launch {
+        scope.launch(readerDispatcher) {
             try {
                 val buf = ByteArray(64 * 1024)
                 val input = sh.inputStream
@@ -243,7 +247,7 @@ class SshSessionSshj(
             } catch (_: Exception) {
             }
         }
-        scope.launch {
+        scope.launch(readerDispatcher) {
             try {
                 val err = sh.errorStream ?: return@launch
                 val buf = ByteArray(64 * 1024)
@@ -255,7 +259,7 @@ class SshSessionSshj(
             } catch (_: Exception) {
             }
         }
-        scope.launch {
+        scope.launch(readerDispatcher) {
             // 等待通道关闭，报告退出状态
             try {
                 (sh as? AbstractChannel)?.join()

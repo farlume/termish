@@ -180,6 +180,11 @@ fun TerminalView(
     val cellW = (sample.size.width.toFloat() / 16f).coerceAtLeast(1f)
     val cellH = (sample.size.height.toFloat() * 1.2f).coerceAtLeast(1f)
     val textTop = (cellH - sample.size.height) / 2f
+    // pointerInput(Unit) 闭包只在首次组合创建一次，直接捕获 cellW/cellH 会
+    // 定格旧值：改字号/旋转/resize 后点击→格子的换算全部错位。
+    // rememberUpdatedState 返回的 State 实例稳定，旧闭包读取到的仍是实时值。
+    val currentCellW by rememberUpdatedState(cellW)
+    val currentCellH by rememberUpdatedState(cellH)
 
     // 按 (ARGB, bold, 窄/宽字体) 缓存 TextStyle，避免每帧每个 run 都 style.copy
     val textStyleCache = remember(style, wideStyle) { HashMap<Long, TextStyle>() }
@@ -223,8 +228,8 @@ fun TerminalView(
         }
     }
     fun pointerCell(pos: Offset): Pair<Int, Int> =
-        ((pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)) to
-            ((pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1))
+        ((pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)) to
+            ((pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1))
 
     val panUp = run {
         if (!keyboardVisible || scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
@@ -337,12 +342,12 @@ fun TerminalView(
                                         while (vel > 50f) {
                                             val dt = 16f
                                             accum += vel * dt / 1000f
-                                            val notches = (accum / cellH).toInt()
+                                            val notches = (accum / currentCellH).toInt()
                                             if (notches != 0) {
                                                 repeat(kotlin.math.abs(notches)) {
                                                     sendMouseEvent(btn, wc, wheelRow, release = false)
                                                 }
-                                                accum -= notches * cellH
+                                                accum -= notches * currentCellH
                                             }
                                             vel *= 0.94f
                                             delay(16)
@@ -370,7 +375,7 @@ fun TerminalView(
                         totalDy += dy
                         // 位移超过一格后判定方向并锁定（横向抖动不改变纵向手势）
                         if (vertical == null && !multiTouch &&
-                            (kotlin.math.abs(totalDx) >= cellW || kotlin.math.abs(totalDy) >= cellH)
+                            (kotlin.math.abs(totalDx) >= currentCellW || kotlin.math.abs(totalDy) >= currentCellH)
                         ) {
                             vertical = kotlin.math.abs(totalDy) >= kotlin.math.abs(totalDx)
                         }
@@ -391,7 +396,7 @@ fun TerminalView(
                         if (!multiTouch) {
                             scrollAccumY += dy
                             if (vertical == true) {
-                                val notches = (scrollAccumY / cellH).toInt()
+                                val notches = (scrollAccumY / currentCellH).toInt()
                                 if (notches != 0) {
                                     val btn = if (notches > 0) 64 else 65
                                     val (wc, wr) = pointerCell(change.position)
@@ -403,7 +408,7 @@ fun TerminalView(
                                     repeat(kotlin.math.abs(notches)) {
                                         sendMouseEvent(btn, wc, wheelRow, release = false)
                                     }
-                                    scrollAccumY -= notches * cellH
+                                    scrollAccumY -= notches * currentCellH
                                     sentWheel = true
                                 }
                             }
@@ -417,8 +422,8 @@ fun TerminalView(
                         // TUI 鼠标模式：点击事件由上面的鼠标 handler 全权上报，本地不拦截
                         if (buffer.mouseTracking > 0) return@tap
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
-                        val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
-                        val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
+                        val col = (pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)
+                        val row = (pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1)
                         val absRow = startAbsNow + row
                         var opened = false
                         if (absRow in 0 until buffer.totalLines()) {
@@ -439,8 +444,8 @@ fun TerminalView(
                         if (buffer.mouseTracking > 0) return@tap
                         // 双击选词并复制
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
-                        val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
-                        val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
+                        val col = (pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)
+                        val row = (pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1)
                         val absRow = startAbsNow + row
                         if (absRow < buffer.totalLines()) {
                             val line = buffer.absLine(absRow)
@@ -466,8 +471,8 @@ fun TerminalView(
                         // 同上：鼠标模式下本地长按选词禁用（用户长按后滑动会误触整行复制）
                         if (buffer.mouseTracking > 0) return@longPress
                         val startAbsNow = currentStartAbs(buffer, scrollOffset)
-                        val col = (pos.x / cellW).toInt().coerceIn(0, buffer.cols - 1)
-                        val row = (pos.y / cellH).toInt().coerceIn(0, buffer.rows - 1)
+                        val col = (pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)
+                        val row = (pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1)
                         val absRow = startAbsNow + row
                         controller.selection.start(absRow, col)
                         controller.selection.extend(absRow, buffer.cols - 1)

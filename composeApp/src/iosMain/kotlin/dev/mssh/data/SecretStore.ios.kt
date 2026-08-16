@@ -70,7 +70,8 @@ actual object SecretStore {
         val result = alloc<CFTypeRefVar>()
         val status = SecItemCopyMatching(query, result.ptr)
         CFBridgingRelease(query)
-        NSLog("MSSH-KEYCHAIN get svc=$service acct=$account status=$status")
+        // 只记状态不记 service/account：避免把 host id 与凭据类型的映射写进系统日志
+        NSLog("MSSH-KEYCHAIN get status=$status")
         if (status != errSecSuccess) {
             if (status == ERR_SEC_MISSING_ENTITLEMENT) {
                 NSLog("MSSH-KEYCHAIN get fallback to file (missing entitlement)")
@@ -93,7 +94,7 @@ actual object SecretStore {
             )
             val del = SecItemDelete(query)
             CFBridgingRelease(query)
-            NSLog("MSSH-KEYCHAIN set svc=$service acct=$account delete=$del")
+            NSLog("MSSH-KEYCHAIN set delete=$del")
 
             val attrs = cfDictionaryOf(
                 kSecClass to kSecClassGenericPassword,
@@ -120,7 +121,7 @@ actual object SecretStore {
             )
             val del = SecItemDelete(query)
             CFBridgingRelease(query)
-            NSLog("MSSH-KEYCHAIN delete svc=$service acct=$account status=$del")
+            NSLog("MSSH-KEYCHAIN delete status=$del")
             if (del == ERR_SEC_MISSING_ENTITLEMENT) {
                 fallbackDelete(account)
             }
