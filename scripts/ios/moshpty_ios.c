@@ -54,3 +54,19 @@ void mssh_close(int master, int slave) {
     if (master >= 0) close(master);
     if (slave >= 0) close(slave);
 }
+
+#include <zlib.h>
+
+int mssh_zlib_compress(const void *src, int srcLen, void *dst, int dstCap) {
+    uLongf destLen = (uLongf)dstCap;
+    if (compress2((Bytef *)dst, &destLen, (const Bytef *)src, (uLong)srcLen, Z_DEFAULT_COMPRESSION) != Z_OK)
+        return -1;
+    return (int)destLen;
+}
+
+int mssh_zlib_uncompress(const void *src, int srcLen, void *dst, int dstCap) {
+    uLongf destLen = (uLongf)dstCap;
+    if (uncompress((Bytef *)dst, &destLen, (const Bytef *)src, (uLong)srcLen) != Z_OK)
+        return -1;
+    return (int)destLen;
+}

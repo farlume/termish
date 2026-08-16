@@ -645,6 +645,64 @@ class TerminalBuffer(
         markChanged()
     }
 
+    // ---------- 整体复制（mosh KMP 影子状态 / UI 同步用） ----------
+
+    /** 深拷贝：用于 mosh SSP 的影子终端状态分叉保存。 */
+    fun deepCopy(): TerminalBuffer {
+        val dst = TerminalBuffer(cols, rows, maxScrollbackLines)
+        dst.copyContentFrom(this)
+        return dst
+    }
+
+    /** 用 other 的全部显示状态替换本缓冲（保持实例不变，供 UI 渲染引用）。 */
+    fun copyContentFrom(other: TerminalBuffer) {
+        cols = other.cols
+        rows = other.rows
+        normal.clear()
+        for (line in other.normal) normal.addLast(cloneLine(line))
+        alt = Array(other.rows) { cloneLine(other.alt[it]) }
+        altScreen = other.altScreen
+        cursorRow = other.cursorRow
+        cursorCol = other.cursorCol
+        cursorVisible = other.cursorVisible
+        savedCursorRow = other.savedCursorRow
+        savedCursorCol = other.savedCursorCol
+        savedPendingWrap = other.savedPendingWrap
+        savedCharset = other.savedCharset
+        scrollTop = other.scrollTop
+        scrollBottom = other.scrollBottom
+        autoWrap = other.autoWrap
+        originMode = other.originMode
+        insertMode = other.insertMode
+        applicationCursorKeys = other.applicationCursorKeys
+        bracketedPaste = other.bracketedPaste
+        mouseTracking = other.mouseTracking
+        mouseSgr = other.mouseSgr
+        defaultFgRgb = other.defaultFgRgb
+        defaultBgRgb = other.defaultBgRgb
+        defaultCursorRgb = other.defaultCursorRgb
+        applicationKeypad = other.applicationKeypad
+        cursorStyle = other.cursorStyle
+        cursorColor = other.cursorColor
+        focusEvents = other.focusEvents
+        alternateScroll = other.alternateScroll
+        mouseUrxvt = other.mouseUrxvt
+        currentLink = other.currentLink
+        tabStops = other.tabStops.copyOf()
+        lastPrintedCodePoint = other.lastPrintedCodePoint
+        currentCharset = other.currentCharset
+        pendingWrap = other.pendingWrap
+        markChanged()
+    }
+
+    private fun cloneLine(src: TerminalLine): TerminalLine {
+        val dst = TerminalLine(src.cols)
+        for (i in 0 until src.cols) dst.cells[i].copyFrom(src.cells[i])
+        dst.wrapped = src.wrapped
+        dst.touch()
+        return dst
+    }
+
     private fun resizeLine(line: TerminalLine, newCols: Int) {
         if (line.cells.size == newCols) return
         val newCells = Array(newCols) { TerminalCell() }

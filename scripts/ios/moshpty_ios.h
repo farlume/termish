@@ -19,3 +19,8 @@ ssize_t mssh_write(int master, const void *buf, size_t len);
 void mssh_close(int master, int slave);
 
 #endif
+
+/* zlib 压缩包装（KMP mosh 的 SSP 分片压缩用；内部调 libz 的 compress2/uncompress）。
+ * destCap 为目标缓冲容量；返回实际长度，失败返回 -1。 */
+int mssh_zlib_compress(const void *src, int srcLen, void *dst, int dstCap);
+int mssh_zlib_uncompress(const void *src, int srcLen, void *dst, int dstCap);

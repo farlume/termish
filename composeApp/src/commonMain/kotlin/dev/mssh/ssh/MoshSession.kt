@@ -30,3 +30,45 @@ fun parseMoshConnect(output: String): Pair<Int, String>? {
 
 /** mosh-server 引导命令（按 Termux 同款参数）。 */
 const val MOSH_SERVER_BOOTSTRAP = "mosh-server new -c 8 -l LANG=en_US.UTF-8"
+
+/** 置 false 可回退到原生 libmoshclient 路径（调试用）。 */
+const val USE_KMP_MOSH = true
+
+/**
+ * 纯 Kotlin mosh 客户端（dev.mssh.mosh 包）：把影子终端状态同步进 [uiBuffer]。
+ * 与原生路径的输出模型不同：不走字节流，UI 直接渲染同步后的 buffer。
+ */
+fun createKmpMoshSession(
+    ip: String,
+    port: Int,
+    key: String,
+    columns: Int,
+    rows: Int,
+    scope: kotlinx.coroutines.CoroutineScope,
+    uiBuffer: dev.mssh.term.TerminalBuffer,
+    onTitle: (String) -> Unit,
+    onClipboard: (String) -> Unit,
+    onExit: (String?) -> Unit,
+): MoshSession {
+    val session = dev.mssh.mosh.KmpMoshSession(
+        ip = ip,
+        port = port,
+        key = key,
+        columns = columns,
+        rows = rows,
+        scope = scope,
+        onStateUpdate = { view ->
+            uiBuffer.copyContentFrom(view.buffer)
+        },
+        onExit = onExit,
+    )
+    session.setTitleCallback(onTitle)
+    session.setClipboardCallback(onClipboard)
+    session.start()
+    return object : MoshSession {
+        override fun isActive(): Boolean = session.isActive()
+        override fun resize(columns: Int, rows: Int) = session.resize(columns, rows)
+        override fun sendData(data: ByteArray) = session.sendData(data)
+        override fun close() = session.close()
+    }
+}

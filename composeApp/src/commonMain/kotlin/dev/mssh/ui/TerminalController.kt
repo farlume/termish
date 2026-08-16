@@ -13,6 +13,8 @@ import dev.mssh.ssh.SshException
 import dev.mssh.ssh.SshCallbacks
 import dev.mssh.ssh.SshConnection
 import dev.mssh.ssh.SshSession
+import dev.mssh.ssh.USE_KMP_MOSH
+import dev.mssh.ssh.createKmpMoshSession
 import dev.mssh.ssh.createMoshClient
 import dev.mssh.ssh.createSshSession
 import dev.mssh.ssh.parseMoshConnect
@@ -213,31 +215,59 @@ class TerminalController(
                 ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
 
             prepareThemeSync()
-            val client = createMoshClient(
-                ip = host.hostname,
-                port = moshPort,
-                key = moshKey,
-                columns = lastCols,
-                rows = lastRows,
-                onOutput = { data ->
-                    maybeInjectThemeOnOutput(data)
-                    emulator.write(data)
-                    frame++
-                },
-                onExit = {
-                    if (status == ConnStatus.CONNECTED) {
-                        status = ConnStatus.CLOSED
-                        stopKeepAlive()
-                    } else if (status == ConnStatus.CONNECTING) {
-                        // mosh-client 在连接建立前就退出（如 UDP 端口不可达）：
-                        // 不能继续显示 Connected，把真实原因留在画布（stderr 已合并），
-                        // 状态置为 ERROR 而不是被后续代码覆盖成 CONNECTED。
-                        status = ConnStatus.ERROR
-                        errorMessage = "mosh 连接失败：客户端已退出（检查 UDP 端口/防火墙）"
-                        stopKeepAlive()
-                    }
-                },
-            )
+            val client = if (USE_KMP_MOSH) {
+                // 纯 Kotlin mosh 客户端：影子终端状态直接同步进 UI buffer，
+                // 不经过字节流路径（emulator.write）。
+                createKmpMoshSession(
+                    ip = host.hostname,
+                    port = moshPort,
+                    key = moshKey,
+                    columns = lastCols,
+                    rows = lastRows,
+                    scope = scope,
+                    uiBuffer = buffer,
+                    onTitle = { t -> title = t },
+                    onClipboard = { text ->
+                        if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
+                    },
+                    onExit = { reason ->
+                        if (status == ConnStatus.CONNECTED) {
+                            status = ConnStatus.CLOSED
+                            stopKeepAlive()
+                        } else if (status == ConnStatus.CONNECTING) {
+                            status = ConnStatus.ERROR
+                            errorMessage = reason ?: "mosh 连接失败：客户端已退出"
+                            stopKeepAlive()
+                        }
+                    },
+                )
+            } else {
+                createMoshClient(
+                    ip = host.hostname,
+                    port = moshPort,
+                    key = moshKey,
+                    columns = lastCols,
+                    rows = lastRows,
+                    onOutput = { data ->
+                        maybeInjectThemeOnOutput(data)
+                        emulator.write(data)
+                        frame++
+                    },
+                    onExit = {
+                        if (status == ConnStatus.CONNECTED) {
+                            status = ConnStatus.CLOSED
+                            stopKeepAlive()
+                        } else if (status == ConnStatus.CONNECTING) {
+                            // mosh-client 在连接建立前就退出（如 UDP 端口不可达）：
+                            // 不能继续显示 Connected，把真实原因留在画布（stderr 已合并），
+                            // 状态置为 ERROR 而不是被后续代码覆盖成 CONNECTED。
+                            status = ConnStatus.ERROR
+                            errorMessage = "mosh 连接失败：客户端已退出（检查 UDP 端口/防火墙）"
+                            stopKeepAlive()
+                        }
+                    },
+                )
+            }
             moshSession = client
             // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须拉起后立即销毁
             if (status == ConnStatus.CLOSED) {
