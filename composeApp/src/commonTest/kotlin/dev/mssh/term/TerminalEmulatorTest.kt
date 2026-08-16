@@ -379,4 +379,28 @@ class TerminalEmulatorTest {
         assertNull(b.currentLink)
         assertEquals(0, b.lastPrintedCodePoint)
     }
+
+    @Test
+    fun delAndC1ControlsAreIgnored() {
+        val b = TerminalBuffer(10, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("ab")
+        // DEL 不产生任何字形：'b' 紧挨 'a'
+        assertEquals('a'.code, b.lineAt(0).cells[0].codePoint)
+        assertEquals('b'.code, b.lineAt(0).cells[1].codePoint)
+        assertEquals(' '.code, b.lineAt(0).cells[2].codePoint)
+        // C1 控制字符（如 0x85 NEL 的 UTF-8 编码 0xC2 0x85）也不应画出来
+        e.write(byteArrayOf(0xC2.toByte(), 0x85.toByte()))
+        assertEquals(' '.code, b.lineAt(0).cells[2].codePoint)
+    }
+
+    @Test
+    fun autoWrapThroughEmulator() {
+        val b = TerminalBuffer(5, 3)
+        val e = TerminalEmulator(b)
+        e.writeText("abcdef")
+        assertEquals('a'.code, b.lineAt(0).cells[0].codePoint)
+        assertEquals('f'.code, b.lineAt(1).cells[0].codePoint)
+        assertEquals(1, b.cursorRow)
+    }
 }

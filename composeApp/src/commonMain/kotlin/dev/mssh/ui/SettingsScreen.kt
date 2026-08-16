@@ -84,6 +84,7 @@ fun SettingsScreen(
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
     var autoReconnect by remember { mutableStateOf(settings.autoReconnect) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
+    var osc52Clipboard by remember { mutableStateOf(settings.osc52Clipboard) }
     var language by remember { mutableStateOf(settings.language) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
@@ -112,6 +113,7 @@ fun SettingsScreen(
             hapticFeedback = haptics,
             autoReconnect = autoReconnect,
             verifyHostKeyOnFirstUse = verifyHostKey,
+            osc52Clipboard = osc52Clipboard,
             language = language,
         )
     )
@@ -184,6 +186,8 @@ fun SettingsScreen(
                 SettingsSwitchItem(s.settingsAutoReconnect, autoReconnect) { autoReconnect = it; persist() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsVerifyHostKey, verifyHostKey) { verifyHostKey = it; persist() }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsSwitchItem(s.settingsOsc52Clipboard, osc52Clipboard) { osc52Clipboard = it; persist() }
             }
 
             Spacer(Modifier.height(24.dp))

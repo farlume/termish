@@ -125,7 +125,8 @@ class TerminalEmulator(
             0x0F -> { shiftedOut = false; buffer.currentCharset = g0Charset }
             0x1B -> state = State.ESCAPE
             else -> {
-                if (cp < 0x20) return // 其它 C0 忽略
+                if (cp < 0x20 || cp == 0x7F) return // 其它 C0 / DEL 忽略
+                if (cp in 0x80..0x9F) return // C1 控制字符忽略（不支持，不应当字符画出来）
                 val out = if (buffer.currentCharset == TerminalBuffer.Charset.DEC_SPECIAL) mapDecSpecial(cp) else cp
                 buffer.putChar(out)
             }

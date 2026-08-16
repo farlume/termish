@@ -57,9 +57,11 @@ class SshSessionSshj(
         val sh = s.startShell()
         shell = sh
 
-        // 空闲保活：30s 发送 keepalive
+        // 空闲保活：按设置间隔发送 keepalive（<=0 关闭）
         try {
-            client.connection.keepAlive.setKeepAliveInterval(30)
+            if (connection.keepAliveSeconds > 0) {
+                client.connection.keepAlive.setKeepAliveInterval(connection.keepAliveSeconds)
+            }
         } catch (_: Exception) {
         }
 

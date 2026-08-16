@@ -23,6 +23,8 @@ class HostRepository(
         return try {
             json.decodeFromString<List<Host>>(raw)
         } catch (e: Exception) {
+            // 解析失败不清空数据：备份原始串供恢复/排查，避免后续 upsert 把全部主机覆盖丢失
+            backupCorrupt(hostsKey, raw)
             emptyList()
         }
     }
@@ -61,6 +63,7 @@ class HostRepository(
         return try {
             json.decodeFromString<AppSettings>(raw)
         } catch (e: Exception) {
+            backupCorrupt(settingsKey, raw)
             AppSettings()
         }
     }
@@ -85,6 +88,14 @@ class HostRepository(
 
     fun saveRecentSessionHostIds(ids: List<String>) {
         settings.putString(recentSessionsKey, json.encodeToString(ids))
+    }
+
+    /** 解析失败时把原始内容备份到独立 key（最多保留 3 份），避免静默丢数据。 */
+    private fun backupCorrupt(key: String, raw: String) {
+        try {
+            settings.putString("$key.corrupt.${currentTimeMillis()}", raw)
+        } catch (_: Exception) {
+        }
     }
 
     private fun currentTimeMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()

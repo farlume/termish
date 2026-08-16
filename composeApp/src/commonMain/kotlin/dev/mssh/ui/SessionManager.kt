@@ -124,6 +124,11 @@ class SessionManager(private val repository: HostRepository) {
 }
 
 /** 凭据/连接参数/启动命令签名：任一变化即视为旧会话过期（编辑主机后需重建会话）。 */
-internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String =
-    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem|" +
+internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String {
+    // 敏感字段只保留散列：避免明文密码/私钥以签名串形式常驻内存
+    fun hash(s: String?): String =
+        if (s == null) "-" else dev.mssh.util.base64Encode(dev.mssh.crypto.Sha256.digest(s.encodeToByteArray()))
+    return "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|" +
+        "${hash(password)}|${hash(privateKeyPem)}|" +
         "${host.startupCommand}|${host.connectionMode}|${host.moshUdpPort}|${host.moshThemeSync}"
+}

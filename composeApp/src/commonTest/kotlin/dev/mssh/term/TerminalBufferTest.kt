@@ -191,4 +191,41 @@ class TerminalBufferTest {
         assertEquals(1003, b.mouseTracking)
         assertTrue(b.mouseSgr)
     }
+
+    @Test
+    fun autoWrapMovesToNextLineAfterLastColumn() {
+        val b = TerminalBuffer(5, 3)
+        // 写满第一行后再写一个字符：应换到第二行第一列
+        "abcde".forEach { b.putChar(it.code) }
+        assertTrue(b.pendingWrap)
+        assertEquals(4, b.cursorCol)
+        b.putChar('f'.code)
+        assertEquals(1, b.cursorRow)
+        assertEquals(1, b.cursorCol)
+        assertEquals('f'.code, b.lineAt(1).cells[0].codePoint)
+        assertTrue(b.lineAt(0).wrapped)
+    }
+
+    @Test
+    fun autoWrapDisabledOverwritesLastColumn() {
+        val b = TerminalBuffer(5, 3)
+        b.autoWrap = false
+        "abcde".forEach { b.putChar(it.code) }
+        b.putChar('X'.code)
+        // DECAWM 关闭：不换行，覆盖最后一格
+        assertEquals(0, b.cursorRow)
+        assertEquals(4, b.cursorCol)
+        assertEquals('X'.code, b.lineAt(0).cells[4].codePoint)
+    }
+
+    @Test
+    fun wideCharWrapAfterPendingWrap() {
+        val b = TerminalBuffer(4, 3)
+        "abcd".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中
+        assertEquals(1, b.cursorRow)
+        assertEquals(2, b.cursorCol)
+        assertEquals(0x4E2D, b.lineAt(1).cells[0].codePoint)
+        assertTrue(b.lineAt(1).cells[1].isWideTail)
+    }
 }

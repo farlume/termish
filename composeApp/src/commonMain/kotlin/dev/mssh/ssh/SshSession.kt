@@ -42,6 +42,8 @@ data class SshConnection(
     val password: String? = null,
     val privateKeyPem: String? = null,
     val connectTimeoutMillis: Long = 15_000,
+    /** 空闲保活间隔（秒）；<=0 表示不发送应用层 keepalive。 */
+    val keepAliveSeconds: Int = 30,
 )
 
 /**

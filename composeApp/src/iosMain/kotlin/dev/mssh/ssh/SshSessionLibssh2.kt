@@ -23,9 +23,12 @@ import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.reinterpret
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import libssh2.LIBSSH2_ERROR_EAGAIN
 import libssh2.LIBSSH2_HOSTKEY_TYPE_DSS
@@ -47,6 +50,9 @@ import libssh2.libssh2_channel_request_pty_ex
 import libssh2.libssh2_channel_request_pty_size_ex
 import libssh2.libssh2_channel_write_ex
 import libssh2.libssh2_init
+import libssh2.libssh2_keepalive_config
+import libssh2.libssh2_keepalive_send
+import libssh2.libssh2_session_set_blocking
 import libssh2.libssh2_session_banner_get
 import libssh2.libssh2_session_disconnect_ex
 import libssh2.libssh2_session_free
@@ -67,6 +73,7 @@ import platform.posix.freeaddrinfo
 import platform.posix.gai_strerror
 import platform.posix.malloc
 import platform.posix.socket
+import platform.posix.usleep
 import platform.posix.addrinfo
 import kotlin.concurrent.Volatile
 
@@ -126,6 +133,10 @@ class SshSessionLibssh2(
     @Volatile
     private var closed = false
 
+    /** 读循环协程：close 时先等它退出再释放 libssh2 资源，避免 use-after-free。 */
+    private var readerJob: Job? = null
+    private var lastKeepaliveMs: Long = 0
+
     private var hostKeyInfo: HostKeyInfo? = null
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -139,15 +150,26 @@ class SshSessionLibssh2(
     override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
         val (s, banner) = connectAndAuthenticate()
 
-        val ch = libssh2_channel_open_ex(s, "session", 7u, (2u * 1024u * 1024u), 32768u, null, 0u)
+        // 握手/认证用阻塞模式完成；进入交互阶段切非阻塞：
+        // 读循环轮询能响应 close()，也能在同一线程定期发 keepalive
+        // （libssh2 会话非线程安全，keepalive 必须在读线程里发）。
+        libssh2_session_set_blocking(s, 0)
+        if (connection.keepAliveSeconds > 0) {
+            libssh2_keepalive_config(s, 1, connection.keepAliveSeconds.toUInt())
+        }
+
+        val ch = openChannel(s)
             ?: run { cleanup(); throw SshException("打开会话通道失败") }
         channel = ch
         val term = "xterm-256color"
-        if (libssh2_channel_request_pty_ex(ch, term, term.length.toUInt(), null, 0u, columns, rows, 0, 0) != 0) {
+        if (retryUntilSuccess {
+                libssh2_channel_request_pty_ex(ch, term, term.length.toUInt(), null, 0u, columns, rows, 0, 0)
+            } != 0
+        ) {
             cleanup()
             throw SshException("PTY 请求失败")
         }
-        if (libssh2_channel_process_startup(ch, "shell", 5u, null, 0u) != 0) {
+        if (retryUntilSuccess { libssh2_channel_process_startup(ch, "shell", 5u, null, 0u) } != 0) {
             cleanup()
             throw SshException("启动 shell 失败")
         }
@@ -207,8 +229,44 @@ class SshSessionLibssh2(
 
     // ---------- 数据收发 ----------
 
+    /** 非阻塞模式下重试直到非 EAGAIN，返回最后一次返回码（0=成功）。 */
+    private fun retryUntilSuccess(block: () -> Int): Int {
+        val deadline = Clock.System.now().toEpochMilliseconds() + 10_000
+        var rc: Int
+        while (true) {
+            rc = block()
+            if (rc != LIBSSH2_ERROR_EAGAIN) return rc
+            if (closed || Clock.System.now().toEpochMilliseconds() >= deadline) return rc
+            usleep(30_000u)
+        }
+    }
+
+    /** 非阻塞模式下打开通道（EAGAIN 重试）。 */
+    private fun openChannel(s: CPointer<LIBSSH2_SESSION>?): CPointer<LIBSSH2_CHANNEL>? {
+        val deadline = Clock.System.now().toEpochMilliseconds() + 10_000
+        while (!closed && Clock.System.now().toEpochMilliseconds() < deadline) {
+            val ch = libssh2_channel_open_ex(s, "session", 7u, (2u * 1024u * 1024u), 32768u, null, 0u)
+            if (ch != null) return ch
+            usleep(30_000u)
+        }
+        return null
+    }
+
+    /** 到点发应用层 keepalive（必须在读线程调用，libssh2 会话非线程安全）。 */
+    private fun maybeSendKeepalive(s: CPointer<LIBSSH2_SESSION>?) {
+        if (connection.keepAliveSeconds <= 0) return
+        val now = Clock.System.now().toEpochMilliseconds()
+        if (now - lastKeepaliveMs >= connection.keepAliveSeconds * 1000L) {
+            lastKeepaliveMs = now
+            memScoped {
+                val sec = alloc<IntVar>()
+                libssh2_keepalive_send(s, sec.ptr)
+            }
+        }
+    }
+
     private fun startReader(ch: CPointer<LIBSSH2_CHANNEL>?) {
-        scope.launch {
+        readerJob = scope.launch {
             try {
                 val buf = ByteArray(64 * 1024)
                 while (!closed) {
@@ -218,7 +276,10 @@ class SshSessionLibssh2(
                     when {
                         n > 0 -> callbacks.onOutput(buf.copyOf(n.toInt()))
                         n == 0L -> break
-                        n.toInt() == LIBSSH2_ERROR_EAGAIN -> continue
+                        n.toInt() == LIBSSH2_ERROR_EAGAIN -> {
+                            maybeSendKeepalive(session)
+                            delay(30)
+                        }
                         else -> break
                     }
                 }
@@ -241,11 +302,41 @@ class SshSessionLibssh2(
     override fun sendData(data: ByteArray) {
         val ch = channel ?: return
         if (closed || data.isEmpty()) return
-        // 终端输入均为 UTF-8 文本；libssh2 的 write 以显式长度写入
+        // cinterop 把 write_ex 的 buf 映射为 String（按 UTF-8 编码 + 显式长度写入）。
+        // 非阻塞写：EAGAIN / 部分写都要补齐剩余字节，否则键盘输入会丢字节。
+        // 终端输入均为本端编码的合法 UTF-8，decode 是无损的。
         val text = data.decodeToString()
-        val rc = libssh2_channel_write_ex(ch, 0, text, data.size.toULong())
-        if (rc < 0 && rc.toInt() != LIBSSH2_ERROR_EAGAIN) {
-            // 写入失败，忽略（连接可能已断开）
+        var writtenBytes = 0
+        var charOffset = 0
+        var idleRounds = 0
+        while (writtenBytes < data.size && !closed) {
+            val rc = libssh2_channel_write_ex(
+                ch, 0, text.substring(charOffset), (data.size - writtenBytes).toULong(),
+            )
+            when {
+                rc > 0 -> {
+                    // 按写入字节数推进字符偏移（每字符 UTF-8 长度 1-4 字节）
+                    var n = rc.toInt()
+                    while (n > 0 && charOffset < text.length) {
+                        val c = text[charOffset]
+                        val charLen = when {
+                            c.code < 0x80 -> 1
+                            c.code < 0x800 -> 2
+                            c.isHighSurrogate() -> 4
+                            else -> 3
+                        }
+                        n -= charLen
+                        charOffset += if (c.isHighSurrogate()) 2 else 1
+                    }
+                    writtenBytes += rc.toInt()
+                    idleRounds = 0
+                }
+                rc.toInt() == LIBSSH2_ERROR_EAGAIN -> {
+                    if (++idleRounds > 200) return // ~6s 写不出去，放弃
+                    usleep(30_000u)
+                }
+                else -> return // 真错误（连接可能已断开）
+            }
         }
     }
 
@@ -253,9 +344,16 @@ class SshSessionLibssh2(
         // 非交互 exec 通道：用于 mosh-server 引导等一次性命令
         return try {
             val (s, _) = connectAndAuthenticate()
-            val ch = libssh2_channel_open_ex(s, "session", 7u, (2u * 1024u * 1024u), 32768u, null, 0u)
+            libssh2_session_set_blocking(s, 0)
+            val ch = openChannel(s)
                 ?: throw SshException("打开 exec 通道失败")
-            if (libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()) != 0) {
+            if (libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()).let {
+                    var rc = it
+                    var guard = 0
+                    while (rc == LIBSSH2_ERROR_EAGAIN && guard++ < 300) { usleep(30_000u); rc = libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()) }
+                    rc
+                } != 0
+            ) {
                 libssh2_channel_close(ch)
                 libssh2_channel_free(ch)
                 throw SshException("启动命令失败: ${lastError(s)}")
@@ -270,7 +368,7 @@ class SshSessionLibssh2(
                 when {
                     n > 0L -> chunks.add(buf.copyOf(n.toInt()))
                     n == 0L -> break
-                    n.toInt() == LIBSSH2_ERROR_EAGAIN -> continue
+                    n.toInt() == LIBSSH2_ERROR_EAGAIN -> usleep(30_000u)
                     else -> break
                 }
             }
@@ -292,6 +390,11 @@ class SshSessionLibssh2(
     override fun close() {
         if (closed) return
         closed = true
+        // 先等读循环退出再释放 libssh2 资源，避免 channel_free 时读线程仍在 read_ex 中崩溃
+        val job = readerJob
+        if (job != null && job.isActive) {
+            runBlocking { withTimeoutOrNull(2000) { job.join() } }
+        }
         cleanup()
         callbacks.onClosed(null)
     }
@@ -302,7 +405,7 @@ class SshSessionLibssh2(
 
     private fun cleanup() {
         channel?.let {
-            libssh2_channel_close(it)
+            retryUntilSuccess { libssh2_channel_close(it) }
             libssh2_channel_free(it)
         }
         channel = null
@@ -340,7 +443,7 @@ class SshSessionLibssh2(
         for (i in 0 until 4) blob[i] = (v ushr (24 - 8 * i)).toByte()
         typeBytes.copyInto(blob, 4)
         keyBytes.copyInto(blob, 4 + typeBytes.size)
-        HostKeyInfo(typeName, "SHA256:" + base64Encode(Sha256.digest(blob)), "")
+        HostKeyInfo(typeName, "SHA256:" + base64Encode(Sha256.digest(blob)).trimEnd('='), "")
     }
 
     private fun hostKeyTypeName(type: Int): String = when (type) {

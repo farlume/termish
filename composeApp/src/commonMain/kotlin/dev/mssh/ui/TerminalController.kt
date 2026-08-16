@@ -95,6 +95,8 @@ class TerminalController(
     private var lastRows = 24
     private var reconnectAttempts = 0
     private var keepAliveActive = false
+    /** 自动重连的延迟任务：close() 时取消，防止关闭后仍被延迟协程拉起。 */
+    private var reconnectJob: kotlinx.coroutines.Job? = null
     /** Mosh 主题注入：非空表示本会话开启（见 [prepareThemeSync]）。 */
     private var moshThemePayload: ByteArray? = null
     private var moshThemeInjected = false
@@ -114,7 +116,10 @@ class TerminalController(
 
         emulator.onTitleChange = { t -> title = t }
         emulator.onResponse = { bytes -> session?.sendData(bytes) }
-        emulator.onClipboardWrite = { text -> onRemoteClipboard?.invoke(text) }
+        emulator.onClipboardWrite = { text ->
+            // OSC 52 远端写剪贴板受设置开关控制（远端可静默覆盖剪贴板，默认开）
+            if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
+        }
     }
 
     fun connect(columns: Int, rows: Int) {
@@ -137,6 +142,15 @@ class TerminalController(
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect
 
+    private fun newConnection() = SshConnection(
+        host = host.hostname,
+        port = host.port,
+        username = host.username,
+        password = password,
+        privateKeyPem = privateKeyPem,
+        keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
+    )
+
     private fun doConnect() {
         status = ConnStatus.CONNECTING
         scope.launch {
@@ -145,16 +159,7 @@ class TerminalController(
                     doConnectMosh()
                     return@launch
                 }
-                val s = createSshSession(
-                    SshConnection(
-                        host = host.hostname,
-                        port = host.port,
-                        username = host.username,
-                        password = password,
-                        privateKeyPem = privateKeyPem,
-                    ),
-                    callbacks(),
-                )
+                val s = createSshSession(newConnection(), callbacks())
                 session = s
                 val info = s.connectAndStart(lastCols, lastRows)
                 // TOFU：记录主机指纹
@@ -182,16 +187,7 @@ class TerminalController(
     private suspend fun doConnectMosh() {
         try {
             val callbacks = callbacks()
-            val ssh = createSshSession(
-                SshConnection(
-                    host = host.hostname,
-                    port = host.port,
-                    username = host.username,
-                    password = password,
-                    privateKeyPem = privateKeyPem,
-                ),
-                callbacks,
-            )
+            val ssh = createSshSession(newConnection(), callbacks)
             val bootstrap = if (host.moshUdpPort in 1024..65535) {
                 "mosh-server new -c 8 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
@@ -338,7 +334,7 @@ class TerminalController(
                 scope.launch {
                     kotlinx.coroutines.delay(2000L * reconnectAttempts)
                     if (status != ConnStatus.CLOSED) doConnect()
-                }
+                }.also { reconnectJob = it }
                 return
             }
             status = ConnStatus.CLOSED
@@ -421,6 +417,12 @@ class TerminalController(
 
     fun close() {
         status = ConnStatus.CLOSED
+        // 取消挂起的自动重连，防止 close 后延迟任务又拉起连接
+        reconnectJob?.cancel()
+        reconnectJob = null
+        // 完成挂起的认证/主机密钥弹窗，释放阻塞在 await 上的 SSH 线程
+        authPrompt?.let { authPrompt = null; it.deferred.complete(null) }
+        hostKeyPrompt?.let { hostKeyPrompt = null; it.deferred.complete(false) }
         stopKeepAlive()
         moshSession?.close()
         moshSession = null

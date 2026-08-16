@@ -210,6 +210,17 @@ class TerminalBuffer(
 
     /** 在当前光标处写一个码点（宽字符占 2 列），必要时自动换行/滚动。 */
     fun putChar(cp: Int) {
+        // 上个字符落在行末（pendingWrap）：先处理延迟换行
+        if (pendingWrap) {
+            pendingWrap = false
+            if (autoWrap) {
+                lineAt(cursorRow).wrapped = true
+                newline()
+            } else {
+                // DECAWM 关闭：光标钳在行末，新字符覆盖最后一格（xterm 行为）
+                cursorCol = cols - 1
+            }
+        }
         val width = if (cp == 0) 1 else CharWidth.wcwidth(cp)
         val line = lineAt(cursorRow)
         val col = cursorCol
@@ -275,7 +286,7 @@ class TerminalBuffer(
         }
 
         if (cursorCol == cols - 1) {
-            // 行末：标记 wrap，准备换行（延迟到下一个字符）
+            // 行末：标记 wrap，延迟到下一个字符再换行（pendingWrap 在 putChar 入口消费）
             pendingWrap = true
         } else {
             cursorCol++
@@ -367,12 +378,14 @@ class TerminalBuffer(
     fun eraseToEndOfLine() {
         val line = lineAt(cursorRow)
         for (i in cursorCol until cols) line.cells[i].clear()
+        line.touch()
         markChanged()
     }
 
     fun eraseFromStartOfLine() {
         val line = lineAt(cursorRow)
         for (i in 0..cursorCol) line.cells[i].clear()
+        line.touch()
         markChanged()
     }
 
@@ -404,6 +417,7 @@ class TerminalBuffer(
     fun eraseChars(n: Int) {
         val line = lineAt(cursorRow)
         for (i in cursorCol until minOf(cursorCol + n, cols)) line.cells[i].clear()
+        line.touch()
         markChanged()
     }
 
