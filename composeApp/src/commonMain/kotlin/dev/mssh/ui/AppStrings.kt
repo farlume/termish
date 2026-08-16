@@ -61,6 +61,8 @@ data class AppStrings(
     val sftpLoadFailed: (String) -> String,
     /** 卡片第二行：有活跃会话时显示（Termius 风格）。 */
     val hostsActive: String,
+    /** 会话状态统计：已连接。 */
+    val hostsConnected: String,
     val hostsModeSsh: String,
     val hostsModeMosh: String,
     // 主机编辑
@@ -201,6 +203,7 @@ private val EnStrings = AppStrings(
     sftpCopied = "Path copied",
     sftpLoadFailed = { "Failed to load: $it" },
     hostsActive = "Active",
+    hostsConnected = "Connected",
     hostsModeSsh = "ssh",
     hostsModeMosh = "mosh",
     editAddTitle = "Add host",
@@ -327,6 +330,7 @@ private val ZhStrings = AppStrings(
     sftpCopied = "路径已复制",
     sftpLoadFailed = { "加载失败：$it" },
     hostsActive = "Active",
+    hostsConnected = "已连接",
     hostsModeSsh = "ssh",
     hostsModeMosh = "mosh",
     editAddTitle = "添加主机",

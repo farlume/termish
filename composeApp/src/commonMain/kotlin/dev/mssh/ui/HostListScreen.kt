@@ -358,9 +358,10 @@ private fun HostCard(
     val connecting = sessions.any { it.isConnecting }
     // 第一行：alias（名称）优先，为空时回退主机地址
     val title = host.name.ifBlank { host.hostname }
-    val detail = if (active) {
-        s.hostsActive
-    } else {
+    // 第二行：有会话时显示状态统计（N 已连接，M 已断开）；无会话显示连接详情
+    val activeCount = sessions.count { it.isActive }
+    val disconnectedCount = sessions.size - activeCount
+    val detail = if (sessions.isEmpty()) {
         val mode = if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh
         buildString {
             append(mode)
@@ -369,6 +370,16 @@ private fun HostCard(
             if (host.system.isNotBlank()) {
                 append(", ")
                 append(host.system)
+            }
+        }
+    } else {
+        buildString {
+            if (activeCount > 0) {
+                append(activeCount).append(' ').append(s.hostsConnected)
+            }
+            if (disconnectedCount > 0) {
+                if (activeCount > 0) append(", ")
+                append(disconnectedCount).append(' ').append(s.connStatusClosed)
             }
         }
     }
