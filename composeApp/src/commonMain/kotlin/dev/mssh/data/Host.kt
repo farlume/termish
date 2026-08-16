@@ -52,6 +52,12 @@ data class Host(
      * 应答一样解析并采纳手机配色。
      */
     val moshThemeSync: Boolean = false,
+    /**
+     * Mosh 固定 UDP 端口；0 表示由 mosh-server 自动选择（60000-61000）。
+     * 走 NAS / 路由器端口转发（只放行固定端口）时可固定一个端口，
+     * 并把该 UDP 端口转发到远端主机。
+     */
+    val moshUdpPort: Int = 0,
 )
 
 @Serializable

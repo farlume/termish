@@ -125,4 +125,5 @@ class SessionManager(private val repository: HostRepository) {
 
 /** 凭据/连接参数/启动命令签名：任一变化即视为旧会话过期（编辑主机后需重建会话）。 */
 internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String =
-    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem|${host.startupCommand}|${host.connectionMode}"
+    "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|$password|$privateKeyPem|" +
+        "${host.startupCommand}|${host.connectionMode}|${host.moshUdpPort}|${host.moshThemeSync}"

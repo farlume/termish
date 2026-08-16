@@ -180,7 +180,12 @@ class TerminalController(
                 ),
                 callbacks,
             )
-            val result = ssh.connectAndRun(MOSH_SERVER_BOOTSTRAP)
+            val bootstrap = if (host.moshUdpPort in 1024..65535) {
+                "mosh-server new -c 8 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
+            } else {
+                MOSH_SERVER_BOOTSTRAP
+            }
+            val result = ssh.connectAndRun(bootstrap)
             result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
             val (moshPort, moshKey) = parseMoshConnect(result.output)
                 ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
@@ -201,10 +206,24 @@ class TerminalController(
                     if (status == ConnStatus.CONNECTED) {
                         status = ConnStatus.CLOSED
                         stopKeepAlive()
+                    } else if (status == ConnStatus.CONNECTING) {
+                        // mosh-client 在连接建立前就退出（如 UDP 端口不可达）：
+                        // 不能继续显示 Connected，把真实原因留在画布（stderr 已合并），
+                        // 状态置为 ERROR 而不是被后续代码覆盖成 CONNECTED。
+                        status = ConnStatus.ERROR
+                        errorMessage = "mosh 连接失败：客户端已退出（检查 UDP 端口/防火墙）"
+                        stopKeepAlive()
                     }
                 },
             )
             moshSession = client
+            if (!client.isActive()) {
+                status = ConnStatus.ERROR
+                errorMessage = "mosh 连接失败：客户端已退出。若主机是域名或经 NAS/路由器端口转发，" +
+                    "请确认 UDP 端口（自动 60000-61000，或在主机里固定一个端口）已转发且未被防火墙拦截。"
+                stopKeepAlive()
+                return@doConnectMosh
+            }
             // 标题可能先于 moshSession 赋值到达（reader 线程竞态），补一次重试
             if (moshThemePayload != null) {
                 scope.launch {

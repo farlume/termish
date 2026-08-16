@@ -3,6 +3,7 @@ package dev.mssh.ssh
 import dev.mssh.AppContext
 import dev.mssh.generated.resources.Res
 import java.io.File
+import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
 
@@ -58,6 +59,10 @@ private class AndroidMoshSession(
         val clientBin = File(nativeDir, "libmoshclient.so")
         if (!clientBin.exists()) throw IllegalStateException("mosh-client 未解压: $clientBin")
 
+        // mosh-client 只接受数字 IP（AI_NUMERICHOST），域名必须先解析；
+        // 否则 home.example.com 这类主机名会直接报 "Bad IP address" 退出。
+        val resolvedIp = resolveHost(ip)
+
         val fds = IntArray(2)
         val slavePath = MoshPty.openPty(fds, rows, columns)
             ?: throw IllegalStateException("openpty 失败")
@@ -66,17 +71,18 @@ private class AndroidMoshSession(
 
         val pb = ProcessBuilder(
             "/system/bin/sh", "-c",
-            "exec \"$clientBin\" \"$ip\" \"$port\"",
+            "exec \"$clientBin\" \"$resolvedIp\" \"$port\"",
         )
             .redirectInput(ProcessBuilder.Redirect.from(File(slavePath)))
             .redirectOutput(ProcessBuilder.Redirect.to(File(slavePath)))
-            .redirectError(ProcessBuilder.Redirect.to(File(slavePath)))
+            // 合并 stderr 到画布：mosh-client 的真实错误（UDP 不可达等）
+            // 才能显示出来，而不是只看到 "[mosh is exiting.]"
+            .redirectErrorStream(true)
         val env = pb.environment()
         env["MOSH_KEY"] = key
         env["TERM"] = "xterm-256color"
         env["TERMINFO"] = File(dir, "terminfo").absolutePath
         env["LD_LIBRARY_PATH"] = nativeDir.absolutePath
-        pb.redirectError(File(dir, "mosh-stderr.log"))
         process = pb.start()
 
         Thread({
@@ -92,6 +98,16 @@ private class AndroidMoshSession(
                 if (active.getAndSet(false)) onExit()
             }
         }, "mosh-reader").start()
+    }
+
+    private fun resolveHost(host: String): String {
+        // 已是 IPv4 / IPv6 字面量则直接用（IPv6 含冒号）
+        if (host.matches(Regex("^(\\d{1,3}\\.){3}\\d{1,3}$")) || host.contains(':')) return host
+        return try {
+            InetAddress.getAllByName(host).firstOrNull()?.hostAddress ?: host
+        } catch (_: Exception) {
+            host
+        }
     }
 
     private fun extractTerminfo(dir: File) {

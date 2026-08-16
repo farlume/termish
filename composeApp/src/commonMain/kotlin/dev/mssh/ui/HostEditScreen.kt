@@ -17,6 +17,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,6 +55,7 @@ fun HostEditScreen(
     }
     var startupCommand by remember { mutableStateOf(existing?.startupCommand ?: "") }
     var moshThemeSync by remember { mutableStateOf(existing?.moshThemeSync ?: false) }
+    var moshUdpPort by remember { mutableStateOf((existing?.moshUdpPort ?: 0).toString()) }
 
     Scaffold(
         topBar = {
@@ -77,6 +80,7 @@ fun HostEditScreen(
                             knownHostFingerprint = existing?.knownHostFingerprint,
                             startupCommand = startupCommand.trim(),
                             moshThemeSync = moshThemeSync,
+                            moshUdpPort = moshUdpPort.toIntOrNull()?.takeIf { it in 1024..65535 } ?: 0,
                         )
                         onSave(host, password, privateKey)
                     }) { Text(s.editSave) }
@@ -156,6 +160,14 @@ fun HostEditScreen(
                     Text(s.editMoshThemeSync, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                     Switch(moshThemeSync, { moshThemeSync = it })
                 }
+                OutlinedTextField(
+                    moshUdpPort, { moshUdpPort = it }, Modifier.fillMaxWidth(),
+                    label = { Text(s.editMoshUdpPort) },
+                    placeholder = { Text("0") },
+                    supportingText = { Text(s.editMoshUdpPortHint) },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
             }
         }
     }

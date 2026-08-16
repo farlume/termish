@@ -13,9 +13,12 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.pointed
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.value
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,6 +34,11 @@ import platform.Foundation.NSFileManager
 import platform.Foundation.NSBundle
 import platform.Foundation.NSProcessInfo
 import platform.Foundation.NSTemporaryDirectory
+import platform.posix.AF_INET
+import platform.posix.SOCK_DGRAM
+import platform.posix.addrinfo
+import platform.posix.freeaddrinfo
+import platform.posix.getaddrinfo
 import platform.posix.O_CREAT
 import platform.posix.O_RDWR
 import platform.posix.O_TRUNC
@@ -40,6 +48,7 @@ import platform.posix.close
 import platform.posix.kill
 import platform.posix.open
 import platform.posix.pid_t
+import platform.posix.sockaddr_in
 import platform.posix.waitpid
 import platform.posix.write
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
@@ -80,6 +89,8 @@ private class IosMoshSession(
         val binName = if (isSimulator()) "mosh-client-sim" else "mosh-client-device"
         val workDir = setupRuntime(binName)
         val binPath = "$workDir/$binName"
+        // mosh-client 只接受数字 IP（AI_NUMERICHOST），域名必须先解析
+        val resolvedIp = resolveHost(ip)
 
         memScoped {
             val fdsC = allocArray<IntVar>(2)
@@ -89,7 +100,7 @@ private class IosMoshSession(
             masterFd = fdsC[0]
             slaveFd = fdsC[1]
 
-            val argStrs = listOf(binPath, ip, port.toString())
+            val argStrs = listOf(binPath, resolvedIp, port.toString())
             val argv = allocArray<CPointerVar<ByteVar>>(argStrs.size + 1)
             argStrs.forEachIndexed { i, s -> argv[i] = s.cstr.ptr }
 
@@ -126,6 +137,29 @@ private class IosMoshSession(
             } catch (_: Exception) {
             } finally {
                 if (active.compareAndSet(expectedValue = true, newValue = false)) onExit()
+            }
+        }
+    }
+
+    /** 解析主机名为数字 IP（IPv4）；失败时原样返回交给 mosh-client 报错。 */
+    private fun resolveHost(host: String): String {
+        if (host.matches(Regex("^(\\d{1,3}\\.){3}\\d{1,3}$")) || host.contains(':')) return host
+        return memScoped {
+            val hints = alloc<addrinfo>()
+            hints.ai_family = AF_INET
+            hints.ai_socktype = SOCK_DGRAM
+            val res = alloc<CPointerVar<addrinfo>>()
+            val gai = getaddrinfo(host, null, hints.ptr, res.ptr)
+            if (gai != 0) return@memScoped host
+            try {
+                val info = res.value ?: return@memScoped host
+                // s_addr 按网络字节序存储：内存低地址即 IP 第一个八位组
+                val sAddr = info.pointed.ai_addr
+                    ?.reinterpret<sockaddr_in>()?.pointed?.sin_addr?.s_addr
+                val octets = (0..3).map { ((sAddr?.toInt() ?: 0) ushr (it * 8)) and 0xff }
+                octets.joinToString(".")
+            } finally {
+                freeaddrinfo(res.value)
             }
         }
     }
