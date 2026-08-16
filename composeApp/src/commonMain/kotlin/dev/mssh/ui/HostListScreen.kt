@@ -356,7 +356,8 @@ private fun HostCard(
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
     val connecting = sessions.any { it.isConnecting }
-    val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
+    // 第一行：alias（名称）优先，为空时回退主机地址
+    val title = host.name.ifBlank { host.hostname }
     val detail = if (active) {
         s.hostsActive
     } else {
@@ -438,7 +439,7 @@ private fun HostCard(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    address,
+                    title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,

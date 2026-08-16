@@ -106,15 +106,13 @@ fun AppRoot(repository: HostRepository) {
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val scope = rememberCoroutineScope()
+    val sessionManager = remember { SessionManager(repository) }
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
     var pendingNavigate by remember { mutableStateOf<TerminalController?>(null) }
     /** SFTP：选主机覆盖层 / 当前会话 / 认证与主机密钥弹窗。 */
     var sftpPickerVisible by remember { mutableStateOf(false) }
-    /** 已建立的 SFTP 会话（作为终端页 tab；关闭 tab 时释放）。 */
-    val sftpSessions: SnapshotStateList<Pair<Host, SftpSession>> =
-        remember { mutableStateListOf() }
     var sftpAuth by remember { mutableStateOf<AuthPromptRequest?>(null) }
     var sftpHostKey by remember { mutableStateOf<HostKeyRequest?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -169,7 +167,7 @@ fun AppRoot(repository: HostRepository) {
                     keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
                 )
                 val session = createSftpSession(conn, callbacks)
-                sftpSessions.add(host to session)
+                sessionManager.addSftp(host, session)
                 currentTab = SessionTab.Sftp(host, session)
                 screen = Screen.Terminal(host.id)
             } catch (e: Exception) {
@@ -197,7 +195,6 @@ fun AppRoot(repository: HostRepository) {
             snackbarHostState.showSnackbar(target.errorMessage ?: appStrings.hostsConnectFailed)
         }
     }
-    val sessionManager = remember { SessionManager(repository) }
     // 恢复上次运行时的会话列表（仅一次；进程死亡连接必死，恢复为未连接可重连）
     var sessionsRestored by remember { mutableStateOf(false) }
     if (!sessionsRestored) {
@@ -288,7 +285,7 @@ fun AppRoot(repository: HostRepository) {
                                     hosts = hosts,
                                     hostSessions = (
                                         sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
-                                            sftpSessions.map { HostSessionItem.Sftp(it.first, it.second) }
+                                            sessionManager.sftpSessions.map { HostSessionItem.Sftp(it.host, it.session) }
                                         ).groupBy { it.hostId },
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
@@ -331,9 +328,8 @@ fun AppRoot(repository: HostRepository) {
                                         screen = Screen.Terminal(host.id)
                                     },
                                     onCloseAllSessions = { host ->
-                                        sessionManager.sessions
-                                            .filter { it.host.id == host.id }
-                                            .forEach { sessionManager.disconnect(it) }
+                                        // 关闭该主机全部会话：终端断开保留 + SFTP 释放
+                                        sessionManager.closeAllForHost(host.id)
                                     },
                                     onDelete = { host ->
                                         sessionManager.closeForHost(host.id)
@@ -345,19 +341,32 @@ fun AppRoot(repository: HostRepository) {
                                 )
 
                                 HomeTab.CONNECTIONS -> ConnectionsScreen(
-                                    sessions = sessionManager.sessions,
-                                    onOpen = {
-                                        currentTab = SessionTab.Terminal(it)
-                                        screen = Screen.Terminal(it.host.id)
-                                    },
-                                    onClose = {
-                                        // 活跃会话 → 断开（保留列表）；已断开 → 移除
-                                        if (it.status == ConnStatus.CONNECTED || it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) {
-                                            sessionManager.disconnect(it)
-                                        } else {
-                                            sessionManager.remove(it)
+                                    sessions = sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
+                                        sessionManager.sftpSessions.map { HostSessionItem.Sftp(it.host, it.session) },
+                                    onOpen = { item ->
+                                        when (item) {
+                                            is HostSessionItem.Terminal -> {
+                                                currentTab = SessionTab.Terminal(item.controller)
+                                                screen = Screen.Terminal(item.controller.host.id)
+                                            }
+                                            is HostSessionItem.Sftp -> {
+                                                currentTab = SessionTab.Sftp(item.host, item.session)
+                                                screen = Screen.Terminal(item.host.id)
+                                            }
                                         }
-                                        refreshHosts()
+                                    },
+                                    onClose = { item ->
+                                        when (item) {
+                                            is HostSessionItem.Terminal -> {
+                                                if (item.isActive) sessionManager.disconnect(item.controller)
+                                                else sessionManager.remove(item.controller)
+                                            }
+                                            is HostSessionItem.Sftp -> {
+                                                sessionManager.sftpSessions
+                                                    .firstOrNull { it.session === item.session }
+                                                    ?.let { sessionManager.closeSftp(it) }
+                                            }
+                                        }
                                     },
                                 )
 
@@ -394,9 +403,9 @@ fun AppRoot(repository: HostRepository) {
                 is Screen.Terminal -> {
                     val host = hosts.firstOrNull { it.id == s.hostId }
                     val all = sessionManager.sessions.filter { it.host.id == s.hostId }
-                    val sftpTabs = sftpSessions
-                        .filter { it.first.id == s.hostId }
-                        .map { SessionTab.Sftp(it.first, it.second) }
+                    val sftpTabs = sessionManager.sftpSessions
+                        .filter { it.host.id == s.hostId }
+                        .map { SessionTab.Sftp(it.host, it.session) }
                     // 终端会话 tab 不过滤状态：断开/失败也保留（tab 内状态点体现），
                     // 关闭 tab 时才从列表移除；否则创建 SFTP 后重组会把非活跃终端 tab 丢掉
                     val terminalTabs = all.map { SessionTab.Terminal(it) }
@@ -426,16 +435,17 @@ fun AppRoot(repository: HostRepository) {
                                 when (tab) {
                                     is SessionTab.Terminal -> sessionManager.remove(tab.controller)
                                     is SessionTab.Sftp -> {
-                                        tab.session.close()
-                                        sftpSessions.removeAll { e: Pair<Host, SftpSession> -> e.second === tab.session }
+                                        sessionManager.sftpSessions
+                                            .firstOrNull { it.session === tab.session }
+                                            ?.let { sessionManager.closeSftp(it) }
                                     }
                                 }
                                 val remaining = (sessionManager.sessions
                                     .filter { c: TerminalController -> c.host.id == s.hostId }
                                     .map { c: TerminalController -> SessionTab.Terminal(c) } +
-                                    sftpSessions
-                                        .filter { e: Pair<Host, SftpSession> -> e.first.id == s.hostId }
-                                        .map { e: Pair<Host, SftpSession> -> SessionTab.Sftp(e.first, e.second) })
+                                    sessionManager.sftpSessions
+                                        .filter { it.host.id == s.hostId }
+                                        .map { SessionTab.Sftp(it.host, it.session) })
                                     .firstOrNull { it.id != tab.id }
                                 currentTab = remaining
                                 if (remaining == null) {

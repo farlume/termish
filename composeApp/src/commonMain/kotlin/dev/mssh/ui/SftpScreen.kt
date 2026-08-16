@@ -1,5 +1,10 @@
 package dev.mssh.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -142,8 +147,24 @@ fun SftpContent(
         if (path.isNotEmpty()) reload()
     }
 
-    // 面包屑固定显示用户名（User > liubing），不显示 IP/路径段
-    val segment = host.username
+    // 面包屑动态显示当前路径：始终最多两个层级
+    // - 1 段：User（根）或 A
+    // - 2 段：A > B
+    // - 3+ 段：... > B（… 点击下拉全部父级目录）
+    val parts = path.split('/').filter { it.isNotBlank() }
+    val displayParts = if (parts.firstOrNull() == "home") listOf(s.sftpUser) + parts.drop(1) else parts
+    val breadcrumbs = if (displayParts.size > 2) {
+        listOf("...", displayParts.last())
+    } else {
+        displayParts.ifEmpty { listOf(s.sftpUser) }
+    }
+    // 被折叠的父级目录（最后一段之前的所有层级）
+    val hiddenParents = if (displayParts.size > 2) displayParts.dropLast(1) else emptyList()
+    fun pathForBreadcrumb(index: Int): String {
+        val mapped = displayParts.take(index + 1).map { if (it == s.sftpUser) "home" else it }
+        return "/" + mapped.joinToString("/")
+    }
+    var showParents by remember { mutableStateOf(false) }
     val visible = (entries ?: emptyList())
         .filter { showHidden || !it.isHidden }
         .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
@@ -164,27 +185,104 @@ fun SftpContent(
                 Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (searching) {
-                    IconButton(onClick = { searching = false; query = "" }) {
-                        Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = MaterialTheme.colorScheme.onSurface)
+                // 搜索模式：X + 圆角搜索框，横向展开动画
+                AnimatedVisibility(
+                    visible = searching,
+                    enter = expandHorizontally() + fadeIn(),
+                    exit = shrinkHorizontally() + fadeOut(),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { searching = false; query = "" }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = s.navBack,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text(s.sftpSearch) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(10.dp),
+                        )
                     }
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.weight(1f),
-                        placeholder = { Text(s.sftpSearch) },
-                        singleLine = true,
-                    )
-                } else {
-                    Text(
-                        "${s.sftpUser} > $segment",
-                        style = MaterialTheme.typography.labelLarge,
-                        fontFamily = monospaceFontFamily(),
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                }
+                // 普通模式：面包屑 + Upload + 菜单 + 搜索 icon
+                AnimatedVisibility(
+                    visible = !searching,
+                    enter = fadeIn(),
+                    exit = fadeOut(),
+                ) {
+                    // 可点击面包屑：每段跳转对应目录；… 下拉父级目录列表
+                    Row(
+                        Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        breadcrumbs.forEachIndexed { i, crumb ->
+                            if (crumb == "...") {
+                                Box {
+                                    Text(
+                                        "...",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontFamily = monospaceFontFamily(),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .clickable { showParents = true }
+                                            .padding(horizontal = 2.dp),
+                                    )
+                                    DropdownMenu(
+                                        expanded = showParents,
+                                        onDismissRequest = { showParents = false },
+                                    ) {
+                                        hiddenParents.forEach { parent ->
+                                            DropdownMenuItem(
+                                                text = { Text(parent, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        painterResource(Res.drawable.folder),
+                                                        null,
+                                                        modifier = Modifier.size(18.dp),
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                    )
+                                                },
+                                                onClick = {
+                                                    showParents = false
+                                                    path = pathForBreadcrumb(displayParts.indexOf(parent))
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    crumb,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontFamily = monospaceFontFamily(),
+                                    color = if (i == breadcrumbs.lastIndex) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { path = pathForBreadcrumb(displayParts.indexOf(crumb)) }
+                                        .padding(horizontal = 2.dp),
+                                )
+                                if (i < breadcrumbs.lastIndex) {
+                                    Text(
+                                        " > ",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
                     TextButton(onClick = { pickFile() }) {
                         Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
                         Spacer(Modifier.size(4.dp))

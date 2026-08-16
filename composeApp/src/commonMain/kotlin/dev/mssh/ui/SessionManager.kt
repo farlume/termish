@@ -3,10 +3,17 @@ package dev.mssh.ui
 import androidx.compose.runtime.mutableStateListOf
 import dev.mssh.data.Host
 import dev.mssh.data.HostRepository
+import dev.mssh.ssh.SftpSession
 import dev.mssh.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+
+/** SFTP 会话条目（与终端会话平级管理，跨页面存活）。 */
+data class SftpSessionEntry(
+    val host: Host,
+    val session: SftpSession,
+)
 
 /**
  * 会话管理器：持有所有活跃 [TerminalController]，跨页面存活。
@@ -16,6 +23,8 @@ import kotlinx.coroutines.launch
 class SessionManager(private val repository: HostRepository) {
 
     val sessions = mutableStateListOf<TerminalController>()
+    /** SFTP 会话（与终端会话同源管理：连接页可见、卡片 Close 可关、删除主机连带释放）。 */
+    val sftpSessions = mutableStateListOf<SftpSessionEntry>()
 
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
     /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
@@ -96,10 +105,31 @@ class SessionManager(private val repository: HostRepository) {
         persist()
     }
 
+    /** 登记 SFTP 会话（连接成功后由调用方加入）。 */
+    fun addSftp(host: Host, session: SftpSession) {
+        sftpSessions.add(SftpSessionEntry(host, session))
+    }
+
+    /** 关闭并移除 SFTP 会话。 */
+    fun closeSftp(entry: SftpSessionEntry) {
+        try {
+            entry.session.close()
+        } catch (_: Exception) {
+        }
+        sftpSessions.remove(entry)
+    }
+
+    /** 关闭主机的全部会话：终端断开保留可重入 + SFTP 释放（卡片 Close）。 */
+    fun closeAllForHost(hostId: String) {
+        sessions.filter { it.host.id == hostId }.forEach { disconnect(it) }
+        sftpSessions.filter { it.host.id == hostId }.toList().forEach { closeSftp(it) }
+    }
+
     /** 主机被删除时，连带断开并移除其会话。 */
     fun closeForHost(hostId: String) {
         sessions.filter { it.host.id == hostId }.forEach { it.close() }
         sessions.removeAll { it.host.id == hostId }
+        sftpSessions.filter { it.host.id == hostId }.toList().forEach { closeSftp(it) }
         persist()
     }
 }

@@ -37,19 +37,22 @@ import androidx.compose.ui.unit.dp
 /** 连接页：活跃/历史会话列表（主机页同款卡片 + 搜索），点击重入终端，右侧断开。 */
 @Composable
 fun ConnectionsScreen(
-    sessions: List<TerminalController>,
-    onOpen: (TerminalController) -> Unit,
-    onClose: (TerminalController) -> Unit,
+    sessions: List<HostSessionItem>,
+    onOpen: (HostSessionItem) -> Unit,
+    onClose: (HostSessionItem) -> Unit,
 ) {
     val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
-    val filtered = sessions.filter { c ->
-        query.isBlank() ||
-            c.title.contains(query, ignoreCase = true) ||
-            c.host.name.contains(query, ignoreCase = true) ||
-            c.host.hostname.contains(query, ignoreCase = true) ||
-            c.host.username.contains(query, ignoreCase = true)
-    }
+        val filtered = sessions.filter { item ->
+            val host = when (item) {
+                is HostSessionItem.Terminal -> item.controller.host
+                is HostSessionItem.Sftp -> item.host
+            }
+            query.isBlank() ||
+                host.name.contains(query, ignoreCase = true) ||
+                host.hostname.contains(query, ignoreCase = true) ||
+                host.username.contains(query, ignoreCase = true)
+        }
 
     Scaffold(
         topBar = { MsshLargeHeader(title = s.appTabConnections) },
@@ -74,22 +77,38 @@ fun ConnectionsScreen(
                 }
             } else {
                 LazyColumn(Modifier.fillMaxSize()) {
-                    // 同一主机可多会话：key 必须用会话唯一 id，否则 LazyColumn 报
-                    // "Key was already used" 崩溃
-                    items(filtered, key = { it.sessionId }) { controller ->
+                    items(filtered, key = {
+                        when (it) {
+                            is HostSessionItem.Terminal -> it.controller.sessionId
+                            is HostSessionItem.Sftp -> "sftp:${it.host.id}:${it.session.hashCode()}"
+                        }
+                    }) { item ->
+                        val host = when (item) {
+                            is HostSessionItem.Terminal -> item.controller.host
+                            is HostSessionItem.Sftp -> item.host
+                        }
+                        val title = when (item) {
+                            is HostSessionItem.Terminal -> item.controller.title
+                            is HostSessionItem.Sftp -> "${host.username}@${host.hostname}"
+                        }
+                        val active = item.isActive
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .clickable { onOpen(controller) },
+                                .clickable { onOpen(item) },
                         ) {
                             ListItem(
                                 headlineContent = {
-                                    Text(controller.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 },
                                 supportingContent = {
                                     Text(
-                                        "${controller.host.username}@${controller.host.hostname}:${controller.host.port}",
+                                        if (item is HostSessionItem.Sftp) {
+                                            "${host.username}@${host.hostname} · SFTP"
+                                        } else {
+                                            "${host.username}@${host.hostname}:${host.port}"
+                                        },
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -97,16 +116,19 @@ fun ConnectionsScreen(
                                 leadingContent = {
                                     Box(
                                         Modifier.size(10.dp).clip(CircleShape)
-                                            .background(statusColor(controller.status, controller.linkLostSeconds)),
+                                            .background(
+                                                if (item is HostSessionItem.Terminal) {
+                                                    statusColor(item.controller.status, item.controller.linkLostSeconds)
+                                                } else {
+                                                    Color(0xFF4CAF50)
+                                                },
+                                            ),
                                     )
                                 },
                                 trailingContent = {
-                                    IconButton(onClick = { onClose(controller) }) {
-                                        // 活跃 → 断开（断链图标）；已断开 → 从列表移除
-                                        if (controller.status == ConnStatus.CONNECTED ||
-                                            controller.status == ConnStatus.CONNECTING ||
-                                            controller.status == ConnStatus.AUTH
-                                        ) {
+                                    IconButton(onClick = { onClose(item) }) {
+                                        // 活跃 → 断开/关闭（断链图标）；已断开终端 → 从列表移除
+                                        if (active) {
                                             Icon(Icons.Default.LinkOff, contentDescription = s.connDisconnect)
                                         } else {
                                             Icon(Icons.Default.Delete, contentDescription = s.connRemove)
