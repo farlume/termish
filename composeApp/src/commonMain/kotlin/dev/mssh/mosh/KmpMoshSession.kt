@@ -195,14 +195,13 @@ class KmpMoshSession(
                 pushToUi(transport.latestRemote)
             }
 
-            // mosh-client：15s 无新远端状态 → 主动进入 shutdown（随后由超时兜底退出）
-            if (transport.hasPeer() && !transport.shutdownInProgress &&
-                nowMs() - transport.lastHeardMs() > 15_000
-            ) {
-                transport.startShutdown()
-            }
+            // mosh 漫游核心：已连接后客户端【永不】主动超时退出——会话管理 的
+            // 15s shutdown 仅限 still_connecting（从未收到对端状态）。断网期间靠
+            // transport 重发（ACTIVE_RETRY_TIMEOUT 窗口）+ 端口轮换维持，网络恢复
+            // （WiFi↔蜂窝切换、休眠唤醒、过隧道）即无缝续传；服务端同样永不超时
+            // （mosh-server 的 60s 仅限从未有客户端连上）。
 
-            // 15s 无对端应答视为连接失败（UDP 端口不通等）
+            // 15s 无对端应答视为连接失败（UDP 端口不通等，仅限未连上时）
             if (!peerSeen && nowMs() - startedAt > 15_000) {
                 active = false
                 cleanup()
