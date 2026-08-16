@@ -224,11 +224,12 @@ class TerminalController(
                 stopKeepAlive()
                 return@doConnectMosh
             }
-            // 标题可能先于 moshSession 赋值到达（reader 线程竞态），补一次重试
+            // herdr 的 ● 标记可能因 mosh 转发时序不稳定而检测不到，
+            // 固定延迟兜底注入（字节会等握手完成后才送达远端 stdin）。
             if (moshThemePayload != null) {
                 scope.launch {
-                    kotlinx.coroutines.delay(800)
-                    injectThemeIfNeeded()
+                    kotlinx.coroutines.delay(2500)
+                    injectThemeIfNeeded(requireMarker = false)
                 }
             }
             status = ConnStatus.CONNECTED
@@ -252,8 +253,8 @@ class TerminalController(
     /**
      * Mosh 下把手机终端主题注入远端（herdr 等从 stdin 解析 OSC 应答）。
      * 见 [dev.mssh.term.TerminalEmulator.buildThemeSyncPayload]。
-     * 以 herdr 的窗口标题（ESC]0;● …）作为「远端已接管 stdin」的信号：
-     * 普通 shell / vim 等不会设置该标题，也不会收到注入字节。
+     * 连接后固定延迟注入，并在输出里见到 herdr 的 ● 标记（tab 标签）时提前注入；
+     * 字节通过 mosh 输入通道送达，herdr 会像收到终端应答一样解析。
      */
     private fun prepareThemeSync() {
         if (!host.moshThemeSync) return
@@ -262,18 +263,20 @@ class TerminalController(
         moshThemeMarkerSeen = false
     }
 
-    /** 输出里出现 herdr 窗口标题（ESC]0;● …）时提前注入。 */
+    /** 输出里出现 herdr 的 ● 标记（tab 标签/标题）时提前注入。 */
     private fun maybeInjectThemeOnOutput(data: ByteArray) {
         if (moshThemePayload == null || moshThemeInjected) return
-        if (data.decodeToString().contains("\u001b]0;●")) {
+        val text = data.decodeToString()
+        if (text.contains("●")) {
             moshThemeMarkerSeen = true
-            injectThemeIfNeeded()
+            injectThemeIfNeeded(requireMarker = true)
         }
     }
 
-    private fun injectThemeIfNeeded() {
+    private fun injectThemeIfNeeded(requireMarker: Boolean = true) {
         val payload = moshThemePayload ?: return
-        if (moshThemeInjected || !moshThemeMarkerSeen) return
+        if (moshThemeInjected) return
+        if (requireMarker && !moshThemeMarkerSeen) return
         val client = moshSession ?: return
         if (status == ConnStatus.CONNECTED && client.isActive()) {
             moshThemeInjected = true
