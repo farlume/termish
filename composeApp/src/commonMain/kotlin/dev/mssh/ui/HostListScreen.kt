@@ -61,8 +61,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import dev.mssh.data.ConnectionMode
 import dev.mssh.data.Host
@@ -358,10 +362,11 @@ private fun HostCard(
     val connecting = sessions.any { it.isConnecting }
     // 第一行：alias（名称）优先，为空时回退主机地址
     val title = host.name.ifBlank { host.hostname }
-    // 第二行：有会话时显示状态统计（N 已连接，M 已断开）；无会话显示连接详情
     val activeCount = sessions.count { it.isActive }
     val disconnectedCount = sessions.size - activeCount
-    val detail = if (sessions.isEmpty()) {
+    // 有会话：统计文字分段着色（已连接绿色、已断开灰色）；无会话显示连接详情
+    val sessionStats = sessions.isNotEmpty()
+    val detail = if (!sessionStats) {
         val mode = if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh
         buildString {
             append(mode)
@@ -373,16 +378,23 @@ private fun HostCard(
             }
         }
     } else {
-        buildString {
+        ""
+    }
+    val statsText = if (sessionStats) {
+        buildAnnotatedString {
             if (activeCount > 0) {
-                append(activeCount).append(' ').append(s.hostsConnected)
+                withStyle(SpanStyle(color = Color(0xFF34C759))) {
+                    append("$activeCount ${s.hostsConnected}")
+                }
             }
             if (disconnectedCount > 0) {
                 if (activeCount > 0) append(", ")
-                append(disconnectedCount).append(' ').append(s.connStatusClosed)
+                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                    append("$disconnectedCount ${s.connStatusClosed}")
+                }
             }
         }
-    }
+    } else null
 
     Card(
         modifier = Modifier
@@ -458,13 +470,9 @@ private fun HostCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    detail,
+                    statsText ?: AnnotatedString(detail),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (active) {
-                        Color(0xFF34C759)
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = if (sessionStats) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
