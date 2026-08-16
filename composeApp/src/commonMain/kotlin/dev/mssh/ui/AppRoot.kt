@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -27,8 +30,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,11 +46,19 @@ import dev.mssh.data.HostRepository
 import dev.mssh.data.SECRET_SERVICE
 import dev.mssh.data.SecretStore
 import dev.mssh.data.secretAccountFor
+import dev.mssh.ssh.AuthPrompt
+import dev.mssh.ssh.HostKeyInfo
+import dev.mssh.ssh.SshCallbacks
+import dev.mssh.ssh.SftpSession
+import dev.mssh.ssh.SshConnection
+import dev.mssh.ssh.createSftpSession
 import dev.mssh.ui.theme.MsshTheme
 import dev.mssh.ui.theme.TerminalThemes
 import dev.mssh.util.monospaceFontFamily
 import dev.mssh.util.observeAppLifecycle
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
 
@@ -91,10 +105,59 @@ fun AppRoot(repository: HostRepository) {
     var settings by remember { mutableStateOf(repository.loadSettings()) }
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
-    /** 终端页当前显示的会话（同主机多会话 tab 切换用）。 */
-    var terminalCurrent by remember { mutableStateOf<TerminalController?>(null) }
+    val scope = rememberCoroutineScope()
+    /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
+    var currentTab by remember { mutableStateOf<SessionTab?>(null) }
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
     var pendingNavigate by remember { mutableStateOf<TerminalController?>(null) }
+    /** SFTP：选主机覆盖层 / 当前会话 / 认证与主机密钥弹窗。 */
+    var sftpPickerVisible by remember { mutableStateOf(false) }
+    /** 已建立的 SFTP 会话（作为终端页 tab；关闭 tab 时释放）。 */
+    val sftpSessions: SnapshotStateList<Pair<Host, SftpSession>> =
+        remember { mutableStateListOf() }
+    var sftpAuth by remember { mutableStateOf<AuthPromptRequest?>(null) }
+    var sftpHostKey by remember { mutableStateOf<HostKeyRequest?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）
+    val connectSftp: (Host) -> Unit = { host ->
+        val (pw, key) = resolveCredentials(host)
+        sftpPickerVisible = false
+        scope.launch {
+            try {
+                val callbacks = object : SshCallbacks {
+                    override fun onOutput(data: ByteArray) {}
+                    override fun onStderr(data: ByteArray) {}
+                    override fun onExitStatus(status: Int) {}
+                    override fun onClosed(reason: String?) {}
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+                        val req = AuthPromptRequest(prompt)
+                        sftpAuth = req
+                        return req.deferred.await()
+                    }
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                        val req = HostKeyRequest(hostKey)
+                        sftpHostKey = req
+                        return runBlocking { req.deferred.await() }
+                    }
+                }
+                val conn = SshConnection(
+                    host = host.hostname,
+                    port = host.port,
+                    username = host.username,
+                    password = pw,
+                    privateKeyPem = key,
+                    keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
+                )
+                val session = createSftpSession(conn, callbacks)
+                sftpSessions.add(host to session)
+                currentTab = SessionTab.Sftp(host, session)
+                screen = Screen.Terminal(host.id)
+            } catch (e: Exception) {
+                snackbarHostState.showSnackbar("SFTP 连接失败：${e.message}")
+            }
+        }
+    }
     LaunchedEffect(pendingNavigate) {
         val target = pendingNavigate ?: return@LaunchedEffect
         // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
@@ -108,8 +171,11 @@ fun AppRoot(repository: HostRepository) {
         }
         pendingNavigate = null
         if (target.status == ConnStatus.CONNECTED) {
-            terminalCurrent = target
+            currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal(target.host.id)
+        } else if (target.status == ConnStatus.ERROR) {
+            // 连接失败（IP 不可达 / 认证失败等）：留在列表并提示原因
+            snackbarHostState.showSnackbar(target.errorMessage ?: "连接失败")
         }
     }
     val sessionManager = remember { SessionManager(repository) }
@@ -152,6 +218,7 @@ fun AppRoot(repository: HostRepository) {
 
     CompositionLocalProvider(LocalAppStrings provides appStrings) {
         MsshTheme(settings.theme) {
+            Box(Modifier.fillMaxSize()) {
             // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
             // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
             sessionManager.sessions.forEach { controller ->
@@ -227,7 +294,7 @@ fun AppRoot(repository: HostRepository) {
                                             ?.let { sessionManager.disconnect(it) }
                                     },
                                     onOpenSession = {
-                                        terminalCurrent = it
+                                        currentTab = SessionTab.Terminal(it)
                                         screen = Screen.Terminal(it.host.id)
                                     },
                                     onCloseAllSessions = { host ->
@@ -247,7 +314,7 @@ fun AppRoot(repository: HostRepository) {
                                 HomeTab.CONNECTIONS -> ConnectionsScreen(
                                     sessions = sessionManager.sessions,
                                     onOpen = {
-                                        terminalCurrent = it
+                                        currentTab = SessionTab.Terminal(it)
                                         screen = Screen.Terminal(it.host.id)
                                     },
                                     onClose = {
@@ -294,45 +361,89 @@ fun AppRoot(repository: HostRepository) {
                 is Screen.Terminal -> {
                     val host = hosts.firstOrNull { it.id == s.hostId }
                     val all = sessionManager.sessions.filter { it.host.id == s.hostId }
-                    val current = terminalCurrent
-                        ?: all.firstOrNull { isActiveStatus(it.status) }
-                        ?: all.firstOrNull()
+                    val sftpTabs = sftpSessions
+                        .filter { it.first.id == s.hostId }
+                        .map { SessionTab.Sftp(it.first, it.second) }
+                    val terminalTabs = all
+                        .filter { isActiveStatus(it.status) }
+                        .map { SessionTab.Terminal(it) }
+                    val current = currentTab?.takeIf { tab ->
+                        tab.id in (terminalTabs.map { it.id } + sftpTabs.map { it.id })
+                    } ?: (terminalTabs + sftpTabs).firstOrNull()
                     if (host != null && current != null) {
-                        // tab 只显示活跃会话 + 当前会话：被「关闭」断开的旧会话
-                        // 不再出现在终端页（连接页仍可重入），避免残留一堆 tab
-                        val tabs = all.filter { isActiveStatus(it.status) || it === current }
+                        val tabs = terminalTabs + sftpTabs
                         TerminalScreen(
-                            controller = current,
-                            sessions = tabs,
+                            tabs = tabs,
+                            current = current,
                             theme = terminalTheme,
                             settings = settings,
                             onBack = {
-                                terminalCurrent = null
+                                currentTab = null
                                 refreshHosts()
                                 screen = Screen.Home
                             },
-                            onSwitchTab = { terminalCurrent = it },
+                            onSwitchTab = { currentTab = it },
                             onAddSession = {
                                 val c = sessionManager.open(host, settings.autoReconnect) {
                                     hosts = repository.listHosts()
                                 }
                                 pendingNavigate = c
                             },
-                            onCloseTab = { c ->
-                                sessionManager.remove(c)
-                                val remaining = sessionManager.sessions
-                                    .filter { it.host.id == s.hostId }
-                                    .firstOrNull { isActiveStatus(it.status) }
-                                terminalCurrent = remaining
+                            onCloseTab = { tab ->
+                                when (tab) {
+                                    is SessionTab.Terminal -> sessionManager.remove(tab.controller)
+                                    is SessionTab.Sftp -> {
+                                        tab.session.close()
+                                        sftpSessions.removeAll { e: Pair<Host, SftpSession> -> e.second === tab.session }
+                                    }
+                                }
+                                val remaining = (sessionManager.sessions
+                                    .filter { c: TerminalController -> c.host.id == s.hostId && isActiveStatus(c.status) }
+                                    .map { c: TerminalController -> SessionTab.Terminal(c) } +
+                                    sftpSessions
+                                        .filter { e: Pair<Host, SftpSession> -> e.first.id == s.hostId }
+                                        .map { e: Pair<Host, SftpSession> -> SessionTab.Sftp(e.first, e.second) })
+                                    .firstOrNull { it.id != tab.id }
+                                currentTab = remaining
                                 if (remaining == null) {
                                     refreshHosts()
                                     screen = Screen.Home
                                 }
                             },
-                            onSftp = {},
+                            onOpenSftpPicker = { sftpPickerVisible = true },
                         )
                     }
                 }
+            }
+
+            // New SFTP connection 覆盖层（盖在当前页面之上）
+            if (sftpPickerVisible) {
+                SftpHostPickerOverlay(
+                    hosts = hosts,
+                    onDismiss = { sftpPickerVisible = false },
+                    onSelect = connectSftp,
+                )
+            }
+
+            // SFTP 认证 / 主机密钥确认（复用全局弹窗）
+            sftpAuth?.let { req ->
+                AuthPromptDialog(req.prompt) { answers ->
+                    req.deferred.complete(answers)
+                    sftpAuth = null
+                }
+            }
+            sftpHostKey?.let { req ->
+                HostKeyDialog(
+                    key = req.key,
+                    changed = req.changed,
+                    previousFingerprint = req.previousFingerprint,
+                ) { accept ->
+                    req.deferred.complete(accept)
+                    sftpHostKey = null
+                }
+            }
+
+            SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
             }
         }
     }

@@ -3,6 +3,7 @@ package dev.mssh.ssh
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Mosh 客户端会话：由纯 Kotlin 实现（dev.mssh.mosh 包，SSP 协议）。
@@ -78,7 +79,7 @@ fun createKmpMoshSession(
         for (view in pending) {
             // 拷贝持影子锁：会话协程正在 applyDiff/resize 时不能读，
             // 否则 resize 中途行状态不一致导致 cloneLine 越界
-            synchronized(view.lock) {
+            view.lock.withLock {
                 // 行级/字段级增量比对：视觉无变化的推送（如预测收编后的重放）不触发重绘
                 if (uiBuffer.copyContentFrom(view.buffer)) onFrame()
             }

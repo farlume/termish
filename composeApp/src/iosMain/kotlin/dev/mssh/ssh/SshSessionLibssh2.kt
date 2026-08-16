@@ -56,6 +56,8 @@ import libssh2.libssh2_init
 import libssh2.libssh2_keepalive_config
 import libssh2.libssh2_keepalive_send
 import libssh2.libssh2_session_set_blocking
+import libssh2.libssh2_sftp_init
+import libssh2.LIBSSH2_SFTP
 import libssh2.libssh2_session_banner_get
 import libssh2.libssh2_session_disconnect_ex
 import libssh2.libssh2_session_free
@@ -458,6 +460,13 @@ class SshSessionLibssh2(
         // libssh2 会话非线程安全：读循环/keepalive 在串行线程运行，
         // 探测必须编组到同一线程，避免并发触碰 LIBSSH2_SESSION。
         withContext(serialDispatcher) { doProbeSystem() }
+    }
+
+    /** 在已认证连接上打开 SFTP 通道（阻塞模式；调用方负责 shutdown + close）。 */
+    fun openSftp(): CPointer<LIBSSH2_SFTP>? {
+        val (s, _) = connectAndAuthenticate()
+        libssh2_session_set_blocking(s, 1)
+        return libssh2_sftp_init(s)
     }
 
     /** 在已认证会话上开临时 exec 通道执行系统探测，不重新认证、不打断交互 shell。 */

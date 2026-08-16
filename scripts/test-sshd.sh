@@ -13,6 +13,8 @@ cd "$DIR"
 # CI 里 sshd 以 root 启动、测试进程是普通用户：私钥要可读（仅本地测试用途）
 chmod 644 client
 cat client.pub > authorized_keys
+# 加密私钥集成测试用的第二把公钥（存在则保留）
+[ -f enc_client.pub ] && cat enc_client.pub >> authorized_keys
 
 cat > sshd_config <<EOF
 Port $PORT
@@ -28,6 +30,14 @@ ChallengeResponseAuthentication no
 PidFile $DIR/sshd.pid
 LogLevel DEBUG
 EOF
+
+# SFTP subsystem（SFTP 集成测试需要；macOS 与 Linux 路径不同）
+if [ -x /usr/libexec/sftp-server ]; then
+  SFTP_SERVER=/usr/libexec/sftp-server
+elif [ -x /usr/lib/openssh/sftp-server ]; then
+  SFTP_SERVER=/usr/lib/openssh/sftp-server
+fi
+echo "Subsystem sftp $SFTP_SERVER" >> "$DIR/sshd_config"
 
 echo "启动 sshd 于 127.0.0.1:$PORT（日志: $DIR/sshd.log）"
 /usr/sbin/sshd -f "$DIR/sshd_config" -E "$DIR/sshd.log"

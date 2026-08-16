@@ -1,2 +1,1 @@
-headers = libssh2.h
-headerFilter = libssh2.h libssh2_sftp.h
+headers = libssh2.h libssh2_sftp.h

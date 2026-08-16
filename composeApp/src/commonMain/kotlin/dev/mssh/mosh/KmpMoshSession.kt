@@ -44,7 +44,7 @@ class KmpMoshSession(
         val buffer: dev.mssh.term.TerminalBuffer get() = shadow.buffer
         val echoAck: ULong get() = shadow.echoAck
         /** 影子 buffer 读写锁：UI 拷贝前先拿锁，与会话协程写入互斥。 */
-        internal val lock: Any get() = shadow.lock
+        internal val lock: kotlinx.coroutines.sync.Mutex get() = shadow.lock
     }
 
     private sealed class Event {

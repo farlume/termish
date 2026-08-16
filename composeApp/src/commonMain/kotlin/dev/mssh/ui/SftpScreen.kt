@@ -1,0 +1,428 @@
+package dev.mssh.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.mssh.data.Host
+import dev.mssh.ssh.SftpEntry
+import dev.mssh.ssh.SftpSession
+import dev.mssh.generated.resources.Res
+import dev.mssh.generated.resources.folder
+import dev.mssh.util.monospaceFontFamily
+import dev.mssh.util.ioDispatcher
+import dev.mssh.ui.theme.TerminalTheme
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import org.jetbrains.compose.resources.painterResource
+
+/** SFTP 排序方式。 */
+private enum class SftpSort { NAME, DATE, SIZE, KIND }
+
+@Composable
+fun SftpContent(
+    host: Host,
+    session: SftpSession,
+    theme: TerminalTheme,
+) {
+    val s = LocalAppStrings.current
+    val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
+    val clipboard = LocalClipboardManager.current
+
+    var path by remember { mutableStateOf("") }
+    var entries by remember { mutableStateOf<List<SftpEntry>?>(null) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var sort by remember { mutableStateOf(SftpSort.NAME) }
+    var showHidden by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var newFolderDialog by remember { mutableStateOf(false) }
+
+    fun joinPath(base: String, name: String): String =
+        if (base == "/") "/$name" else "$base/$name"
+
+    suspend fun reload() {
+        entries = null
+        loadError = null
+        try {
+            entries = withContext(ioDispatcher()) { session.list(path) }
+        } catch (e: Exception) {
+            loadError = e.message
+            entries = emptyList()
+        }
+    }
+
+    val pickFile = rememberFilePicker { name, bytes ->
+        scope.launch {
+            try {
+                withContext(ioDispatcher()) {
+                    session.upload(joinPath(path, name), bytes)
+                }
+                snackbar.showSnackbar(s.sftpUploaded)
+                reload()
+            } catch (e: Exception) {
+                snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "upload"))
+            }
+        }
+    }
+
+    // 首次进入：优先用户主目录，失败回退根目录
+    LaunchedEffect(Unit) {
+        val home = "/home/${host.username}"
+        path = withContext(ioDispatcher()) {
+            if (runCatching { session.list(home) }.isSuccess) home else "/"
+        }
+    }
+    LaunchedEffect(path, sort, showHidden) {
+        if (path.isNotEmpty()) reload()
+    }
+
+    // 面包屑固定显示用户名（User > liubing），不显示 IP/路径段
+    val segment = host.username
+    val visible = (entries ?: emptyList())
+        .filter { showHidden || !it.isHidden }
+        .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+        .let { list ->
+            when (sort) {
+                SftpSort.NAME -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                SftpSort.DATE -> list.sortedWith(compareByDescending { it.modifiedAt })
+                SftpSort.SIZE -> list.sortedWith(compareBy({ !it.isDirectory }, { it.size }))
+                SftpSort.KIND -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.substringAfterLast('.').lowercase() }))
+            }
+        }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            // 精简头部：无边框、小字体、图标用终端前景色（深色背景下可见）
+            Row(
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (searching) {
+                    IconButton(onClick = { searching = false; query = "" }) {
+                        Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = theme.foreground())
+                    }
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text(s.sftpSearch) },
+                        singleLine = true,
+                    )
+                } else {
+                    Text(
+                        "${s.sftpUser} > $segment",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontFamily = monospaceFontFamily(),
+                        color = theme.foreground(),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    TextButton(onClick = { pickFile() }) {
+                        Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = theme.foreground())
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpUpload, color = theme.foreground())
+                    }
+                    SftpMoreMenu(
+                        sort = sort,
+                        showHidden = showHidden,
+                        tint = theme.foreground(),
+                        onSort = { sort = it },
+                        onToggleHidden = { showHidden = !showHidden },
+                        onNewFolder = { newFolderDialog = true },
+                        onCopyPath = {
+                            clipboard.setText(AnnotatedString(path))
+                            scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                        },
+                        onChangeDownload = {
+                            scope.launch { snackbar.showSnackbar("TODO: ${s.sftpChangeDownload}") }
+                        },
+                    )
+                    IconButton(onClick = { searching = true }) {
+                        Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = theme.foreground())
+                    }
+                }
+            }
+            when {
+                entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(s.sftpConnecting, color = theme.foreground().copy(alpha = 0.7f))
+                }
+                loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(s.sftpLoadFailed(loadError!!), color = MaterialTheme.colorScheme.error)
+                }
+                else -> Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                ) {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        if (path != "/") {
+                            item("..") {
+                                SftpRowItem(
+                                    name = "..",
+                                    permissions = "",
+                                    time = "",
+                                    isDirectory = true,
+                                    onClick = {
+                                        path = path.substringBeforeLast('/', "/").ifBlank { "/" }
+                                    },
+                                )
+                            }
+                        }
+                        items(visible, key = { it.name }) { entry ->
+                            SftpRowItem(
+                                name = entry.name,
+                                permissions = entry.permissions,
+                                time = formatTime(entry.modifiedAt),
+                                isDirectory = entry.isDirectory,
+                                onClick = {
+                                    if (entry.isDirectory) {
+                                        path = joinPath(path, entry.name)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+    }
+
+    if (newFolderDialog) {
+        NewFolderDialog(
+            onConfirm = { name ->
+                newFolderDialog = false
+                scope.launch {
+                    try {
+                        withContext(ioDispatcher()) {
+                            session.mkdir(joinPath(path, name))
+                        }
+                        reload()
+                    } catch (e: Exception) {
+                        snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "mkdir"))
+                    }
+                }
+            },
+            onDismiss = { newFolderDialog = false },
+        )
+    }
+}
+
+/** 三点菜单：新建文件夹 / 排序 / 下载目录 / 复制路径 / 隐藏文件。 */
+@Composable
+private fun SftpMoreMenu(
+    sort: SftpSort,
+    showHidden: Boolean,
+    tint: Color,
+    onSort: (SftpSort) -> Unit,
+    onToggleHidden: () -> Unit,
+    onNewFolder: () -> Unit,
+    onCopyPath: () -> Unit,
+    onChangeDownload: () -> Unit,
+) {
+    val s = LocalAppStrings.current
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(Icons.Filled.MoreVert, contentDescription = s.navMore, tint = tint)
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = { Text(s.sftpNewFolder) },
+                leadingIcon = { Icon(Icons.Filled.CreateNewFolder, null) },
+                onClick = {
+                    open = false
+                    onNewFolder()
+                },
+            )
+            HorizontalDivider()
+            SftpSortItem(s.sftpSortName, sort == SftpSort.NAME) { onSort(SftpSort.NAME) }
+            SftpSortItem(s.sftpSortDate, sort == SftpSort.DATE) { onSort(SftpSort.DATE) }
+            SftpSortItem(s.sftpSortSize, sort == SftpSort.SIZE) { onSort(SftpSort.SIZE) }
+            SftpSortItem(s.sftpSortKind, sort == SftpSort.KIND) { onSort(SftpSort.KIND) }
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(s.sftpChangeDownload) },
+                onClick = {
+                    open = false
+                    onChangeDownload()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.sftpCopyPath) },
+                onClick = {
+                    open = false
+                    onCopyPath()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.sftpHiddenFiles) },
+                leadingIcon = {
+                    if (showHidden) Icon(Icons.Filled.Check, null)
+                },
+                onClick = {
+                    open = false
+                    onToggleHidden()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SftpSortItem(label: String, selected: Boolean, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = { if (selected) Icon(Icons.Filled.Check, null) },
+        onClick = onClick,
+    )
+}
+
+/** 文件/文件夹列表行：icon + 名称 + 权限，右下角时间。 */
+@Composable
+private fun SftpRowItem(
+    name: String,
+    permissions: String,
+    time: String,
+    isDirectory: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            if (isDirectory) painterResource(Res.drawable.folder)
+            else rememberVectorPainter(Icons.AutoMirrored.Filled.InsertDriveFile),
+            contentDescription = null,
+            tint = if (isDirectory) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (permissions.isNotEmpty()) {
+                Text(
+                    permissions,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = monospaceFontFamily(),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (time.isNotEmpty()) {
+            Text(
+                time,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NewFolderDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+    val s = LocalAppStrings.current
+    var name by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.sftpNewFolder) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text(s.sftpFolderName) },
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(name.trim()) }, enabled = name.isNotBlank()) {
+                Text(s.sftpCreate)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(s.terminalCancel) } },
+    )
+}
+
+private fun formatTime(millis: Long): String {
+    if (millis <= 0L) return ""
+    val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+    fun p(n: Int) = n.toString().padStart(2, '0')
+    return "${dt.year}-${p(dt.monthNumber)}-${p(dt.dayOfMonth)} ${p(dt.hour)}:${p(dt.minute)}"
+}

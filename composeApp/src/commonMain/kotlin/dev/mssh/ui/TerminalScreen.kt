@@ -82,6 +82,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.mssh.data.Host
+import dev.mssh.ssh.SftpSession
 import dev.mssh.ssh.AuthPrompt
 import dev.mssh.term.argbToRgb
 import dev.mssh.ui.theme.TerminalTheme
@@ -89,18 +91,66 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 
+/** 终端页会话 tab：SSH/Mosh 终端 或 SFTP 文件浏览器。 */
+sealed interface SessionTab {
+    val id: String
+
+    data class Terminal(val controller: TerminalController) : SessionTab {
+        override val id: String get() = controller.sessionId
+    }
+
+    data class Sftp(val host: Host, val session: SftpSession) : SessionTab {
+        override val id: String get() = "sftp:${host.id}:${session.hashCode()}"
+    }
+}
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
-    controller: TerminalController,
-    sessions: List<TerminalController>,
+    tabs: List<SessionTab>,
+    current: SessionTab,
     theme: TerminalTheme,
     settings: dev.mssh.data.AppSettings,
     onBack: () -> Unit,
-    onSwitchTab: (TerminalController) -> Unit,
+    onSwitchTab: (SessionTab) -> Unit,
     onAddSession: () -> Unit,
-    onCloseTab: (TerminalController) -> Unit,
-    onSftp: () -> Unit,
+    onCloseTab: (SessionTab) -> Unit,
+    onOpenSftpPicker: () -> Unit,
+) {
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        TerminalTabBar(
+            tabs = tabs,
+            current = current,
+            onBack = onBack,
+            onSwitch = onSwitchTab,
+            onAdd = onAddSession,
+            onClose = onCloseTab,
+            onSftp = onOpenSftpPicker,
+            theme = theme,
+        )
+        when (val tab = current) {
+            is SessionTab.Terminal -> TerminalBody(
+                controller = tab.controller,
+                theme = theme,
+                settings = settings,
+                onBack = onBack,
+            )
+            is SessionTab.Sftp -> SftpContent(
+                host = tab.host,
+                session = tab.session,
+                theme = theme,
+            )
+        }
+    }
+}
+
+/** 终端主体：banner + 画布 + 工具栏 + 输入框（切换 tab 按会话 id 重组）。 */
+@Composable
+private fun TerminalBody(
+    controller: TerminalController,
+    theme: TerminalTheme,
+    settings: dev.mssh.data.AppSettings,
+    onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
@@ -162,18 +212,6 @@ fun TerminalScreen(
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        // 头部：返回 + 多会话 tab（系统 logo + user@host + X）+ 添加菜单
-        TerminalTabBar(
-            sessions = sessions,
-            current = controller,
-            onBack = onBack,
-            onSwitch = onSwitchTab,
-            onAdd = onAddSession,
-            onClose = onCloseTab,
-            onSftp = onSftp,
-            theme = theme,
-        )
-
         // 会话主体：切换 tab 时按会话唯一 id 整体重组（输入框/局部状态独立）
         key(controller.sessionId) {
             // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
@@ -383,12 +421,12 @@ fun TerminalScreen(
  */
 @Composable
 private fun TerminalTabBar(
-    sessions: List<TerminalController>,
-    current: TerminalController,
+    tabs: List<SessionTab>,
+    current: SessionTab,
     onBack: () -> Unit,
-    onSwitch: (TerminalController) -> Unit,
+    onSwitch: (SessionTab) -> Unit,
     onAdd: () -> Unit,
-    onClose: (TerminalController) -> Unit,
+    onClose: (SessionTab) -> Unit,
     onSftp: () -> Unit,
     theme: TerminalTheme,
 ) {
@@ -435,17 +473,25 @@ private fun TerminalTabBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                sessions.forEach { c ->
+                tabs.forEach { tab ->
+                    val host = when (tab) {
+                        is SessionTab.Terminal -> tab.controller.host
+                        is SessionTab.Sftp -> tab.host
+                    }
+                    val statusColor = (tab as? SessionTab.Terminal)?.let {
+                        statusColor(it.controller.status, it.controller.linkLostSeconds)
+                    }
                     SessionTabChip(
-                        controller = c,
-                        selected = c === current,
+                        host = host,
+                        statusDotColor = statusColor,
+                        selected = tab === current,
                         theme = theme,
                         onClick = {
-                            onSwitch(c)
-                            scrollToCenter(c.sessionId)
+                            onSwitch(tab)
+                            scrollToCenter(tab.id)
                         },
-                        onClose = { onClose(c) },
-                        onPositioned = { x, w -> chipLayout[c.sessionId] = x to w },
+                        onClose = { onClose(tab) },
+                        onPositioned = { x, w -> chipLayout[tab.id] = x to w },
                     )
                 }
             }
@@ -466,11 +512,9 @@ private fun TerminalTabBar(
                             onAdd()
                         },
                     )
-                    // SFTP 尚未实现：菜单项展示但置灰不可点
                     DropdownMenuItem(
                         text = { Text(s.hostsConnectSftp) },
                         leadingIcon = { Icon(Icons.Filled.FolderOpen, null) },
-                        enabled = false,
                         onClick = {
                             addOpen = false
                             onSftp()
@@ -485,14 +529,15 @@ private fun TerminalTabBar(
 /** 单个会话 tab：系统小头像 + user@host + 关闭 X；当前 tab 高亮并显示连接状态点。 */
 @Composable
 private fun SessionTabChip(
-    controller: TerminalController,
+    host: Host,
+    statusDotColor: Color?,
     selected: Boolean,
     theme: TerminalTheme,
     onClick: () -> Unit,
     onClose: () -> Unit,
     onPositioned: (x: Float, width: Float) -> Unit,
 ) {
-    val sys = controller.host.system.ifBlank { controller.host.hostname }
+    val sys = host.system.ifBlank { host.hostname }
     Row(
         Modifier
             .clip(RoundedCornerShape(8.dp))
@@ -521,17 +566,16 @@ private fun SessionTabChip(
         }
         Spacer(Modifier.size(6.dp))
         Text(
-            "${controller.host.username}@${controller.host.hostname}",
+            "${host.username}@${host.hostname}",
             style = MaterialTheme.typography.labelSmall,
             color = theme.foreground(),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         Spacer(Modifier.size(4.dp))
-        if (selected) {
+        if (selected && statusDotColor != null) {
             Box(
-                Modifier.size(8.dp).clip(CircleShape)
-                    .background(statusColor(controller.status, controller.linkLostSeconds)),
+                Modifier.size(8.dp).clip(CircleShape).background(statusDotColor),
             )
         }
         IconButton(onClick = onClose, modifier = Modifier.size(22.dp)) {

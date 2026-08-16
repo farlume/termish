@@ -137,6 +137,12 @@ class SshSessionSshj(
         }
     }
 
+    /** 在已认证连接上打开 SFTP 通道（SFTP 会话独立持有本对象；调用方负责 close）。 */
+    fun openSftp(): net.schmizz.sshj.sftp.SFTPClient {
+        connectTransport()
+        return client.newSFTPClient()
+    }
+
     // ---------- 认证 ----------
 
     private fun authenticate() {

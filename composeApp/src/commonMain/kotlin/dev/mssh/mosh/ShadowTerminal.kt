@@ -3,6 +3,9 @@ package dev.mssh.mosh
 import dev.mssh.term.TerminalBuffer
 import dev.mssh.term.CellAttr
 import dev.mssh.term.TerminalEmulator
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * SSP 远端状态（对应协议 服务端的 服务端终端状态 在客户端的影子）：
@@ -22,7 +25,7 @@ internal class ShadowTerminal internal constructor(
      * （copyContentFrom）并发访问同一 TerminalBuffer；不加锁时 resize 中途
      * 行 cells 与 cols 字段不同步，cloneLine 会越界崩溃（ArrayIndexOutOfBounds）。
      */
-    internal val lock = Any()
+    internal val lock = Mutex()
 
     var onTitleChange: (String) -> Unit = {}
         set(v) {
@@ -43,7 +46,8 @@ internal class ShadowTerminal internal constructor(
      *  服务端模型更穷，逐字节镜像反而降级体验；diff 只按行号作用可见区，
      *  语义差异不会破坏协议。不要为“对齐服务端”改这里。 */
     fun applyDiff(diff: ByteArray) {
-        synchronized(lock) {
+        runBlocking {
+            lock.withLock {
             for (ev in decodeHostMessage(diff)) {
                 when (ev) {
                     is HostEventIn.HostBytes -> emulator.write(ev.bytes)
@@ -51,19 +55,22 @@ internal class ShadowTerminal internal constructor(
                     is HostEventIn.EchoAck -> if (ev.echoAckNum > echoAck) echoAck = ev.echoAckNum
                 }
             }
+            }
         }
     }
 
     /** 分叉：深拷贝当前状态（mosh 收端 时间戳状态 复制）。 */
     fun fork(): ShadowTerminal {
-        synchronized(lock) {
+        return runBlocking {
+            lock.withLock {
             // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
             val buf = buffer.shallowFork()
             val emu = TerminalEmulator(buf)
             emu.onTitleChange = onTitleChange
             emu.onClipboardWrite = onClipboardWrite
             // 影子终端不应对外回写（DSR 应答等），置空即可
-            return ShadowTerminal(buf, emu, echoAck)
+            ShadowTerminal(buf, emu, echoAck)
+            }
         }
     }
 
