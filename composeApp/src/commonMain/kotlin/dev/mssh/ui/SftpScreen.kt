@@ -1,10 +1,10 @@
 package dev.mssh.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -188,8 +188,8 @@ fun SftpContent(
                 // 搜索模式：X + 圆角搜索框，横向展开动画
                 AnimatedVisibility(
                     visible = searching,
-                    enter = expandHorizontally() + fadeIn(),
-                    exit = shrinkHorizontally() + fadeOut(),
+                    enter = slideInHorizontally(initialOffsetX = { it / 2 }) + fadeIn(),
+                    exit = slideOutHorizontally(targetOffsetX = { it / 2 }) + fadeOut(),
                     modifier = Modifier.weight(1f),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -213,8 +213,8 @@ fun SftpContent(
                 // 普通模式：面包屑 + Upload + 菜单 + 搜索 icon
                 AnimatedVisibility(
                     visible = !searching,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    enter = fadeIn() + slideInHorizontally(initialOffsetX = { -it / 2 }),
+                    exit = fadeOut() + slideOutHorizontally(targetOffsetX = { -it / 2 }),
                     modifier = Modifier.weight(1f),
                 ) {
                     // 整组放同一行：面包屑 + 上传 + 菜单 + 搜索（AnimatedVisibility 内容非 RowScope，
