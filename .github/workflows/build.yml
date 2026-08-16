@@ -39,6 +39,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Android mosh 原生库由脚本从源码交叉编译（jniLibs 不提交二进制）；
+      # ubuntu-latest 镜像自带 NDK 26.1.10909125（$ANDROID_HOME/ndk）
+      - name: Build Android mosh native libs
+        run: ./scripts/build-android-mosh.sh
+
       # 发版 tag 必须与仓库里的版本号一致，防止「tag 0.3.0、包还是 0.2.0」
       - name: Verify version matches tag
         if: startsWith(github.ref, 'refs/tags/v')

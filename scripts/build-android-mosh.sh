@@ -42,7 +42,12 @@ fetch_source() { # name outfile url sha256
     curl -fsSL --retry 3 -o "$out" "$url"
   fi
   if [ -n "$sha" ]; then
-    echo "$sha  $out" | shasum -a 256 -c - >/dev/null 2>&1 \
+    if command -v shasum >/dev/null 2>&1; then
+      SHA_CHECK="shasum -a 256"
+    else
+      SHA_CHECK="sha256sum"
+    fi
+    echo "$sha  $out" | $SHA_CHECK -c - >/dev/null 2>&1 \
       || { echo "SHA-256 校验失败: $out" >&2; exit 1; }
   fi
 }
@@ -78,14 +83,19 @@ esac
 
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK:-}}"
 if [ -z "$NDK" ]; then
-  # 当年构建用的是 26.1.10909125（OpenSSL 3.0.13 对 NDK r27 兼容性差），优先选它
-  for v in 26.1.10909125 27.1.12297006; do
-    if [ -d "$HOME/Library/Android/sdk/ndk/$v" ]; then NDK="$HOME/Library/Android/sdk/ndk/$v"; break; fi
-  done
-fi
-if [ -z "$NDK" ]; then
-  for cand in "$HOME/Library/Android/sdk/ndk"/*; do
-    [ -d "$cand" ] && { NDK="$cand"; break; }
+  # 常见 SDK 位置：macOS 默认 / Android SDK 环境变量（本地与 GitHub Actions）
+  for sdk in "$HOME/Library/Android/sdk" "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+    [ -n "$sdk" ] || continue
+    # 当年构建用的是 26.1.10909125（OpenSSL 3.0.13 对 NDK r27 兼容性差），优先选它
+    for v in 26.1.10909125 27.1.12297006; do
+      if [ -d "$sdk/ndk/$v" ]; then NDK="$sdk/ndk/$v"; break 2; fi
+    done
+    if [ -z "$NDK" ]; then
+      for cand in "$sdk/ndk"/*; do
+        [ -d "$cand" ] && { NDK="$cand"; break; }
+      done
+    fi
+    [ -n "$NDK" ] && break
   done
 fi
 if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
