@@ -3,6 +3,7 @@ package dev.mssh.mosh
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -144,28 +145,73 @@ class SspTest {
 
     @Test
     fun cryptoSessionRoundTrip() {
-        val key = dev.mssh.util.base64Encode(ByteArray(16) { it.toByte() })
+        val keyRaw = ByteArray(16) { it.toByte() }
+        val key = dev.mssh.util.base64Encode(keyRaw).substring(0, 22)
         val sender = MoshCryptoSession(key)
-        val receiver = MoshCryptoSession(key)
+        val serverOcb = Ocb(keyRaw) // 服务器侧等价原语（方向位=1 加密）
         val payload = "fragment-bytes".encodeToByteArray()
-        val dg = sender.encrypt(5uL, 1234, 5678, payload)
-        // 线上格式：8B seq || 密文 || 16B tag
-        assertEquals(5, dg[7].toInt())
-        val pkt = receiver.decrypt(dg)
+
+        // 客户端 → 服务器（方向位 0）：线上格式 8B seq || 密文 || 16B tag
+        val toServer = sender.encrypt(5uL, 1234, 5678, payload)
+        assertEquals(5, toServer[7].toInt())
+        val ts = byteArrayOf(0x04, 0xd2.toByte(), 0x16, 0x2e.toByte())
+        val expectedCt = serverOcb.encrypt(nonceBytes(5uL), ts + payload)
+        assertTrue(
+            toServer.copyOfRange(8, toServer.size).contentEquals(expectedCt),
+            "客户端密文与服务器侧不一致\nclient=${toServer.copyOfRange(8, toServer.size).toHex()}\nserver=${expectedCt.toHex()}",
+        )
+        val serverPlain = serverOcb.decrypt(nonceBytes(5uL), toServer.copyOfRange(8, toServer.size))
+        assertNotNull(serverPlain)
+        assertEquals(4 + payload.size, serverPlain.size)
+
+        // 服务器 → 客户端（方向位=1）：客户端必须能解
+        val serverSeq = (1uL shl 63) or 5uL
+        val serverCt = serverOcb.encrypt(nonceBytes(serverSeq), ts + payload)
+        val toClient = ByteArray(8 + serverCt.size)
+        for (i in 0..7) toClient[i] = (serverSeq shr (56 - 8 * i)).toByte()
+        serverCt.copyInto(toClient, 8)
+        val pkt = sender.decrypt(toClient)
         assertNotNull(pkt)
-        assertEquals(5uL, pkt.seq)
-        assertEquals(1234, pkt.timestamp)
-        assertEquals(5678, pkt.timestampReply)
+        assertEquals(5uL, pkt.seq) // 方向位被掩掉后才是序号
+        assertEquals(1234, pkt.timestamp) // 0x04d2
+        assertEquals(5678, pkt.timestampReply) // 0x162e
         assertContentEquals(payload, pkt.payload)
     }
 
+    private fun nonceBytes(seqWithDir: ULong): ByteArray {
+        val n = ByteArray(12)
+        for (i in 0..7) n[4 + i] = (seqWithDir shr (56 - 8 * i)).toByte()
+        return n
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
     @Test
     fun cryptoSessionRejectsTamper() {
-        val key = dev.mssh.util.base64Encode(ByteArray(16) { (it * 3).toByte() })
+        val key = dev.mssh.util.base64Encode(ByteArray(16) { (it * 3).toByte() }).substring(0, 22)
         val s = MoshCryptoSession(key)
         val dg = s.encrypt(0uL, 0, 0xffff, byteArrayOf(1, 2, 3))
         dg[10] = (dg[10].toInt() xor 0x40).toByte()
         assertNull(s.decrypt(dg))
         assertNull(s.decrypt(dg.copyOf(10))) // 截断
+    }
+
+    @Test
+    fun cryptoSessionRejectsClientDirectionReplay() {
+        // 方向位=0（TO_SERVER）是客户端自己发出的包；重放回来必须被拒绝
+        val key = dev.mssh.util.base64Encode(ByteArray(16) { it.toByte() }).substring(0, 22)
+        val s = MoshCryptoSession(key)
+        val dg = s.encrypt(0uL, 0, 0xffff, byteArrayOf(1, 2, 3))
+        assertNull(s.decrypt(dg))
+    }
+
+    @Test
+    fun cryptoSessionValidatesKeyEncoding() {
+        val canonical = dev.mssh.util.base64Encode(ByteArray(16)).substring(0, 22)
+        // 21 个 A + B：22 字符但尾部 4 bit 非零，mosh Base64Key 会拒绝
+        val nonCanonical = "AAAAAAAAAAAAAAAAAAAAAB"
+        assertFailsWith<IllegalArgumentException> { MoshCryptoSession(nonCanonical) }
+        assertFailsWith<IllegalArgumentException> { MoshCryptoSession(canonical + "A") } // 长度
+        MoshCryptoSession(canonical) // 规范 key 正常
     }
 }

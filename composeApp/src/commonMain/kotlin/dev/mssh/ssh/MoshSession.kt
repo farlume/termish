@@ -1,5 +1,8 @@
 package dev.mssh.ssh
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+
 /**
  * Mosh 客户端会话：由平台实现拉起 mosh-client 进程（PTY + 进程 + 读写桥接），
  * 输出走 [onOutput] 喂给终端模拟器。
@@ -58,7 +61,11 @@ fun createKmpMoshSession(
         rows = rows,
         scope = scope,
         onStateUpdate = { view ->
-            uiBuffer.copyContentFrom(view.buffer)
+            // 拷贝到 UI buffer 必须在主线程：Compose 渲染同时在读，
+            // 会话线程直接写会造成画面撕裂/并发异常
+            scope.launch(Dispatchers.Main) {
+                uiBuffer.copyContentFrom(view.buffer)
+            }
         },
         onExit = onExit,
     )

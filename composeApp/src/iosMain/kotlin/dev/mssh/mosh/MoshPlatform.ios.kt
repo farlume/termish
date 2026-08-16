@@ -55,7 +55,10 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
 
     actual fun send(data: ByteArray) {
         data.usePinned { pinned ->
-            send(fd, pinned.addressOf(0), data.size.convert(), 0)
+            val n = send(fd, pinned.addressOf(0), data.size.convert(), 0)
+            if (n.toInt() != data.size) {
+                error("mosh UDP send 只发送了 $n/${data.size} 字节")
+            }
         }
     }
 
