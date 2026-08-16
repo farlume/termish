@@ -60,12 +60,6 @@ private fun languageLabel(code: String, s: AppStrings): String = when (code) {
     else -> s.settingsLanguageSystem
 }
 
-/** 头像背景色板。 */
-private val AVATAR_COLORS = listOf(
-    Color(0xFF7C4DFF), Color(0xFF448AFF), Color(0xFF00BFA5), Color(0xFFFF6D00),
-    Color(0xFFE91E63), Color(0xFF5C6BC0), Color(0xFF00897B), Color(0xFFEC407A),
-)
-
 @Composable
 fun SettingsScreen(
     settings: AppSettings,
@@ -91,18 +85,6 @@ fun SettingsScreen(
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
 
-    // 随机字母头像：首次生成后立即持久化，之后固定不变
-    val generated = remember { ('A'..'Z').random().toString() to AVATAR_COLORS.indices.random() }
-    val avatarLetter = settings.avatarLetter.ifEmpty { generated.first }
-    val avatarColor = AVATAR_COLORS.getOrElse(
-        if (settings.avatarColorIndex >= 0) settings.avatarColorIndex else generated.second,
-    ) { AVATAR_COLORS[0] }
-    LaunchedEffect(Unit) {
-        if (settings.avatarLetter.isEmpty()) {
-            onChange(settings.copy(avatarLetter = generated.first, avatarColorIndex = generated.second))
-        }
-    }
-
     fun persist() = onChange(
         settings.copy(
             theme = theme,
@@ -124,30 +106,6 @@ fun SettingsScreen(
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
         ) {
-            // 头像区：随机字母 + 随机背景色
-            Column(
-                Modifier.fillMaxWidth().padding(vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Box(
-                    Modifier.size(72.dp).clip(CircleShape).background(avatarColor),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        avatarLetter,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontFamily = dev.mssh.util.monospaceFontFamily(),
-                        color = Color.White,
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    s.settingsLocalUser,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                )
-            }
-
             SettingsGroup(s.settingsGroupAppearance) {
                 SettingsOptionItem(s.settingsAppTheme, themeModeLabel(theme, s)) { showThemeDialog = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))

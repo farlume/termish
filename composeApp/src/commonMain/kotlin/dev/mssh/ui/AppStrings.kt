@@ -106,7 +106,6 @@ data class AppStrings(
     val navMore: String,
     // 设置
     val settingsTitle: String,
-    val settingsLocalUser: String,
     val settingsGroupAppearance: String,
     val settingsGroupTerminal: String,
     val settingsGroupGeneral: String,
@@ -243,7 +242,6 @@ private val EnStrings = AppStrings(
     navBack = "Back",
     navMore = "More",
     settingsTitle = "Settings",
-    settingsLocalUser = "Local user",
     settingsGroupAppearance = "Appearance",
     settingsGroupTerminal = "Terminal",
     settingsGroupGeneral = "General",
@@ -370,7 +368,6 @@ private val ZhStrings = AppStrings(
     navBack = "返回",
     navMore = "更多",
     settingsTitle = "设置",
-    settingsLocalUser = "本地用户",
     settingsGroupAppearance = "外观",
     settingsGroupTerminal = "终端",
     settingsGroupGeneral = "通用",
