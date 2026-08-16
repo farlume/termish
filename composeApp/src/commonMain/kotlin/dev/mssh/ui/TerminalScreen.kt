@@ -448,7 +448,14 @@ private fun TerminalTabBar(
         }
     }
 
-    Column(Modifier.fillMaxWidth().background(theme.background())) {
+    // 头部配色跟随当前 tab 类型：终端 tab 用终端主题（深色），
+    // SFTP 等应用类页面 tab 用应用主题（浅色）
+    val barBackground = if (current is SessionTab.Terminal) theme.background()
+    else MaterialTheme.colorScheme.surface
+    val barForeground = if (current is SessionTab.Terminal) theme.foreground()
+    else MaterialTheme.colorScheme.onSurface
+
+    Column(Modifier.fillMaxWidth().background(barBackground)) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -459,7 +466,7 @@ private fun TerminalTabBar(
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                     contentDescription = s.navBack,
-                    tint = theme.foreground(),
+                    tint = barForeground,
                 )
             }
             // 会话 tab：水平滑动
@@ -484,7 +491,7 @@ private fun TerminalTabBar(
                         host = host,
                         statusDotColor = statusColor,
                         selected = tab === current,
-                        theme = theme,
+                        foreground = barForeground,
                         onClick = {
                             onSwitch(tab)
                             scrollToCenter(tab.id)
@@ -499,7 +506,7 @@ private fun TerminalTabBar(
                     Icon(
                         Icons.Filled.Add,
                         contentDescription = s.hostsAdd,
-                        tint = theme.foreground(),
+                        tint = barForeground,
                     )
                 }
                 DropdownMenu(expanded = addOpen, onDismissRequest = { addOpen = false }) {
@@ -531,7 +538,7 @@ private fun SessionTabChip(
     host: Host,
     statusDotColor: Color?,
     selected: Boolean,
-    theme: TerminalTheme,
+    foreground: Color,
     onClick: () -> Unit,
     onClose: () -> Unit,
     onPositioned: (x: Float, width: Float) -> Unit,
@@ -541,8 +548,8 @@ private fun SessionTabChip(
         Modifier
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (selected) theme.foreground().copy(alpha = 0.18f)
-                else theme.foreground().copy(alpha = 0.07f),
+                if (selected) foreground.copy(alpha = 0.18f)
+                else foreground.copy(alpha = 0.07f),
             )
             .clickable(onClick = onClick)
             .padding(start = 8.dp, top = 5.dp, bottom = 5.dp, end = 2.dp)
@@ -567,7 +574,7 @@ private fun SessionTabChip(
         Text(
             "${host.username}@${host.hostname}",
             style = MaterialTheme.typography.labelSmall,
-            color = theme.foreground(),
+            color = foreground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -581,7 +588,7 @@ private fun SessionTabChip(
             Icon(
                 Icons.Filled.Close,
                 contentDescription = null,
-                tint = theme.foreground().copy(alpha = 0.7f),
+                tint = foreground.copy(alpha = 0.7f),
                 modifier = Modifier.size(14.dp),
             )
         }
