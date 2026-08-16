@@ -23,6 +23,6 @@ mosh-client，二者不共享地址空间。按 GPLv3 要求：
 
 - mosh 1.4.0 源代码：https://mosh.org / https://github.com/mobile-shell/mosh
 - 本项目使用的交叉编译脚本完整公开：
-  - Android：见 composeApp/src/androidMain/cpp/moshpty.c 及构建说明（README）
+  - Android：scripts/build-android-mosh.sh（NDK 交叉编译 mosh + openssl/ncurses/protobuf）
   - iOS：scripts/build-ios-mosh.sh（含全部 configure 参数与补丁）
 - 你可以用上述脚本从原始源码复现出完全一致的二进制
