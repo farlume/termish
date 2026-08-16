@@ -126,6 +126,9 @@ fun TerminalScreen(
     onCloseTab: (SessionTab) -> Unit,
     onOpenSftpPicker: () -> Unit,
 ) {
+    val s = LocalAppStrings.current
+    // 关闭 tab 前确认：x 太容易误触
+    var pendingClose by remember { mutableStateOf<SessionTab?>(null) }
     // 背景在 statusBarsPadding 之前应用：状态栏/灵动岛区域与页面同色，
     // 避免终端黑色时顶部露出 App 浅色背景（或终端白色时露出深色背景）
     val (pageBackground, pageForeground) = tabColors(current, theme)
@@ -138,7 +141,7 @@ fun TerminalScreen(
             onBack = onBack,
             onSwitch = onSwitchTab,
             onAdd = onAddSession,
-            onClose = onCloseTab,
+            onClose = { pendingClose = it },
             onSftp = onOpenSftpPicker,
             theme = theme,
         )
@@ -154,6 +157,33 @@ fun TerminalScreen(
                 session = tab.session,
             )
         }
+    }
+
+    pendingClose?.let { tab ->
+        val host = when (tab) {
+            is SessionTab.Terminal -> tab.controller.host
+            is SessionTab.Sftp -> tab.host
+        }
+        AlertDialog(
+            onDismissRequest = { pendingClose = null },
+            title = { Text(s.terminalCloseTabTitle) },
+            text = { Text(s.terminalCloseTabBody("${host.username}@${host.hostname}")) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingClose = null
+                        onCloseTab(tab)
+                    },
+                ) {
+                    Text(s.terminalConfirm)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingClose = null }) {
+                    Text(s.terminalCancel)
+                }
+            },
+        )
     }
 }
 
