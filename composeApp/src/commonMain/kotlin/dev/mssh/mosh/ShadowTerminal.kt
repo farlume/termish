@@ -1,6 +1,7 @@
 package dev.mssh.mosh
 
 import dev.mssh.term.TerminalBuffer
+import dev.mssh.term.CellAttr
 import dev.mssh.term.TerminalEmulator
 
 /**
@@ -11,7 +12,7 @@ import dev.mssh.term.TerminalEmulator
  * （注释称 parser state irrelevant），分叉时用同一 buffer 深拷贝 + 新解析器：
  * new_frame 产生的 diff 是完整转义序列，不会在序列中间断帧。
  */
-internal class ShadowTerminal private constructor(
+internal class ShadowTerminal internal constructor(
     val buffer: TerminalBuffer,
     private val emulator: TerminalEmulator,
     var echoAck: ULong,
@@ -47,6 +48,15 @@ internal class ShadowTerminal private constructor(
         emu.onClipboardWrite = onClipboardWrite
         // 影子终端不应对外回写（DSR 应答等），置空即可
         return ShadowTerminal(buf, emu, echoAck)
+    }
+
+    /** 本地预测回显：在确认态的 COW 分叉上应用用户输入，预测格带下划线标记。
+     *  仅用于显示，不进入 SSP 状态机；确认态一到即被丢弃。 */
+    internal fun predictInput(bytes: ByteArray): ShadowTerminal {
+        val fork = fork()
+        fork.buffer.currentAttrs = fork.buffer.currentAttrs or CellAttr.UNDERLINE
+        fork.emulator.write(bytes)
+        return fork
     }
 
     companion object {

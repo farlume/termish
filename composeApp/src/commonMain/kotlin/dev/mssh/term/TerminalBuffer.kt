@@ -91,6 +91,8 @@ class TerminalBuffer(
 ) {
     private val normal = ArrayDeque<TerminalLine>()
     private var alt = Array(rows) { TerminalLine(cols) }
+    /** 上次拷贝时源缓冲普通屏窗口起点（normal[0] 对应的源行下标），增量同步用。 */
+    private var copySourceOffset: Int = 0
 
     var altScreen: Boolean = false
         private set
@@ -706,33 +708,51 @@ class TerminalBuffer(
      *  避免大回看下每帧全量克隆单元格。 */
     fun copyContentFrom(other: TerminalBuffer) {
         val oldCols = cols
-        cols = other.cols
-        rows = other.rows
+        val oldRows = rows
+        val oldSize = normal.size
+        val oldOffset = copySourceOffset
+
         // 目标缓冲设了上限时只拷贝保留段（最后 maxScrollback+rows 行），
         // 避免影子无上限后每帧先克隆全部再丢弃（影子 Int.MAX_VALUE 则全量拷贝）
         val keep = if (maxScrollbackLines == Int.MAX_VALUE) {
             other.normal.size
         } else {
-            minOf(other.normal.size, maxScrollbackLines + rows)
+            minOf(other.normal.size, maxScrollbackLines + other.rows)
         }
         val offset = other.normal.size - keep
-        val shapeStable = oldCols == other.cols && normal.size == keep
-        if (!shapeStable) normal.clear()
-        var dstIdx = 0
-        for (j in offset until other.normal.size) {
-            val src = other.normal[j]
-            if (shapeStable) {
-                val dst = normal[dstIdx]
-                if (dst.identity !== src.identity || dst.version != src.version) {
-                    normal[dstIdx] = cloneLine(src)
-                } else {
-                    dst.wrapped = src.wrapped
-                }
-            } else {
-                normal.addLast(cloneLine(src))
+
+        cols = other.cols
+        rows = other.rows
+
+        // 增量对齐：源回看只增长（unbounded 不删行），目标窗口起点前移 drop 行；
+        // 剩余行与源按 identity/version 逐行比对复用，末尾追加新行。
+        // 形状变化（resize）或回看被清（ED3）时 drop 越界 → 全量重建。
+        val drop = if (oldCols == other.cols && oldRows == other.rows) offset - oldOffset else -1
+        if (drop < 0 || drop > oldSize) {
+            normal.clear()
+            for (j in offset until other.normal.size) {
+                normal.addLast(cloneLine(other.normal[j]))
             }
-            dstIdx++
+        } else {
+            repeat(drop) { normal.removeFirst() }
+            var dstIdx = 0
+            for (j in offset until other.normal.size) {
+                val src = other.normal[j]
+                if (dstIdx < oldSize - drop) {
+                    val dst = normal[dstIdx]
+                    if (dst.identity !== src.identity || dst.version != src.version) {
+                        normal[dstIdx] = cloneLine(src)
+                    } else {
+                        dst.wrapped = src.wrapped
+                    }
+                } else {
+                    normal.addLast(cloneLine(src))
+                }
+                dstIdx++
+            }
         }
+        copySourceOffset = offset
+
         alt = Array(other.rows) { cloneLine(other.alt[it]) }
         copyStateFieldsFrom(other)
         markChanged()

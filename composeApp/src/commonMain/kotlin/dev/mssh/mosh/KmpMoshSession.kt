@@ -65,6 +65,7 @@ class KmpMoshSession(
     private val socketJobs = ArrayDeque<Job>()
     private var lastHopAt = 0L
     private val events = Channel<Event>(Channel.UNLIMITED)
+    private val prediction = PredictionLayer(::nowMs)
 
     private val transport = MoshTransport(
         ip = ip,
@@ -81,11 +82,17 @@ class KmpMoshSession(
             }
         },
         onNewState = { shadow ->
-            shadow.onTitleChange = { t -> titleCallback(t) }
-            shadow.onClipboardWrite = { s -> clipboardCallback(s) }
-            onStateUpdate(ShadowTerminalView(shadow))
+            // 确认态到达：丢弃本地预测，UI 切回确认态
+            prediction.onConfirmed(shadow)
+            pushToUi(shadow)
         },
     )
+
+    private fun pushToUi(shadow: ShadowTerminal) {
+        shadow.onTitleChange = { t -> titleCallback(t) }
+        shadow.onClipboardWrite = { s -> clipboardCallback(s) }
+        onStateUpdate(ShadowTerminalView(shadow))
+    }
 
     private var titleCallback: (String) -> Unit = {}
     private var clipboardCallback: (String) -> Unit = {}
@@ -158,13 +165,26 @@ class KmpMoshSession(
                         peerSeen = true
                     }
                 }
-                is Event.Input -> transport.pushBytes(ev.data)
+                is Event.Input -> {
+                    transport.pushBytes(ev.data)
+                    // 本地预测回显：高 RTT 时按键先在确认态分叉上渲染（下划线标记），
+                    // 服务器确认后校正——与 mosh 预测引擎 同思路的简化版
+                    if (prediction.onUserInput(ev.data, transport.srttMs())) {
+                        prediction.currentForDisplay()?.let { pushToUi(it) }
+                    }
+                }
                 is Event.Resize -> transport.pushResize(ev.cols, ev.rows)
                 is Event.Close -> transport.startShutdown()
                 null -> {} // 超时，到点 tick
             }
             transport.tick()
             maybeHopPort()
+
+            // 预测悬挂过久（服务器未确认或期间有输出）：丢弃并回确认态
+            if (prediction.glitchTimedOut()) {
+                prediction.onConfirmed(transport.latestRemote)
+                pushToUi(transport.latestRemote)
+            }
 
             // mosh-client：15s 无新远端状态 → 主动进入 shutdown（随后由超时兜底退出）
             if (transport.hasPeer() && !transport.shutdownInProgress &&

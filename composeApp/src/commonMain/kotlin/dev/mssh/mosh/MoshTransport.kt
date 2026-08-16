@@ -125,6 +125,9 @@ internal class MoshTransport(
     /** 对端已确认状态（front）的发送时刻；客户端端口轮换判定用（mosh get_sent_state_acked_timestamp）。 */
     fun sentStateAckedTimestamp(): Long = sentStates.first().timestamp
 
+    /** 当前平滑 RTT（毫秒），本地预测回显的启用门槛用（mosh SRTT_TRIGGER_LOW=20）。 */
+    fun srttMs(): Long = srtt.toLong()
+
     // ---- RTT ----
 
     private fun timeout(): Long {
