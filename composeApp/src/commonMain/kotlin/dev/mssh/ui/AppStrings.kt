@@ -49,6 +49,7 @@ data class AppStrings(
     val editQuickCommands: String,
     val editStartupCommand: String,
     val editStartupPlaceholder: String,
+    val editMoshThemeSync: String,
     // 连接页
     val connSearch: String,
     val connEmpty: String,
@@ -155,6 +156,7 @@ private val EnStrings = AppStrings(
     editQuickCommands = "Quick commands (one per line: label:command)",
     editStartupCommand = "Startup command (run after connect)",
     editStartupPlaceholder = "tmux new -A -s main (restore session on reconnect)",
+    editMoshThemeSync = "Sync terminal theme over Mosh (for herdr etc.)",
     connSearch = "Search sessions / hosts / users",
     connEmpty = "No sessions\nOpen a host from the Hosts tab to connect",
     connNoMatch = "No matching sessions",
@@ -250,6 +252,7 @@ private val ZhStrings = AppStrings(
     editQuickCommands = "快速命令（每行「标签:命令」）",
     editStartupCommand = "启动命令（连接后自动执行）",
     editStartupPlaceholder = "tmux new -A -s main（重连恢复现场）",
+    editMoshThemeSync = "Mosh 下同步手机终端主题（herdr 等）",
     connSearch = "搜索会话 / 主机 / 用户",
     connEmpty = "暂无会话\n在「主机」页点击主机即可发起连接",
     connNoMatch = "无匹配会话",

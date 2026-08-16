@@ -548,6 +548,24 @@ class TerminalEmulator(
         onResponse("\u001b]$ps;${rgbToXTerm(rgb)}\u001b\\".encodeToByteArray())
     }
 
+    /**
+     * 主动向远端注入本端终端配色（OSC 10/11 + 基础 16 色调色板）。
+     *
+     * 用于 Mosh：mosh-server 会吞掉远端 TUI 发出的 OSC 10/11 查询，
+     * 查询永远到不了手机，应用（如 herdr）只能拿到宿主机终端主题，
+     * 导致手机浅色主题下远端却按深色渲染。把应答字节直接写进会话输入流，
+     * 应用会像收到终端应答一样解析并采纳本端配色。
+     */
+    fun buildThemeSyncPayload(): ByteArray {
+        val sb = StringBuilder()
+        sb.append("\u001b]10;${rgbToXTerm(buffer.defaultFgRgb)}\u001b\\")
+        sb.append("\u001b]11;${rgbToXTerm(buffer.defaultBgRgb)}\u001b\\")
+        for (i in 0..15) {
+            sb.append("\u001b]4;$i;${rgbToXTerm(TerminalPalette.PALETTE_256[i])}\u001b\\")
+        }
+        return sb.toString().encodeToByteArray()
+    }
+
     /** OSC 4 ; i ; ? 调色板查询（可多对 i;?）。 */
     private fun handleOsc4Query(pt: String) {
         val parts = pt.split(';')

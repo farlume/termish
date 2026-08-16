@@ -44,6 +44,14 @@ data class Host(
     val connectionMode: ConnectionMode = ConnectionMode.SSH,
     /** 连接成功后自动执行的命令（如 `tmux new -A -s main` 实现会话现场恢复）。 */
     val startupCommand: String = "",
+    /**
+     * Mosh 连接建立后，把手机终端主题（前景/背景/16 色调色板）以
+     * OSC 应答的形式注入远端输入流。mosh-server 会吞掉远端 TUI
+     * （如 herdr）发出的 OSC 10/11 颜色查询，导致远端按宿主机终端
+     * 主题渲染而不是按手机主题渲染；开启后 herdr 等应用会像收到终端
+     * 应答一样解析并采纳手机配色。
+     */
+    val moshThemeSync: Boolean = false,
 )
 
 @Serializable

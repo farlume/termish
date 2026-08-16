@@ -93,6 +93,11 @@ class TerminalController(
     private var lastRows = 24
     private var reconnectAttempts = 0
     private var keepAliveActive = false
+    /** Mosh 主题注入：非空表示本会话开启（见 [prepareThemeSync]）。 */
+    private var moshThemePayload: ByteArray? = null
+    private var moshThemeInjected = false
+    /** 已在远端输出里见到 herdr 标题（ESC]0;● …），表示远端可接收注入。 */
+    private var moshThemeMarkerSeen = false
 
     init {
         emulator.onTitleChange = { t -> title = t }
@@ -180,6 +185,7 @@ class TerminalController(
             val (moshPort, moshKey) = parseMoshConnect(result.output)
                 ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
 
+            prepareThemeSync()
             val client = createMoshClient(
                 ip = host.hostname,
                 port = moshPort,
@@ -187,6 +193,7 @@ class TerminalController(
                 columns = lastCols,
                 rows = lastRows,
                 onOutput = { data ->
+                    maybeInjectThemeOnOutput(data)
                     emulator.write(data)
                     frame++
                 },
@@ -198,6 +205,13 @@ class TerminalController(
                 },
             )
             moshSession = client
+            // 标题可能先于 moshSession 赋值到达（reader 线程竞态），补一次重试
+            if (moshThemePayload != null) {
+                scope.launch {
+                    kotlinx.coroutines.delay(800)
+                    injectThemeIfNeeded()
+                }
+            }
             status = ConnStatus.CONNECTED
             reconnectAttempts = 0
             reconnectCount = 0
@@ -209,12 +223,42 @@ class TerminalController(
             }
             frame++
         } catch (e: Throwable) {
-            println("MSSH-MOSH-ERROR ${e::class.simpleName}: ${e.message}")
-            e.printStackTrace()
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
                 errorMessage = e.message
             }
+        }
+    }
+
+    /**
+     * Mosh 下把手机终端主题注入远端（herdr 等从 stdin 解析 OSC 应答）。
+     * 见 [dev.mssh.term.TerminalEmulator.buildThemeSyncPayload]。
+     * 以 herdr 的窗口标题（ESC]0;● …）作为「远端已接管 stdin」的信号：
+     * 普通 shell / vim 等不会设置该标题，也不会收到注入字节。
+     */
+    private fun prepareThemeSync() {
+        if (!host.moshThemeSync) return
+        moshThemePayload = emulator.buildThemeSyncPayload()
+        moshThemeInjected = false
+        moshThemeMarkerSeen = false
+    }
+
+    /** 输出里出现 herdr 窗口标题（ESC]0;● …）时提前注入。 */
+    private fun maybeInjectThemeOnOutput(data: ByteArray) {
+        if (moshThemePayload == null || moshThemeInjected) return
+        if (data.decodeToString().contains("\u001b]0;●")) {
+            moshThemeMarkerSeen = true
+            injectThemeIfNeeded()
+        }
+    }
+
+    private fun injectThemeIfNeeded() {
+        val payload = moshThemePayload ?: return
+        if (moshThemeInjected || !moshThemeMarkerSeen) return
+        val client = moshSession ?: return
+        if (status == ConnStatus.CONNECTED && client.isActive()) {
+            moshThemeInjected = true
+            client.sendData(payload)
         }
     }
 

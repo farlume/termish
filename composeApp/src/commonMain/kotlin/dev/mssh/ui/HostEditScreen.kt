@@ -14,6 +14,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -51,6 +52,7 @@ fun HostEditScreen(
         mutableStateOf(existing?.quickCommands?.joinToString("\n") { "${it.label}:${it.command}" } ?: "")
     }
     var startupCommand by remember { mutableStateOf(existing?.startupCommand ?: "") }
+    var moshThemeSync by remember { mutableStateOf(existing?.moshThemeSync ?: false) }
 
     Scaffold(
         topBar = {
@@ -74,6 +76,7 @@ fun HostEditScreen(
                             lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                             knownHostFingerprint = existing?.knownHostFingerprint,
                             startupCommand = startupCommand.trim(),
+                            moshThemeSync = moshThemeSync,
                         )
                         onSave(host, password, privateKey)
                     }) { Text(s.editSave) }
@@ -144,6 +147,16 @@ fun HostEditScreen(
                 placeholder = { Text(s.editStartupPlaceholder) },
                 singleLine = true,
             )
+            if (connectionMode == ConnectionMode.MOSH) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                ) {
+                    Text(s.editMoshThemeSync, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(moshThemeSync, { moshThemeSync = it })
+                }
+            }
         }
     }
 }
