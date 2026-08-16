@@ -194,7 +194,14 @@ class TerminalController(
     private suspend fun doConnectMosh() {
         try {
             val callbacks = callbacks()
-            val ssh = createSshSession(newConnection(), callbacks)
+            // 引导用的临时 SSH 会话：connectAndRun 的 finally 会 close() 并同步触发
+            // onClosed；若路由到主回调，会把 CONNECTING 置为 CLOSED，导致下方
+            // "status == CLOSED" 检查误判为用户关闭，刚拉起的 mosh-client 被立即销毁。
+            // onPrompt / verifyHostKey 仍需委托主回调（认证与 TOFU 确认）。
+            val bootstrapCallbacks = object : SshCallbacks by callbacks {
+                override fun onClosed(reason: String?) {}
+            }
+            val ssh = createSshSession(newConnection(), bootstrapCallbacks)
             val bootstrap = if (host.moshUdpPort in 1024..65535) {
                 "mosh-server new -c 8 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
