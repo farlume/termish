@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Android
@@ -46,15 +45,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.mssh.generated.resources.Res
+import dev.mssh.generated.resources.host_centos
+import dev.mssh.generated.resources.host_linux
+import dev.mssh.generated.resources.host_mac
+import dev.mssh.generated.resources.host_ubuntu
+import dev.mssh.generated.resources.host_windows
 import dev.mssh.data.ConnectionMode
 import dev.mssh.data.Host
+import org.jetbrains.compose.resources.DrawableResource
+import org.jetbrains.compose.resources.painterResource
 
 /** 活跃会话判定：连接中/认证中/已连接都算（与连接页状态点同源）。 */
 internal fun isActiveStatus(status: ConnStatus): Boolean =
@@ -182,21 +188,32 @@ private fun HostCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                // 系统头像（渐变圆 + 白色图标）：点击直接进入编辑
+                // 系统头像（圆角正方形 + 白色图标）：点击直接进入编辑
+                val sys = host.system.ifBlank { host.hostname }
                 Box(
                     Modifier
                         .size(42.dp)
-                        .clip(CircleShape)
-                        .background(systemGradient(host.system))
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(systemColor(sys))
                         .clickable(onClick = onEdit),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        systemIcon(host.system),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(21.dp),
-                    )
+                    val svg = systemSvg(sys)
+                    if (svg != null) {
+                        Icon(
+                            painterResource(svg),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    } else {
+                        Icon(
+                            systemIcon(sys),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -242,7 +259,22 @@ private fun HostCard(
     }
 }
 
-/** 系统关键词 → 头像图标（Material 图标，按用户填写的 system 文本映射）。 */
+/** 系统关键词 → 白色 SVG 图标资源（有品牌图标的系统；其余回退 [systemIcon]）。 */
+internal fun systemSvg(system: String): DrawableResource? {
+    val s = system.lowercase()
+    return when {
+        s.contains("macos") || s.contains("darwin") || s.contains("osx") || s.contains("mac") -> Res.drawable.host_mac
+        s.contains("windows") || s.contains("win") -> Res.drawable.host_windows
+        s.contains("centos") -> Res.drawable.host_centos
+        s.contains("ubuntu") -> Res.drawable.host_ubuntu
+        s.contains("linux") || s.contains("debian") || s.contains("fedora") || s.contains("arch") ||
+            s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
+            s.contains("raspbian") -> Res.drawable.host_linux
+        else -> null
+    }
+}
+
+/** 系统关键词 → 头像图标（Material 兜底：无 SVG 的系统如 android/ios/bsd/未知）。 */
 internal fun systemIcon(system: String): ImageVector {
     val s = system.lowercase()
     return when {
@@ -259,20 +291,25 @@ internal fun systemIcon(system: String): ImageVector {
     }
 }
 
-/** 系统关键词 → 头像渐变底色（柔和品牌色，未知用中性灰）。 */
-internal fun systemGradient(system: String): Brush {
+/**
+ * 系统关键词 → 头像背景色（纯色）。识别顺序：
+ * 先看主机「系统」字段，为空时用主机名兜底（如 mac.example.com → macOS）。
+ * mac 黑、ubuntu 品牌红，其余按品牌色判断。
+ */
+internal fun systemColor(system: String): Color {
     val s = system.lowercase()
-    val (from, to) = when {
-        s.contains("android") -> Color(0xFF7BE0A8) to Color(0xFF25B573)
-        s.contains("ios") || s.contains("iphone") -> Color(0xFF66AFFF) to Color(0xFF0A84FF)
-        s.contains("macos") || s.contains("darwin") || s.contains("osx") || s.contains("mac") -> Color(0xFFB9B9C2) to Color(0xFF70707A)
-        s.contains("windows") || s.contains("win") -> Color(0xFF5FA8E8) to Color(0xFF0078D4)
-        s.contains("freebsd") || s.contains("bsd") -> Color(0xFFF08A8A) to Color(0xFFD6242C)
-        s.contains("linux") || s.contains("ubuntu") || s.contains("debian") ||
-            s.contains("centos") || s.contains("fedora") || s.contains("arch") ||
+    return when {
+        s.contains("android") -> Color(0xFF3DDC84)
+        s.contains("ios") || s.contains("iphone") -> Color(0xFF0A84FF)
+        s.contains("macos") || s.contains("darwin") || s.contains("osx") || s.contains("mac") -> Color.Black
+        s.contains("windows") || s.contains("win") -> Color(0xFF0078D4)
+        s.contains("freebsd") || s.contains("bsd") -> Color(0xFFD6242C)
+        s.contains("ubuntu") -> Color(0xFFE95420)
+        s.contains("centos") -> Color(0xFF2E6DA4)
+        s.contains("linux") || s.contains("debian") ||
+            s.contains("fedora") || s.contains("arch") ||
             s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
-            s.contains("raspbian") -> Color(0xFFFFA05A) to Color(0xFFE85D2A)
-        else -> Color(0xFFBDBDC4) to Color(0xFF83838C)
+            s.contains("raspbian") -> Color(0xFF475569)
+        else -> Color(0xFF83838C)
     }
-    return Brush.linearGradient(listOf(from, to))
 }
