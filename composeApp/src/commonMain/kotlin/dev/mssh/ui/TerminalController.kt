@@ -312,10 +312,11 @@ class TerminalController(
             client.close()
             return
         }
-        // 固定延迟注入（字节会等握手完成后才送达远端 stdin）。
+        // 延迟注入：不能太早（herdr 接管前字节会被 shell readline 当输入回显成乱码），
+        // 也不能太晚（herdr 默认主题会显示几秒灰色蒙层）。1200ms 时 herdr 通常已接管。
         if (moshThemePayload != null) {
             scope.launch {
-                kotlinx.coroutines.delay(2500)
+                kotlinx.coroutines.delay(1200)
                 injectThemeIfNeeded()
             }
         }
