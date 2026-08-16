@@ -658,11 +658,19 @@ class TerminalBuffer(
     fun copyContentFrom(other: TerminalBuffer) {
         cols = other.cols
         rows = other.rows
+        // 目标缓冲设了上限时只拷贝保留段（最后 maxScrollback+rows 行），
+        // 避免影子无上限后每帧先克隆全部再丢弃（影子 Int.MAX_VALUE 则全量拷贝）
+        val keep = if (maxScrollbackLines == Int.MAX_VALUE) {
+            other.normal.size
+        } else {
+            minOf(other.normal.size, maxScrollbackLines + rows)
+        }
+        val offset = other.normal.size - keep
         normal.clear()
-        for (line in other.normal) normal.addLast(cloneLine(line))
-        // 目标缓冲若设了上限，拷贝后同样裁剪（影子无上限则保持完整）
-        while (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + rows) {
-            normal.removeFirst()
+        var i = 0
+        for (line in other.normal) {
+            if (i >= offset) normal.addLast(cloneLine(line))
+            i++
         }
         alt = Array(other.rows) { cloneLine(other.alt[it]) }
         altScreen = other.altScreen

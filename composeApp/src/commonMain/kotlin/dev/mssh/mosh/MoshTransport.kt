@@ -206,8 +206,11 @@ internal class MoshTransport(
         receivedStates.addLast(newState)
         ackNum = newState.num
         lastHeard = now
-        if (inst.diff.isNotEmpty()) pendingDataAck = true
-        onNewState(newState.state)
+        if (inst.diff.isNotEmpty()) {
+            pendingDataAck = true
+            // 空 diff（纯 ack/心跳）不触发重绘：内容未变，避免无谓的全量 UI 拷贝
+            onNewState(newState.state)
+        }
     }
 
     private fun processAcknowledgmentThrough(ack: ULong) {

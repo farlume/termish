@@ -1,6 +1,7 @@
 package dev.mssh.ssh
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 
 /**
@@ -53,6 +54,13 @@ fun createKmpMoshSession(
     onClipboard: (String) -> Unit,
     onExit: (String?) -> Unit,
 ): MoshSession {
+    // 渲染合并：CONFLATED 通道只保留最新状态，突发更新时最多一个主线程拷贝在途
+    val pending = Channel<dev.mssh.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
+    scope.launch(Dispatchers.Main) {
+        for (view in pending) {
+            uiBuffer.copyContentFrom(view.buffer)
+        }
+    }
     val session = dev.mssh.mosh.KmpMoshSession(
         ip = ip,
         port = port,
@@ -61,11 +69,9 @@ fun createKmpMoshSession(
         rows = rows,
         scope = scope,
         onStateUpdate = { view ->
-            // 拷贝到 UI buffer 必须在主线程：Compose 渲染同时在读，
-            // 会话线程直接写会造成画面撕裂/并发异常
-            scope.launch(Dispatchers.Main) {
-                uiBuffer.copyContentFrom(view.buffer)
-            }
+            // 拷贝到 UI buffer 必须在主线程（Compose 渲染同时在读）；
+            // 通道消费协程已固定在 Main，这里只投递
+            pending.trySend(view)
         },
         onExit = onExit,
     )

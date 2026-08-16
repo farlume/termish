@@ -37,20 +37,27 @@ internal class UserStream {
             idx++
         }
         val events = ArrayList<UserEventOut>()
-        var pending = ByteArray(0)
+        // 增长式字节缓冲：避免逐字节 "pending += b" 造成的 O(n²) 拷贝（大粘贴场景）
+        var buf = ByteArray(64)
+        var len = 0
+        fun flushKeys() {
+            if (len == 0) return
+            events.add(UserEventOut.Keystrokes(buf.copyOf(len)))
+            len = 0
+        }
         for (i in idx until actions.size) {
             when (val e = actions[i]) {
-                is Event.Byte -> pending += e.b
+                is Event.Byte -> {
+                    if (len == buf.size) buf = buf.copyOf(buf.size * 2)
+                    buf[len++] = e.b
+                }
                 is Event.Resize -> {
-                    if (pending.isNotEmpty()) {
-                        events.add(UserEventOut.Keystrokes(pending))
-                        pending = ByteArray(0)
-                    }
+                    flushKeys()
                     events.add(UserEventOut.Resize(e.width, e.height))
                 }
             }
         }
-        if (pending.isNotEmpty()) events.add(UserEventOut.Keystrokes(pending))
+        flushKeys()
         if (events.isEmpty()) return ByteArray(0)
         return encodeUserMessage(events)
     }

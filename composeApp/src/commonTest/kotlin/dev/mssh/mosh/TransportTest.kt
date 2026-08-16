@@ -1,6 +1,7 @@
 package dev.mssh.mosh
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -81,5 +82,23 @@ class TransportTest {
         h.now += 5000 // 超过 ACK_INTERVAL，且 ack_num==-1 会触发加速
         h.transport.tick()
         assertTrue(h.transport.counterpartyShutdownAckSent())
+    }
+
+    @Test
+    fun emptyDiffStateDoesNotNotifyRenderer() {
+        // 空 diff（纯 ack/心跳）不应触发 onNewState：内容未变，避免无谓的全量 UI 拷贝
+        val h = Harness()
+        val inst = TransportInstruction(
+            protocolVersion = 2,
+            oldNum = 0u,
+            newNum = 1u,
+            ackNum = 0u,
+            throwawayNum = 0u,
+            diff = ByteArray(0),
+            chaff = ByteArray(0),
+        )
+        val payload = Fragmenter().makeFragments(inst, 400).first().toBytes()
+        h.transport.processPacket(MoshCryptoSession.PlainPacket(1u, 0, 0xffff, payload))
+        assertEquals(0, h.states)
     }
 }
