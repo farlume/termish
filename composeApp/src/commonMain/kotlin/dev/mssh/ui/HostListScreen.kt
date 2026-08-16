@@ -221,10 +221,11 @@ fun HostListScreen(
                                 if (selectionMode) {
                                     if (isSelected) selected.remove(host.id) else selected[host.id] = host
                                 } else {
-                                    // 有活跃会话直接进入第一个，没有则新建
-                                    when (val active = sessions.firstOrNull { it.isActive }) {
-                                        is HostSessionItem.Terminal -> onOpenSession(active.controller)
-                                        is HostSessionItem.Sftp -> onOpenSftp(active.host, active.session)
+                                    // 有活跃会话进第一个活跃；全部断开则恢复第一个断开的
+                                    // （进入终端页后自动重连）；没有会话才新建
+                                    when (val target = sessions.firstOrNull { it.isActive } ?: sessions.firstOrNull()) {
+                                        is HostSessionItem.Terminal -> onOpenSession(target.controller)
+                                        is HostSessionItem.Sftp -> onOpenSftp(target.host, target.session)
                                         null -> onConnect(host)
                                     }
                                 }
