@@ -160,6 +160,7 @@ fun TerminalScreen(
                 host = tab.host,
                 session = tab.session,
                 state = tab.uiState,
+                onBack = onBack,
             )
         }
     }

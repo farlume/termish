@@ -59,6 +59,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -111,6 +112,11 @@ class SftpUiState {
     var pendingDownload by mutableStateOf<SftpEntry?>(null)
     /** 面包屑 "…" 的下拉父级菜单开关。 */
     var showParents by mutableStateOf(false)
+    /**
+     * 目录浏览历史栈：进入目录/面包屑跳转时压入旧路径，
+     * 返回键弹栈回到上一个浏览位置（而非机械的父目录）。
+     */
+    val history = mutableStateListOf<String>()
 }
 
 @Composable
@@ -118,6 +124,7 @@ fun SftpContent(
     host: Host,
     session: SftpSession,
     state: SftpUiState,
+    onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -136,6 +143,25 @@ fun SftpContent(
     var fileMenu by state::fileMenu
     var pendingDownload by state::pendingDownload
     var showParents by state::showParents
+
+    /** 统一目录跳转入口：压入当前路径到浏览历史，再切换目录。 */
+    fun navigateTo(newPath: String) {
+        if (newPath == path) return
+        state.history.add(path)
+        path = newPath
+    }
+
+    // 返回键：搜索中先退出搜索；有浏览历史则弹栈回退；否则返回上一页
+    PlatformBackHandler(enabled = true) {
+        when {
+            searching -> {
+                searching = false
+                query = ""
+            }
+            state.history.isNotEmpty() -> path = state.history.removeAt(state.history.lastIndex)
+            else -> onBack()
+        }
+    }
 
     fun joinPath(base: String, name: String): String =
         if (base == "/") "/$name" else "$base/$name"
@@ -283,7 +309,7 @@ fun SftpContent(
                                             },
                                             onClick = {
                                                 showParents = false
-                                                path = pathForBreadcrumb(displayParts.indexOf(parent))
+                                                navigateTo(pathForBreadcrumb(displayParts.indexOf(parent)))
                                             },
                                         )
                                     }
@@ -310,7 +336,7 @@ fun SftpContent(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
-                                    .clickable { path = pathForBreadcrumb(displayParts.indexOf(crumb)) }
+                                    .clickable { navigateTo(pathForBreadcrumb(displayParts.indexOf(crumb))) }
                                     .padding(horizontal = 2.dp),
                             )
                             if (i < breadcrumbs.lastIndex) {
@@ -426,7 +452,7 @@ fun SftpContent(
                                     time = "",
                                     isDirectory = true,
                                     onClick = {
-                                        path = path.substringBeforeLast('/', "/").ifBlank { "/" }
+                                        navigateTo(path.substringBeforeLast('/', "/").ifBlank { "/" })
                                     },
                                 )
                             }
@@ -439,7 +465,7 @@ fun SftpContent(
                                     time = formatTime(entry.modifiedAt),
                                     isDirectory = true,
                                     onClick = {
-                                        path = joinPath(path, entry.name)
+                                        navigateTo(joinPath(path, entry.name))
                                     },
                                 )
                             } else {
