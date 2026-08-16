@@ -3,6 +3,7 @@ package dev.mssh.ssh
 import dev.mssh.AppContext
 import dev.mssh.generated.resources.Res
 import java.io.File
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.runBlocking
@@ -104,7 +105,11 @@ private class AndroidMoshSession(
         // 已是 IPv4 / IPv6 字面量则直接用（IPv6 含冒号）
         if (host.matches(Regex("^(\\d{1,3}\\.){3}\\d{1,3}$")) || host.contains(':')) return host
         return try {
-            InetAddress.getAllByName(host).firstOrNull()?.hostAddress ?: host
+            val addrs = InetAddress.getAllByName(host)
+            // IPv4 优先：外网/NAS 端口转发基本都是 IPv4，解析到 IPv6 会因无转发路径而超时
+            addrs.firstOrNull { it is Inet4Address }?.hostAddress
+                ?: addrs.firstOrNull()?.hostAddress
+                ?: host
         } catch (_: Exception) {
             host
         }
