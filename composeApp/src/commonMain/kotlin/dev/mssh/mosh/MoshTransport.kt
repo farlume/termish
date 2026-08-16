@@ -125,8 +125,15 @@ internal class MoshTransport(
     /** 对端已确认状态（front）的发送时刻；客户端端口轮换判定用（mosh get_sent_state_acked_timestamp）。 */
     fun sentStateAckedTimestamp(): Long = sentStates.first().timestamp
 
-    /** 当前平滑 RTT（毫秒），本地预测回显的启用门槛用（mosh SRTT_TRIGGER_LOW=20）。 */
+    /** 当前平滑 RTT（毫秒）。 */
     fun srttMs(): Long = srtt.toLong()
+
+    /** 当前发送间隔（SRTT/2 clamp 20..250ms）——预测引擎的触发输入
+     *  （mosh 用 send_interval 而非裸 SRTT 驱动 SRTT_TRIGGER/FLAG_TRIGGER）。 */
+    fun sendIntervalMs(): Long = sendInterval()
+
+    /** 最近发送状态帧号（mosh local_frame_sent）：预测层估计输入承载帧用。 */
+    fun lastSentNum(): ULong = sentStates.last().num
 
     // ---- RTT ----
 

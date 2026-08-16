@@ -82,9 +82,9 @@ class KmpMoshSession(
             }
         },
         onNewState = { shadow ->
-            // 确认态到达：丢弃本地预测，UI 切回确认态
+            // 确认态到达：echo_ack 收编已确认输入，存活预测在新确认态上重放
             prediction.onConfirmed(shadow)
-            pushToUi(shadow)
+            pushToUi(prediction.currentForDisplay() ?: shadow)
         },
     )
 
@@ -151,12 +151,18 @@ class KmpMoshSession(
         while (active) {
             val waitMs = transport.waitTime().let {
                 when {
-                    it == Int.MAX_VALUE -> 1000 // 无定时需求时周期醒来驱动心跳
-                    it <= 0 -> 1
-                    else -> it.coerceAtMost(1000)
+                    it == Int.MAX_VALUE -> 1000L // 无定时需求时周期醒来驱动心跳
+                    it <= 0 -> 0L
+                    else -> it.coerceAtMost(1000).toLong()
                 }
             }
-            val ev = withTimeoutOrNull(waitMs.toLong()) { events.receive() }
+            // 发送/ack 已到期（waitMs==0）时不睡眠：withTimeoutOrNull(1) 在协程
+            // 调度下会被舍入到数 ms，白等（mosh select(0) 是立即返回的）
+            val ev = if (waitMs <= 0L) {
+                events.tryReceive().getOrNull()
+            } else {
+                withTimeoutOrNull(waitMs) { events.receive() }
+            }
             when (ev) {
                 is Event.Packet -> {
                     val pkt = transport.decryptDatagram(ev.data)
@@ -167,13 +173,16 @@ class KmpMoshSession(
                 }
                 is Event.Input -> {
                     transport.pushBytes(ev.data)
-                    // 本地预测回显：高 RTT 时按键先在确认态分叉上渲染（下划线标记），
-                    // 服务器确认后校正——与 mosh 预测引擎 同思路的简化版
-                    if (prediction.onUserInput(ev.data, transport.srttMs())) {
+                    // 本地预测回显：高 RTT 时按键先在确认态分叉上渲染，
+                    // echo_ack 确认后收编——mosh 预测引擎 的简化版
+                    if (prediction.onUserInput(ev.data, transport.sendIntervalMs(), transport.lastSentNum())) {
                         prediction.currentForDisplay()?.let { pushToUi(it) }
                     }
                 }
-                is Event.Resize -> transport.pushResize(ev.cols, ev.rows)
+                is Event.Resize -> {
+                    transport.pushResize(ev.cols, ev.rows)
+                    prediction.reset() // 几何失效，等远端确认态（mosh process_resize → reset）
+                }
                 is Event.Close -> transport.startShutdown()
                 null -> {} // 超时，到点 tick
             }
@@ -182,7 +191,7 @@ class KmpMoshSession(
 
             // 预测悬挂过久（服务器未确认或期间有输出）：丢弃并回确认态
             if (prediction.glitchTimedOut()) {
-                prediction.onConfirmed(transport.latestRemote)
+                prediction.dropPrediction()
                 pushToUi(transport.latestRemote)
             }
 

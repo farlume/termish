@@ -240,6 +240,9 @@ class TerminalController(
                             stopKeepAlive()
                         }
                     },
+                    // KMP 路径没有 onOutput 字节流：状态拷进 buffer 后显式触发重绘，
+                    // 否则新输出/预测回显要等光标闪烁等偶发 frame 变更（0~530ms）才上屏
+                    onFrame = { frame++ },
                 )
             } else {
                 createMoshClient(

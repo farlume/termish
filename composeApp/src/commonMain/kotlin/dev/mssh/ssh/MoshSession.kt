@@ -53,12 +53,16 @@ fun createKmpMoshSession(
     onTitle: (String) -> Unit,
     onClipboard: (String) -> Unit,
     onExit: (String?) -> Unit,
+    /** 状态已同步进 [uiBuffer]，请求 UI 重绘（TerminalBuffer 不是 Compose 状态，
+     *  不通知的话新内容要等下一个偶发 frame 变更才上屏）。 */
+    onFrame: () -> Unit,
 ): MoshSession {
     // 渲染合并：CONFLATED 通道只保留最新状态，突发更新时最多一个主线程拷贝在途
     val pending = Channel<dev.mssh.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
     scope.launch(Dispatchers.Main) {
         for (view in pending) {
             uiBuffer.copyContentFrom(view.buffer)
+            onFrame()
         }
     }
     val session = dev.mssh.mosh.KmpMoshSession(
