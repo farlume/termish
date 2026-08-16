@@ -15,6 +15,7 @@ build/
 # Android
 local.properties
 keystore.properties
+*.jks
 *.apk
 *.aab
 captures/

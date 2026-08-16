@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Android：debug/release APK + Play 商店 AAB
+  # Android：单测 + lint 始终跑；release APK + AAB 只在非 PR 触发时打包
   #
   # release 签名是可选的：仓库配置好下面 4 个 Secrets 后自动签名，
   # 未配置时产出未签名 APK/AAB（仅用于自测）。
@@ -52,6 +52,20 @@ jobs:
           printf 'storeFile=android-release.jks\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
             "$STORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
 
+      # 发版 tag 必须与仓库里的版本号一致，防止「tag 0.3.0、包还是 0.2.0」
+      - name: Verify version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
+          PV=$(sed -n 's/^[[:space:]]*packageVersion = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
+          if [ "$TAG" != "$VN" ] || [ "$TAG" != "$PV" ]; then
+            echo "::error::tag=$TAG 与构建配置不一致 (Android versionName=$VN, 桌面 packageVersion=$PV)"
+            echo "::error::请先运行 ./scripts/bump-version.sh $TAG 并提交，再重新打 tag"
+            exit 1
+          fi
+          echo "版本一致：$TAG"
+
       # 检查先行：单测失败即停，不产出包
       - name: Run checks (unit tests + lint)
         run: |
@@ -59,28 +73,41 @@ jobs:
             :composeApp:testDebugUnitTest \
             :composeApp:lintDebug
 
-      - name: Build APKs and AAB
+      - name: Build debug APK
+        run: ./gradlew :composeApp:assembleDebug
+
+      - name: Build release APK and AAB
+        if: github.event_name != 'pull_request'
         run: |
           ./gradlew \
-            :composeApp:assembleDebug \
             :composeApp:assembleRelease \
             :composeApp:bundleRelease
 
-      - name: Upload artifacts
+      - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: android
+          name: android-debug
+          path: composeApp/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release APK and AAB
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
           path: |
-            composeApp/build/outputs/apk/debug/*.apk
             composeApp/build/outputs/apk/release/*.apk
             composeApp/build/outputs/bundle/release/*.aab
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包
+  # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包；
+  # PR 只跑 Linux 单测，不打包
   # ---------------------------------------------------------------------------
   desktop:
     name: Desktop (${{ matrix.platform }})
+    # PR 只需 Linux 单测；macOS/Windows 打包仅在 main/tag/手动触发
+    if: github.event_name != 'pull_request' || matrix.platform == 'Linux'
     strategy:
       fail-fast: false
       matrix:
@@ -121,11 +148,48 @@ jobs:
         run: ./gradlew :composeApp:desktopTest
 
       - name: Package (${{ matrix.platform }})
+        if: github.event_name != 'pull_request'
         run: ./gradlew :composeApp:${{ matrix.task }}
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 发布：仅 tag（vX.Y.Z）触发，汇总 Android + 桌面产物创建 GitHub Release
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, desktop]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Rename Android assets with version
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          cd dist
+          for f in composeApp-*.apk composeApp-*.aab; do
+            [ -e "$f" ] || continue
+            mv "$f" "MSSH-$VER-${f#composeApp-}"
+          done
+          ls -l
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
