@@ -682,7 +682,10 @@ class TerminalBuffer(
     /** COW 浅分叉：行对象与源共享（写时复制），O(行数) 而非 O(单元格)。
      *  供 mosh 影子状态保存（对应协议 时间戳状态 的 shared_ptr 行拷贝）。 */
     fun shallowFork(): TerminalBuffer {
-        val dst = TerminalBuffer(cols, rows, maxScrollbackLines)
+        // rows=0 构造：主构造器的 init 会预建 rows 行空白屏幕行，直接构造再追加
+        // 源行会让每个分叉顶部多出 rows 行幻影空行——幻影随分叉代数累积（每帧
+        // +rows 行），会话越久分叉/GC 成本越高；rows=0 则零分配零幻影
+        val dst = TerminalBuffer(cols, 0, maxScrollbackLines)
         dst.cols = cols
         dst.rows = rows
         for (line in normal) {

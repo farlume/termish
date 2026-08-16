@@ -37,6 +37,25 @@ class TerminalBufferTest {
     }
 
     @Test
+    fun shallowForkPreservesExactLineCount() {
+        // 回归：shallowFork 曾在构造器预建的 rows 空行之后追加源行，每个分叉
+        // 顶部多出 rows 行幻影空行，且随分叉代数累积（会话越久越卡）
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(20) { b.scrollUp(1) } // 造 20 行回看
+        b.putChar('x'.code)
+        val fork = b.shallowFork()
+        assertEquals(b.totalLines(), fork.totalLines())
+        assertEquals(b.scrollbackSize(), fork.scrollbackSize())
+        // 逐行引用一致（幻影行会同时改变两者）
+        for (i in 0 until b.totalLines()) {
+            assertTrue(fork.absLine(i) === b.absLine(i), "line $i 应共享同一对象")
+        }
+        // 连续分叉不累积幻影行
+        val fork2 = fork.shallowFork()
+        assertEquals(b.totalLines(), fork2.totalLines())
+    }
+
+    @Test
     fun lineVersionBumpsOnWriteNotOnCursorMove() {
         val b = TerminalBuffer(10, 5)
         b.putChar('a'.code)
