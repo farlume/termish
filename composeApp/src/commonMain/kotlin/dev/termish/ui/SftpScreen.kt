@@ -50,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -89,30 +90,52 @@ import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.painterResource
 
 /** SFTP 排序方式。 */
-private enum class SftpSort { NAME, DATE, SIZE, KIND }
+enum class SftpSort { NAME, DATE, SIZE, KIND }
+
+/**
+ * SFTP 浏览状态：跟随会话条目存活（SessionManager 持有），
+ * 切 tab / 离开终端页再回来不重置路径与列表。
+ */
+class SftpUiState {
+    var path by mutableStateOf("")
+    var entries by mutableStateOf<List<SftpEntry>?>(null)
+    var loadError by mutableStateOf<String?>(null)
+    var sort by mutableStateOf(SftpSort.NAME)
+    var showHidden by mutableStateOf(false)
+    var searching by mutableStateOf(false)
+    var query by mutableStateOf("")
+    var newFolderDialog by mutableStateOf(false)
+    /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
+    var fileMenu by mutableStateOf<SftpEntry?>(null)
+    /** 等待用户选择保存位置后开始下载的文件（保存回调异步，不能依赖 fileMenu）。 */
+    var pendingDownload by mutableStateOf<SftpEntry?>(null)
+    /** 面包屑 "…" 的下拉父级菜单开关。 */
+    var showParents by mutableStateOf(false)
+}
 
 @Composable
 fun SftpContent(
     host: Host,
     session: SftpSession,
+    state: SftpUiState,
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     val clipboard = LocalClipboardManager.current
 
-    var path by remember { mutableStateOf("") }
-    var entries by remember { mutableStateOf<List<SftpEntry>?>(null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
-    var sort by remember { mutableStateOf(SftpSort.NAME) }
-    var showHidden by remember { mutableStateOf(false) }
-    var searching by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var newFolderDialog by remember { mutableStateOf(false) }
-    /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
-    var fileMenu by remember { mutableStateOf<SftpEntry?>(null) }
-    /** 等待用户选择保存位置后开始下载的文件（保存回调异步，不能依赖 fileMenu）。 */
-    var pendingDownload by remember { mutableStateOf<SftpEntry?>(null) }
+    // 全部浏览状态委托给会话级 [SftpUiState]：切 tab 离开组合后仍然保留
+    var path by state::path
+    var entries by state::entries
+    var loadError by state::loadError
+    var sort by state::sort
+    var showHidden by state::showHidden
+    var searching by state::searching
+    var query by state::query
+    var newFolderDialog by state::newFolderDialog
+    var fileMenu by state::fileMenu
+    var pendingDownload by state::pendingDownload
+    var showParents by state::showParents
 
     fun joinPath(base: String, name: String): String =
         if (base == "/") "/$name" else "$base/$name"
@@ -168,11 +191,20 @@ fun SftpContent(
         savePicker(entry.name)
     }
 
-    // 首次进入：优先用户主目录，失败回退根目录
+    // 首次进入（path 尚未初始化）：realpath 解析真实用户主目录（~），
+    // 失败回退 /home/{user}，再失败回退根目录；切回不重置
     LaunchedEffect(Unit) {
-        val home = "/home/${host.username}"
-        path = withContext(ioDispatcher()) {
-            if (runCatching { session.list(home) }.isSuccess) home else "/"
+        if (state.path.isEmpty()) {
+            path = withContext(ioDispatcher()) {
+                val home = runCatching { session.home() }.getOrNull()?.let { raw ->
+                    if (raw.length > 1) raw.trimEnd('/') else raw
+                }?.takeIf { it.isNotBlank() }
+                when {
+                    home != null -> home
+                    runCatching { session.list("/home/${host.username}") }.isSuccess -> "/home/${host.username}"
+                    else -> "/"
+                }
+            }
         }
     }
     LaunchedEffect(path, sort, showHidden) {
@@ -196,10 +228,9 @@ fun SftpContent(
         val mapped = displayParts.take(index + 1).map { if (it == s.sftpUser) "home" else it }
         return "/" + mapped.joinToString("/")
     }
-    var showParents by remember { mutableStateOf(false) }
     val visible = (entries ?: emptyList())
         .filter { showHidden || !it.isHidden }
-        .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+        .filter { matchesQuery(it.name, query) }
         .let { list ->
             when (sort) {
                 SftpSort.NAME -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
@@ -313,11 +344,26 @@ fun SftpContent(
                         OutlinedTextField(
                             value = query,
                             onValueChange = { query = it },
-                            modifier = Modifier.width(170.dp).height(36.dp),
-                            placeholder = { Text(s.sftpSearch) },
+                            modifier = Modifier.width(190.dp).height(44.dp),
+                            placeholder = {
+                                Text(
+                                    s.sftpSearch,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            textStyle = MaterialTheme.typography.labelMedium,
+                            textStyle = MaterialTheme.typography.labelMedium.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                            ),
                         )
                     }
                 }
@@ -617,4 +663,32 @@ private fun formatTime(millis: Long): String {
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
     fun p(n: Int) = n.toString().padStart(2, '0')
     return "${dt.year}-${p(dt.monthNumber)}-${p(dt.dayOfMonth)} ${p(dt.hour)}:${p(dt.minute)}"
+}
+
+/**
+ * SFTP 文件名匹配：空格分隔多关键词（AND 关系）；含 `*`/`?` 的关键词按通配符匹配，
+ * 其余按忽略大小写的包含匹配。例：`*.log`、`conf nginx`、`readme?`。
+ */
+private fun matchesQuery(name: String, query: String): Boolean {
+    val q = query.trim()
+    if (q.isEmpty()) return true
+    return q.split(Regex("\\s+")).all { part ->
+        if (part.any { it == '*' || it == '?' }) globMatch(name, part)
+        else name.contains(part, ignoreCase = true)
+    }
+}
+
+private fun globMatch(name: String, pattern: String): Boolean {
+    val regex = buildString {
+        append('^')
+        for (ch in pattern) {
+            when (ch) {
+                '*' -> append(".*")
+                '?' -> append('.')
+                else -> append(Regex.escape(ch.toString()))
+            }
+        }
+        append('$')
+    }
+    return Regex(regex, RegexOption.IGNORE_CASE).containsMatchIn(name)
 }

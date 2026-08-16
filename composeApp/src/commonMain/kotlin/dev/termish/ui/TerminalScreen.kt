@@ -99,7 +99,11 @@ sealed interface SessionTab {
         override val id: String get() = controller.sessionId
     }
 
-    data class Sftp(val host: Host, val session: SftpSession) : SessionTab {
+    data class Sftp(
+        val host: Host,
+        val session: SftpSession,
+        val uiState: SftpUiState = SftpUiState(),
+    ) : SessionTab {
         override val id: String get() = "sftp:${host.id}:${session.hashCode()}"
     }
 }
@@ -155,6 +159,7 @@ fun TerminalScreen(
             is SessionTab.Sftp -> SftpContent(
                 host = tab.host,
                 session = tab.session,
+                state = tab.uiState,
             )
         }
     }
@@ -529,7 +534,7 @@ private fun TerminalTabBar(
                     SessionTabChip(
                         host = host,
                         statusDotColor = statusColor,
-                        selected = tab === current,
+                        selected = tab.id == current.id,
                         foreground = barForeground,
                         onClick = {
                             onSwitch(tab)

@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 data class SftpSessionEntry(
     val host: Host,
     val session: SftpSession,
+    /** 浏览状态（路径/列表/排序等）：随条目存活，切 tab 不重置。 */
+    val uiState: SftpUiState = SftpUiState(),
 )
 
 /**
