@@ -67,6 +67,9 @@ class TerminalController(
     /** 当前重连尝试次数：>0 且状态为 CONNECTING 时表示正在自动重连。 */
     var reconnectCount by mutableStateOf(0)
         private set
+    /** mosh 链路失联秒数（0=健康；达到阈值时 UI 显示「失去联系」banner，会话仍保持）。 */
+    var linkLostSeconds by mutableStateOf(0)
+        private set
     var title by mutableStateOf(host.name)
         private set
     var authPrompt by mutableStateOf<AuthPromptRequest?>(null)
@@ -205,7 +208,7 @@ class TerminalController(
             }
             val ssh = createSshSession(newConnection(), bootstrapCallbacks)
             val bootstrap = if (host.moshUdpPort in 1024..65535) {
-                "mosh-server new -c 8 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
+                "mosh-server new -c 256 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
                 MOSH_SERVER_BOOTSTRAP
             }
@@ -233,6 +236,9 @@ class TerminalController(
                     onExit = { reason ->
                         if (status == ConnStatus.CONNECTED) {
                             status = ConnStatus.CLOSED
+                            // 会话异常/超时等原因必须浮现（此前被静默丢弃，
+                            // 用户只能看到「已断开」且不知为何）
+                            if (reason != null) errorMessage = reason
                             stopKeepAlive()
                         } else if (status == ConnStatus.CONNECTING) {
                             status = ConnStatus.ERROR
@@ -243,6 +249,10 @@ class TerminalController(
                     // KMP 路径没有 onOutput 字节流：状态拷进 buffer 后显式触发重绘，
                     // 否则新输出/预测回显要等光标闪烁等偶发 frame 变更（0~530ms）才上屏
                     onFrame = { frame++ },
+                    // 收到对端首包才算真正连上（mosh still_connecting 语义）：
+                    // UDP 不通时状态停留在「连接中」，15s 超时由 onExit 报出原因
+                    onPeerConnected = { moshSession?.let { onMoshConnected(it) } },
+                    onLinkStatus = { secs -> linkLostSeconds = secs },
                 )
             } else {
                 createMoshClient(
@@ -285,30 +295,44 @@ class TerminalController(
                 stopKeepAlive()
                 return@doConnectMosh
             }
-            // herdr 的 ● 标记可能因 mosh 转发时序不稳定而检测不到，
-            // 固定延迟兜底注入（字节会等握手完成后才送达远端 stdin）。
-            if (moshThemePayload != null) {
-                scope.launch {
-                    kotlinx.coroutines.delay(2500)
-                    injectThemeIfNeeded(requireMarker = false)
-                }
+            if (!USE_KMP_MOSH) {
+                // 原生路径：mosh-client 进程会把 Connecting/超时状态画进画布，保持同步置位
+                onMoshConnected(client)
             }
-            status = ConnStatus.CONNECTED
-            reconnectAttempts = 0
-            reconnectCount = 0
-            errorMessage = null
-            startKeepAlive()
-            // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
-            if (host.startupCommand.isNotBlank()) {
-                client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
-            }
-            frame++
+            // KMP 路径：等 onPeerConnected 首包回调再置 CONNECTED（UDP 不通时保持「连接中」）
         } catch (e: Throwable) {
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
                 errorMessage = e.message
             }
         }
+    }
+
+    /** mosh 会话真正建立后的统一收尾（原生：进程存活；KMP：收到对端首包）。 */
+    private fun onMoshConnected(client: MoshSession) {
+        if (status == ConnStatus.CLOSED) { // 等待首包期间用户已关闭
+            client.close()
+            return
+        }
+        // herdr 的 ● 标记可能因 mosh 转发时序不稳定而检测不到，
+        // 固定延迟兜底注入（字节会等握手完成后才送达远端 stdin）。
+        if (moshThemePayload != null) {
+            scope.launch {
+                kotlinx.coroutines.delay(2500)
+                injectThemeIfNeeded(requireMarker = false)
+            }
+        }
+        status = ConnStatus.CONNECTED
+        reconnectAttempts = 0
+        reconnectCount = 0
+        errorMessage = null
+        linkLostSeconds = 0
+        startKeepAlive()
+        // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
+        if (host.startupCommand.isNotBlank()) {
+            client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+        }
+        frame++
     }
 
     /**
@@ -472,6 +496,7 @@ class TerminalController(
 
     fun close() {
         status = ConnStatus.CLOSED
+        linkLostSeconds = 0
         // 取消挂起的自动重连，防止 close 后延迟任务又拉起连接
         reconnectJob?.cancel()
         reconnectJob = null

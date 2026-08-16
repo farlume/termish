@@ -8,8 +8,10 @@ import java.util.zip.Deflater
 import java.util.zip.Inflater
 
 internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
+    private val remoteAddr = InetAddress.getByName(ip)
+    actual val isIpv6: Boolean = remoteAddr is java.net.Inet6Address
     private val socket = DatagramSocket().apply {
-        connect(InetAddress.getByName(ip), port)
+        connect(remoteAddr, port)
     }
     private val buf = ByteArray(4096)
 

@@ -35,6 +35,7 @@ import platform.posix.timeval
 @OptIn(ExperimentalForeignApi::class)
 internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
     private val fd: Int
+    actual val isIpv6: Boolean
 
     init {
         memScoped {
@@ -43,6 +44,7 @@ internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
             require(rc == 0) { "getaddrinfo 失败: $rc" }
             val addr = resPtr.value ?: error("getaddrinfo 无结果")
             try {
+                isIpv6 = addr.pointed.ai_family == platform.posix.AF_INET6
                 val s = socket(addr.pointed.ai_family, SOCK_DGRAM, IPPROTO_UDP)
                 require(s >= 0) { "socket 创建失败" }
                 require(connect(s, addr.pointed.ai_addr, addr.pointed.ai_addrlen) == 0) {

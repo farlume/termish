@@ -11,7 +11,8 @@ import kotlin.math.min
  * 时间均为单调毫秒（调用方注入 nowMs()）。
  */
 internal class MoshTransport(
-    ip: String,
+    /** 链路是否为 IPv6（取自已解析的 socket 地址族，对应协议 set_MTU(sa_family)）。 */
+    ipv6Path: Boolean,
     initialCols: Int,
     initialRows: Int,
     key: String,
@@ -78,7 +79,7 @@ internal class MoshTransport(
     val latestRemote: ShadowTerminal get() = receivedStates.last().state
 
     init {
-        sendMtu = if (ip.contains(':')) 1216 - 12 - 16 else 1252 - 12 - 16
+        sendMtu = if (ipv6Path) 1216 - 12 - 16 else 1252 - 12 - 16
         val initial = UserStream()
         sentStates.addLast(SentState(nowMs(), 0u, initial))
         receivedStates.addLast(RecvState(nowMs(), 0u, ShadowTerminal.create(initialCols, initialRows)))

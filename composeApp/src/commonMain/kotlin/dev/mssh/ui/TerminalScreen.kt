@@ -227,6 +227,10 @@ fun TerminalScreen(
         val bannerText = when {
             controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
                 s.terminalReconnectingN(controller.reconnectCount)
+            // mosh 链路失联（会话保持中，网络恢复自动续传）：对齐 mosh 的
+            // "Last contact Ns ago" 提示；双方心跳约 3s，阈值 5s 避免单包丢失抖动
+            controller.linkLostSeconds >= 5 ->
+                s.terminalMoshLostContact(controller.linkLostSeconds)
             controller.errorMessage != null -> controller.errorMessage
             controller.status == ConnStatus.ERROR -> s.terminalFailed
             else -> null

@@ -7,6 +7,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -31,6 +32,11 @@ class KmpMoshSession(
     /** 最新影子状态（在会话协程里回调；实现方应拷贝后切回主线程渲染）。 */
     private val onStateUpdate: (ShadowTerminalView) -> Unit,
     private val onExit: (String?) -> Unit,
+    /** 收到对端第一个有效包（连接建立，对应协议 still_connecting 翻转）时回调一次。 */
+    private val onPeerConnected: () -> Unit = {},
+    /** 链路健康度：距上次收到对端包的秒数，值变化才回调（空闲心跳约 3s 一次）。
+     *  对应协议 NotificationEngine 的 "Last contact Ns ago"。 */
+    private val onLinkStatus: (Int) -> Unit = {},
 ) {
     /** 供 UI 读取的影子状态视图。 */
     class ShadowTerminalView internal constructor(
@@ -68,7 +74,9 @@ class KmpMoshSession(
     private val prediction = PredictionLayer(::nowMs)
 
     private val transport = MoshTransport(
-        ip = ip,
+        // MTU 地址族按解析结果取（mosh set_MTU(sa_family)）：域名解析到 AAAA 时
+        // 用 hostname 字符串判断会错选 IPv4 MTU，隧道/PPPoE 路径上可能丢包
+        ipv6Path = sockets.first().isIpv6,
         initialCols = columns,
         initialRows = rows,
         key = key,
@@ -104,6 +112,7 @@ class KmpMoshSession(
     @Volatile
     private var peerSeen = false
     private var startedAt = 0L
+    private var lastReportedLostSecs = 0
 
     fun setTitleCallback(cb: (String) -> Unit) {
         titleCallback = cb
@@ -136,7 +145,10 @@ class KmpMoshSession(
     private fun launchReader(s: MoshUdpSocket) {
         val job = scope.launch(ioDispatcher()) {
             try {
-                while (true) {
+                // 取消检查：iOS 上 close 后 receive 走超时返回 null，不检查的话
+                // 协程在 session 关闭后永久 60s 空转（coroutineContext.isActive：
+                // 避开与本类 isActive() 成员函数的命名冲突）
+                while (coroutineContext.isActive) {
                     val dg = s.receive(60_000) ?: continue
                     events.send(Event.Packet(dg.data, dg.congestionExperienced))
                 }
@@ -168,7 +180,11 @@ class KmpMoshSession(
                     val pkt = transport.decryptDatagram(ev.data)
                     if (pkt != null) {
                         transport.processPacket(pkt, ev.congestionExperienced)
-                        peerSeen = true
+                        if (!peerSeen) {
+                            peerSeen = true
+                            // 首个有效包 = 连接建立（此前 UI 停留在「连接中」）
+                            onPeerConnected()
+                        }
                     }
                 }
                 is Event.Input -> {
@@ -200,6 +216,16 @@ class KmpMoshSession(
             // transport 重发（ACTIVE_RETRY_TIMEOUT 窗口）+ 端口轮换维持，网络恢复
             // （WiFi↔蜂窝切换、休眠唤醒、过隧道）即无缝续传；服务端同样永不超时
             // （mosh-server 的 60s 仅限从未有客户端连上）。
+
+            // 链路健康度上报（mosh NotificationEngine "Last contact Ns ago" 的简化版）：
+            // 空闲时循环≤1s 醒一次，秒数变化才回调；双方心跳约 3s，正常值 0~3
+            if (peerSeen) {
+                val lostSecs = ((nowMs() - transport.lastHeardMs()) / 1000).toInt()
+                if (lostSecs != lastReportedLostSecs) {
+                    lastReportedLostSecs = lostSecs
+                    onLinkStatus(lostSecs)
+                }
+            }
 
             // 15s 无对端应答视为连接失败（UDP 端口不通等，仅限未连上时）
             if (!peerSeen && nowMs() - startedAt > 15_000) {

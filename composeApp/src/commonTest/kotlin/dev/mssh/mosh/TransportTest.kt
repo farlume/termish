@@ -13,7 +13,7 @@ class TransportTest {
         val sent = ArrayList<ByteArray>()
         var states = 0
         val transport = MoshTransport(
-            ip = "127.0.0.1",
+            ipv6Path = false,
             initialCols = 80,
             initialRows = 24,
             key = dev.mssh.util.base64Encode(ByteArray(16)).substring(0, 22),

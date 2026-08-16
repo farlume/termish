@@ -14,6 +14,9 @@ internal class UdpDatagram(
 )
 
 internal expect class MoshUdpSocket(ip: String, port: Int) {
+    /** 解析后的远端地址族是否为 IPv6：传输层据此选 MTU（mosh 按 sa_family 取值，
+     *  不能用未解析的 hostname 判断）。 */
+    val isIpv6: Boolean
     fun send(data: ByteArray): SendResult
     /** timeoutMillis 内未收到数据返回 null。 */
     fun receive(timeoutMillis: Int): UdpDatagram?

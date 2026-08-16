@@ -32,8 +32,9 @@ fun parseMoshConnect(output: String): Pair<Int, String>? {
     return m.groupValues[1].toIntOrNull()?.let { it to m.groupValues[2] }
 }
 
-/** mosh-server 引导命令（按 Termux 同款参数）。 */
-const val MOSH_SERVER_BOOTSTRAP = "mosh-server new -c 8 -l LANG=en_US.UTF-8"
+/** mosh-server 引导命令（-c 256：远端 TERM=xterm-256color，与本机渲染能力一致；
+ *  -c 8 会让 mosh-server 置 TERM=xterm，远端程序降级到 8 色）。 */
+const val MOSH_SERVER_BOOTSTRAP = "mosh-server new -c 256 -l LANG=en_US.UTF-8"
 
 /** 置 false 可回退到原生 libmoshclient 路径（调试用）。 */
 const val USE_KMP_MOSH = true
@@ -56,6 +57,10 @@ fun createKmpMoshSession(
     /** 状态已同步进 [uiBuffer]，请求 UI 重绘（TerminalBuffer 不是 Compose 状态，
      *  不通知的话新内容要等下一个偶发 frame 变更才上屏）。 */
     onFrame: () -> Unit,
+    /** 收到对端首包（mosh 会话真正建立）时回调。 */
+    onPeerConnected: () -> Unit,
+    /** 链路健康度：距上次收到对端包的秒数（0~3 正常；UI 据此显示失联提示）。 */
+    onLinkStatus: (Int) -> Unit,
 ): MoshSession {
     // 渲染合并：CONFLATED 通道只保留最新状态，突发更新时最多一个主线程拷贝在途
     val pending = Channel<dev.mssh.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
@@ -78,6 +83,8 @@ fun createKmpMoshSession(
             pending.trySend(view)
         },
         onExit = onExit,
+        onPeerConnected = onPeerConnected,
+        onLinkStatus = onLinkStatus,
     )
     session.setTitleCallback(onTitle)
     session.setClipboardCallback(onClipboard)
