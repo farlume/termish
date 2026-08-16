@@ -339,7 +339,11 @@ class TerminalController(
      * herdr 会像收到终端应答一样解析。
      */
     private fun prepareThemeSync() {
-        if (!host.moshThemeSync) return
+        // 仅当配置了启动命令（TUI 会话：herdr/tmux 等）才注入：
+        // 注入的 OSC 应答会作为「用户输入」送达远端 shell，普通 shell（bash
+        // readline）不解析 OSC，会把 ESC]10;… 原样回显成特殊字符。
+        // 有启动命令说明会话会跑 TUI（herdr 查询终端主题），注入才安全有效。
+        if (!host.moshThemeSync || host.startupCommand.isBlank()) return
         moshThemePayload = emulator.buildThemeSyncPayload()
         moshThemeInjected = false
     }
