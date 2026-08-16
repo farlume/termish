@@ -19,6 +19,8 @@ import dev.mssh.ssh.parseMoshConnect
 import dev.mssh.term.TerminalBuffer
 import dev.mssh.term.TerminalEmulator
 import dev.mssh.term.TerminalSelection
+import dev.mssh.term.argbToRgb
+import dev.mssh.ui.theme.TerminalThemes
 import dev.mssh.util.ioDispatcher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -100,6 +102,16 @@ class TerminalController(
     private var moshThemeMarkerSeen = false
 
     init {
+        // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
+        // 必须在创建时按当前主题设置，不能等 TerminalScreen 组合——后台自动重连、
+        // 会话恢复等路径不经过界面，否则会拿深色初始值告诉远端"手机是深色主题"，
+        // 导致白主题下 pane 渲染成黑色/深色蒙层。
+        val terminalTheme = TerminalThemes.ALL
+            .getOrElse(repository.loadSettings().terminalThemeIndex) { TerminalThemes.ALL[0] }
+        buffer.defaultFgRgb = argbToRgb(terminalTheme.foreground)
+        buffer.defaultBgRgb = argbToRgb(terminalTheme.background)
+        buffer.defaultCursorRgb = argbToRgb(terminalTheme.cursor)
+
         emulator.onTitleChange = { t -> title = t }
         emulator.onResponse = { bytes -> session?.sendData(bytes) }
         emulator.onClipboardWrite = { text -> onRemoteClipboard?.invoke(text) }
