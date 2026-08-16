@@ -104,6 +104,15 @@ sealed interface SessionTab {
     }
 }
 
+/** 终端页当前 tab 的配色：终端 tab 用终端主题，应用类页面 tab 用应用主题。 */
+@Composable
+private fun tabColors(current: SessionTab, theme: TerminalTheme): Pair<Color, Color> =
+    if (current is SessionTab.Terminal) {
+        theme.background() to theme.foreground()
+    } else {
+        MaterialTheme.colorScheme.background to MaterialTheme.colorScheme.onSurface
+    }
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun TerminalScreen(
@@ -117,10 +126,15 @@ fun TerminalScreen(
     onCloseTab: (SessionTab) -> Unit,
     onOpenSftpPicker: () -> Unit,
 ) {
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    // 背景在 statusBarsPadding 之前应用：状态栏/灵动岛区域与页面同色，
+    // 避免终端黑色时顶部露出 App 浅色背景（或终端白色时露出深色背景）
+    val (pageBackground, pageForeground) = tabColors(current, theme)
+    Column(Modifier.fillMaxSize().background(pageBackground).statusBarsPadding()) {
         TerminalTabBar(
             tabs = tabs,
             current = current,
+            barBackground = pageBackground,
+            barForeground = pageForeground,
             onBack = onBack,
             onSwitch = onSwitchTab,
             onAdd = onAddSession,
@@ -422,6 +436,8 @@ private fun TerminalBody(
 private fun TerminalTabBar(
     tabs: List<SessionTab>,
     current: SessionTab,
+    barBackground: Color,
+    barForeground: Color,
     onBack: () -> Unit,
     onSwitch: (SessionTab) -> Unit,
     onAdd: () -> Unit,
@@ -447,13 +463,6 @@ private fun TerminalTabBar(
             scroll.animateScrollTo(target.toInt().coerceIn(0, scroll.maxValue))
         }
     }
-
-    // 头部配色跟随当前 tab 类型：终端 tab 用终端主题（深色），
-    // SFTP 等应用类页面 tab 用应用主题（浅色）
-    val barBackground = if (current is SessionTab.Terminal) theme.background()
-    else MaterialTheme.colorScheme.surface
-    val barForeground = if (current is SessionTab.Terminal) theme.foreground()
-    else MaterialTheme.colorScheme.onSurface
 
     Column(Modifier.fillMaxWidth().background(barBackground)) {
         Row(
