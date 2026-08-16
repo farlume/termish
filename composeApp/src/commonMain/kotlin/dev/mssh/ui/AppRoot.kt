@@ -286,15 +286,28 @@ fun AppRoot(repository: HostRepository) {
                             when (homeTab) {
                                 HomeTab.HOSTS -> HostListScreen(
                                     hosts = hosts,
-                                    hostSessions = sessionManager.sessions.groupBy { it.host.id },
+                                    hostSessions = (
+                                        sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
+                                            sftpSessions.map { HostSessionItem.Sftp(it.first, it.second) }
+                                        ).groupBy { it.hostId },
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
                                     onConnect = { host ->
-                                        val controller = sessionManager.open(host, settings.autoReconnect) {
-                                            hosts = repository.listHosts()
+                                        // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建
+                                        val connecting = sessionManager.sessions.firstOrNull {
+                                            it.host.id == host.id &&
+                                                (it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH)
                                         }
-                                        // 先留在列表：卡片头像转圈，连接完成后再跳转
-                                        pendingNavigate = controller
+                                        if (connecting != null) {
+                                            currentTab = SessionTab.Terminal(connecting)
+                                            screen = Screen.Terminal(host.id)
+                                        } else {
+                                            val controller = sessionManager.open(host, settings.autoReconnect) {
+                                                hosts = repository.listHosts()
+                                            }
+                                            // 先留在列表：卡片头像转圈，连接完成后再跳转
+                                            pendingNavigate = controller
+                                        }
                                     },
                                     onConnectBatch = { batch ->
                                         // 批处理连接：逐个建立会话（后台运行），不跳转终端页
@@ -312,6 +325,10 @@ fun AppRoot(repository: HostRepository) {
                                     onOpenSession = {
                                         currentTab = SessionTab.Terminal(it)
                                         screen = Screen.Terminal(it.host.id)
+                                    },
+                                    onOpenSftp = { host, session ->
+                                        currentTab = SessionTab.Sftp(host, session)
+                                        screen = Screen.Terminal(host.id)
                                     },
                                     onCloseAllSessions = { host ->
                                         sessionManager.sessions

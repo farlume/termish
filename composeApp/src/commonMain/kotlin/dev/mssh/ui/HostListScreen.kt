@@ -66,6 +66,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.mssh.data.ConnectionMode
 import dev.mssh.data.Host
+import dev.mssh.ssh.SftpSession
 import dev.mssh.generated.resources.Res
 import dev.mssh.generated.resources.host_centos
 import dev.mssh.generated.resources.host_linux
@@ -76,6 +77,26 @@ import dev.mssh.util.monospaceFontFamily
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
+/** 首页卡片展示的会话（终端或 SFTP）。 */
+sealed interface HostSessionItem {
+    val hostId: String
+    val isActive: Boolean
+    val isConnecting: Boolean
+
+    data class Terminal(val controller: TerminalController) : HostSessionItem {
+        override val hostId: String get() = controller.host.id
+        override val isActive: Boolean get() = isActiveStatus(controller.status)
+        override val isConnecting: Boolean
+            get() = controller.status == ConnStatus.CONNECTING || controller.status == ConnStatus.AUTH
+    }
+
+    data class Sftp(val host: Host, val session: SftpSession) : HostSessionItem {
+        override val hostId: String get() = host.id
+        override val isActive: Boolean get() = true
+        override val isConnecting: Boolean get() = false
+    }
+}
+
 /** 活跃会话判定：连接中/认证中/已连接都算（与连接页状态点同源）。 */
 internal fun isActiveStatus(status: ConnStatus): Boolean =
     status == ConnStatus.CONNECTED || status == ConnStatus.CONNECTING || status == ConnStatus.AUTH
@@ -84,7 +105,7 @@ internal fun isActiveStatus(status: ConnStatus): Boolean =
 @Composable
 fun HostListScreen(
     hosts: List<Host>,
-    hostSessions: Map<String, List<TerminalController>>,
+    hostSessions: Map<String, List<HostSessionItem>>,
     onAdd: () -> Unit,
     onEdit: (Host) -> Unit,
     onConnect: (Host) -> Unit,
@@ -92,6 +113,7 @@ fun HostListScreen(
     onDisconnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
     onOpenSession: (TerminalController) -> Unit,
+    onOpenSftp: (Host, SftpSession) -> Unit,
     onCloseAllSessions: (Host) -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -188,7 +210,7 @@ fun HostListScreen(
                         HostCard(
                             host = host,
                             sessions = sessions,
-                            active = sessions.any { isActiveStatus(it.status) },
+                            active = sessions.any { it.isActive },
                             selectionMode = selectionMode,
                             selected = isSelected,
                             onCardClick = {
@@ -196,8 +218,11 @@ fun HostListScreen(
                                     if (isSelected) selected.remove(host.id) else selected[host.id] = host
                                 } else {
                                     // 有活跃会话直接进入第一个，没有则新建
-                                    val active = sessions.firstOrNull { isActiveStatus(it.status) }
-                                    if (active != null) onOpenSession(active) else onConnect(host)
+                                    when (val active = sessions.firstOrNull { it.isActive }) {
+                                        is HostSessionItem.Terminal -> onOpenSession(active.controller)
+                                        is HostSessionItem.Sftp -> onOpenSftp(active.host, active.session)
+                                        null -> onConnect(host)
+                                    }
                                 }
                             },
                             onAvatarClick = {
@@ -212,6 +237,7 @@ fun HostListScreen(
                             },
                             onNewSession = { onConnect(host) },
                             onOpenSession = onOpenSession,
+                            onOpenSftp = onOpenSftp,
                             onCloseAllSessions = { onCloseAllSessions(host) },
                         )
                     }
@@ -315,7 +341,7 @@ private fun SelectionHeader(
 @Composable
 private fun HostCard(
     host: Host,
-    sessions: List<TerminalController>,
+    sessions: List<HostSessionItem>,
     active: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
@@ -324,11 +350,12 @@ private fun HostCard(
     onLongClick: () -> Unit,
     onNewSession: () -> Unit,
     onOpenSession: (TerminalController) -> Unit,
+    onOpenSftp: (Host, SftpSession) -> Unit,
     onCloseAllSessions: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
-    val connecting = sessions.any { it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH }
+    val connecting = sessions.any { it.isConnecting }
     val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
     val detail = if (active) {
         s.hostsActive
@@ -444,13 +471,14 @@ private fun HostCard(
                         Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
-            } else if (sessions.any { isActiveStatus(it.status) }) {
+            } else if (sessions.any { it.isActive }) {
                 // 活跃会话数 + 下拉：新建连接 / 重入活跃会话 / 全部关闭
                 SessionCountMenu(
                     sessions = sessions,
                     activeOnly = true,
                     onConnect = onNewSession,
-                    onOpen = onOpenSession,
+                    onOpenTerminal = onOpenSession,
+                    onOpenSftp = onOpenSftp,
                     onCloseAll = onCloseAllSessions,
                 )
             }
@@ -461,15 +489,16 @@ private fun HostCard(
 /** 卡片右侧会话下拉：显示会话数量，展开可新建连接、重入会话或全部关闭。 */
 @Composable
 private fun SessionCountMenu(
-    sessions: List<TerminalController>,
+    sessions: List<HostSessionItem>,
     activeOnly: Boolean,
     onConnect: () -> Unit,
-    onOpen: (TerminalController) -> Unit,
+    onOpenTerminal: (TerminalController) -> Unit,
+    onOpenSftp: (Host, SftpSession) -> Unit,
     onCloseAll: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     var open by remember { mutableStateOf(false) }
-    val listed = if (activeOnly) sessions.filter { isActiveStatus(it.status) } else sessions
+    val listed = if (activeOnly) sessions.filter { it.isActive } else sessions
     Box {
         Row(
             Modifier
@@ -498,20 +527,35 @@ private fun SessionCountMenu(
                 },
             )
             HorizontalDivider()
-            listed.forEach { controller ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            "${controller.host.username}@${controller.host.hostname}",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    onClick = {
-                        open = false
-                        onOpen(controller)
-                    },
-                )
+            listed.forEach { item ->
+                when (item) {
+                    is HostSessionItem.Terminal -> DropdownMenuItem(
+                        text = {
+                            Text(
+                                "${item.controller.host.username}@${item.controller.host.hostname}",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            open = false
+                            onOpenTerminal(item.controller)
+                        },
+                    )
+                    is HostSessionItem.Sftp -> DropdownMenuItem(
+                        text = {
+                            Text(
+                                "${item.host.username}@${item.host.hostname}",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            open = false
+                            onOpenSftp(item.host, item.session)
+                        },
+                    )
+                }
             }
             HorizontalDivider()
             DropdownMenuItem(
