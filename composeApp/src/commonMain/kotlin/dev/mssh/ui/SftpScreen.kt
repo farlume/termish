@@ -150,7 +150,7 @@ fun SftpContent(
             }
         }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(theme.background())) {
         Column(Modifier.fillMaxSize()) {
             // 精简头部：无边框、小字体、图标用终端前景色（深色背景下可见）
             Row(
