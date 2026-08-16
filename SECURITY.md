@@ -30,5 +30,3 @@ MSSH 是一个处理凭据的 SSH 客户端，安全问题优先处理。
 - `crypto/` 下的纯 Kotlin 实现**未经审计**，README 已声明；
   生产路径仅使用其中的 Sha256
 - 无遥测、无分析、除你的 SSH 连接外无任何网络请求
-- 预编译的 原生客户端（`jniLibs/`、`iosApp/`）来源与构建脚本公开，
-  可用 `scripts/build-ios-mosh.sh` 等自行复现验证

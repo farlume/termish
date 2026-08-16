@@ -1,5 +1,7 @@
 package dev.mssh.term
 
+import kotlin.concurrent.Volatile
+
 /** 单个字符单元。 */
 class TerminalCell {
     var codePoint: Int = ' '.code
@@ -47,8 +49,15 @@ class TerminalLine(val cols: Int) {
     var wrapped: Boolean = false
 
     /** 行内容版本号：单元格实际被改写时递增，供渲染层做行级缓存失效。 */
+    @Volatile
     var version: Long = 0
-        private set
+        internal set
+
+    /** 逻辑行身份：克隆/COW 复制时保留，跨缓冲比较"同一行是否变过"用。 */
+    internal var identity: Any = Any()
+
+    /** COW 共享标记：为 true 的行不可原地修改，写前必须克隆（mosh shared_ptr 行语义）。 */
+    internal var shared: Boolean = false
 
     fun touch() {
         version++
@@ -82,6 +91,8 @@ class TerminalBuffer(
 ) {
     private val normal = ArrayDeque<TerminalLine>()
     private var alt = Array(rows) { TerminalLine(cols) }
+    /** 上次拷贝时源缓冲普通屏窗口起点（normal[0] 对应的源行下标），增量同步用。 */
+    private var copySourceOffset: Int = 0
 
     var altScreen: Boolean = false
         private set
@@ -166,6 +177,15 @@ class TerminalBuffer(
     fun lineAt(row: Int): TerminalLine =
         if (altScreen) alt[row] else normalLine(row)
 
+    /** 写访问：行被 COW 共享时先克隆，保证共享行（影子历史/UI 引用）永不被原地修改。 */
+    private fun mutableLine(row: Int): TerminalLine {
+        val line = lineAt(row)
+        if (!line.shared) return line
+        val clone = cloneLine(line)
+        if (altScreen) alt[row] = clone else normal[lineIndex(row)] = clone
+        return clone
+    }
+
     fun visibleLineCount(): Int = rows
 
     /** 滚动回看行数（普通屏）或 0（备用屏）。 */
@@ -217,7 +237,9 @@ class TerminalBuffer(
         if (pendingWrap) {
             pendingWrap = false
             if (autoWrap) {
-                lineAt(cursorRow).wrapped = true
+                val wrapLine = mutableLine(cursorRow)
+                wrapLine.wrapped = true
+                wrapLine.touch()
                 newline()
             } else {
                 // DECAWM 关闭：光标钳在行末，新字符覆盖最后一格（xterm 行为）
@@ -225,7 +247,7 @@ class TerminalBuffer(
             }
         }
         val width = if (cp == 0) 1 else CharWidth.wcwidth(cp)
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         val col = cursorCol
 
         // 落点在宽字符尾巴上：先清掉头，避免残留半个宽字符
@@ -276,7 +298,7 @@ class TerminalBuffer(
         if (insertMode) {
             insertCells(1)
         }
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         // 落点在宽字符尾巴上：先清掉头
         if (cursorCol > 0 && line.cells[cursorCol].isWideTail) line.cells[cursorCol - 1].clear()
         lastPrintedCodePoint = cp
@@ -388,39 +410,39 @@ class TerminalBuffer(
     // ---------- 擦除 ----------
 
     fun eraseToEndOfLine() {
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         for (i in cursorCol until cols) line.cells[i].clear()
         line.touch()
         markChanged()
     }
 
     fun eraseFromStartOfLine() {
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         for (i in 0..cursorCol) line.cells[i].clear()
         line.touch()
         markChanged()
     }
 
     fun eraseLine() {
-        lineAt(cursorRow).clear()
+        mutableLine(cursorRow).clear()
         markChanged()
     }
 
     fun eraseToEndOfScreen() {
         eraseToEndOfLine()
-        for (r in cursorRow + 1 until rows) lineAt(r).clear()
+        for (r in cursorRow + 1 until rows) mutableLine(r).clear()
         markChanged()
     }
 
     fun eraseFromStartOfScreen() {
         eraseFromStartOfLine()
-        for (r in 0 until cursorRow) lineAt(r).clear()
+        for (r in 0 until cursorRow) mutableLine(r).clear()
         markChanged()
     }
 
     /** ED 2：清屏。xterm 语义：不移动光标。 */
     fun eraseScreen() {
-        for (r in 0 until rows) lineAt(r).clear()
+        for (r in 0 until rows) mutableLine(r).clear()
         markChanged()
     }
 
@@ -435,7 +457,7 @@ class TerminalBuffer(
 
     /** 擦除指定数量的字符（ECH）。 */
     fun eraseChars(n: Int) {
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         for (i in cursorCol until minOf(cursorCol + n, cols)) line.cells[i].clear()
         line.touch()
         markChanged()
@@ -444,7 +466,7 @@ class TerminalBuffer(
     // ---------- 插入/删除 ----------
 
     fun insertCells(n: Int) {
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         val count = minOf(n, cols - cursorCol)
         for (i in (cols - 1) downTo (cursorCol + count)) {
             line.cells[i].copyFrom(line.cells[i - count])
@@ -455,7 +477,7 @@ class TerminalBuffer(
     }
 
     fun deleteCells(n: Int) {
-        val line = lineAt(cursorRow)
+        val line = mutableLine(cursorRow)
         val count = minOf(n, cols - cursorCol)
         for (i in cursorCol until cols - count) {
             line.cells[i].copyFrom(line.cells[i + count])
@@ -469,12 +491,14 @@ class TerminalBuffer(
         val count = minOf(n, scrollBottom - cursorRow + 1)
         if (cursorRow < scrollTop || cursorRow > scrollBottom) return
         for (r in scrollBottom downTo cursorRow + count) {
-            lineAt(r).cells.forEachIndexed { i, _ ->
-                lineAt(r).cells[i].copyFrom(lineAt(r - count).cells[i])
+            val src = lineAt(r - count) // 只读
+            val dst = mutableLine(r) // 写
+            for (i in 0 until cols) {
+                dst.cells[i].copyFrom(src.cells[i])
             }
-            lineAt(r).touch()
+            dst.touch()
         }
-        for (r in cursorRow until cursorRow + count) lineAt(r).clear()
+        for (r in cursorRow until cursorRow + count) mutableLine(r).clear()
         markChanged()
     }
 
@@ -482,12 +506,14 @@ class TerminalBuffer(
         val count = minOf(n, scrollBottom - cursorRow + 1)
         if (cursorRow < scrollTop || cursorRow > scrollBottom) return
         for (r in cursorRow until scrollBottom - count + 1) {
-            lineAt(r).cells.forEachIndexed { i, _ ->
-                lineAt(r).cells[i].copyFrom(lineAt(r + count).cells[i])
+            val src = lineAt(r + count) // 只读
+            val dst = mutableLine(r) // 写
+            for (i in 0 until cols) {
+                dst.cells[i].copyFrom(src.cells[i])
             }
-            lineAt(r).touch()
+            dst.touch()
         }
-        for (r in scrollBottom - count + 1..scrollBottom) lineAt(r).clear()
+        for (r in scrollBottom - count + 1..scrollBottom) mutableLine(r).clear()
         markChanged()
     }
 
@@ -499,7 +525,7 @@ class TerminalBuffer(
             // 全屏滚动：追加新行（进入滚动回看）
             repeat(n) {
                 normal.addLast(TerminalLine(cols))
-                if (normal.size > maxScrollbackLines + rows) {
+                if (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + rows) {
                     normal.removeFirst()
                 }
             }
@@ -510,7 +536,7 @@ class TerminalBuffer(
                 copyLine(r + count, r)
             }
             for (r in scrollTop + region - count until scrollBottom + 1) {
-                lineAt(r).clear()
+                mutableLine(r).clear()
             }
         }
         markChanged()
@@ -532,7 +558,7 @@ class TerminalBuffer(
                 copyLine(r - count, r)
             }
             for (r in scrollTop until scrollTop + count) {
-                lineAt(r).clear()
+                mutableLine(r).clear()
             }
         }
         markChanged()
@@ -540,7 +566,7 @@ class TerminalBuffer(
 
     private fun copyLine(from: Int, to: Int) {
         val src = lineAt(from)
-        val dst = lineAt(to)
+        val dst = mutableLine(to)
         for (i in 0 until cols) dst.cells[i].copyFrom(src.cells[i])
         dst.wrapped = src.wrapped
         dst.touch()
@@ -553,7 +579,7 @@ class TerminalBuffer(
         altScreen = true
         // 1049 进入备用屏应清屏（xterm 行为）；1047/47 不清。
         // 不清的话上次 vim/tmux 的残留会在再次进入时闪一帧。
-        if (clear) alt.forEach { it.clear() }
+        if (clear) for (r in 0 until rows) mutableLine(r).clear()
         cursorRow = 0
         cursorCol = 0
         savedCursorRow = 0
@@ -600,13 +626,19 @@ class TerminalBuffer(
     fun resize(newCols: Int, newRows: Int) {
         if (newCols == cols && newRows == rows) return
 
-        // 调整普通屏每行宽度
-        for (line in normal) resizeLine(line, newCols)
+        // 调整普通屏每行宽度（COW：共享行先克隆再改）
+        for (i in normal.indices) {
+            val line = normal[i]
+            if (line.shared) normal[i] = cloneLine(line)
+            resizeLine(normal[i], newCols)
+        }
         // 调整备用屏
         val newAlt = Array(newRows) { TerminalLine(newCols) }
         for (r in 0 until minOf(rows, newRows)) {
-            resizeLine(alt[r], newCols)
-            copyInto(newAlt[r], alt[r], newCols)
+            val src = alt[r]
+            val srcMutable = if (src.shared) cloneLine(src) else src
+            resizeLine(srcMutable, newCols)
+            copyInto(newAlt[r], srcMutable, newCols)
         }
         alt = newAlt
 
@@ -628,8 +660,8 @@ class TerminalBuffer(
                 normal.addLast(TerminalLine(newCols))
             }
         }
-        // 限制回看总量
-        while (normal.size > maxScrollbackLines + newRows) {
+        // 限制回看总量（Int.MAX_VALUE = 无上限，影子终端用；普通 UI 缓冲保留上限）
+        while (maxScrollbackLines != Int.MAX_VALUE && normal.size > maxScrollbackLines + newRows) {
             normal.removeFirst()
         }
 
@@ -643,6 +675,165 @@ class TerminalBuffer(
         savedCursorCol = savedCursorCol.coerceIn(0, cols - 1)
         tabStops = defaultTabStops(cols)
         markChanged()
+    }
+
+    // ---------- 整体复制（mosh KMP 影子状态 / UI 同步用） ----------
+
+    /** COW 浅分叉：行对象与源共享（写时复制），O(行数) 而非 O(单元格)。
+     *  供 mosh 影子状态保存（对应协议 时间戳状态 的 shared_ptr 行拷贝）。 */
+    fun shallowFork(): TerminalBuffer {
+        // rows=0 构造：主构造器的 init 会预建 rows 行空白屏幕行，直接构造再追加
+        // 源行会让每个分叉顶部多出 rows 行幻影空行——幻影随分叉代数累积（每帧
+        // +rows 行），会话越久分叉/GC 成本越高；rows=0 则零分配零幻影
+        val dst = TerminalBuffer(cols, 0, maxScrollbackLines)
+        dst.cols = cols
+        dst.rows = rows
+        for (line in normal) {
+            line.shared = true
+            dst.normal.addLast(line)
+        }
+        dst.alt = Array(rows) { idx ->
+            alt[idx].also { it.shared = true }
+        }
+        dst.copyStateFieldsFrom(this)
+        return dst
+    }
+
+    /** 深拷贝：用于 mosh SSP 的影子终端状态分叉保存。 */
+    fun deepCopy(): TerminalBuffer {
+        val dst = TerminalBuffer(cols, rows, maxScrollbackLines)
+        dst.copyContentFrom(this)
+        return dst
+    }
+
+    /** 用 other 的显示状态替换本缓冲（保持实例不变，供 UI 渲染引用）。
+     *  行级增量：同一逻辑行（identity 相同）且版本未变则复用目标行，只克隆变化行，
+     *  避免大回看下每帧全量克隆单元格。
+     *  返回是否有实际变化：无变化时调用方可跳过重绘（预测收编后常会推入视觉
+     *  完全相同的状态）。 */
+    fun copyContentFrom(other: TerminalBuffer): Boolean {
+        var changed = false
+        val oldCols = cols
+        val oldRows = rows
+        val oldSize = normal.size
+        val oldOffset = copySourceOffset
+
+        // 目标缓冲设了上限时只拷贝保留段（最后 maxScrollback+rows 行），
+        // 避免影子无上限后每帧先克隆全部再丢弃（影子 Int.MAX_VALUE 则全量拷贝）
+        val keep = if (maxScrollbackLines == Int.MAX_VALUE) {
+            other.normal.size
+        } else {
+            minOf(other.normal.size, maxScrollbackLines + other.rows)
+        }
+        val offset = other.normal.size - keep
+
+        cols = other.cols
+        rows = other.rows
+
+        // 增量对齐：源回看只增长（unbounded 不删行），目标窗口起点前移 drop 行；
+        // 剩余行与源按 identity/version 逐行比对复用，末尾追加新行。
+        // 形状变化（resize）或回看被清（ED3）时 drop 越界 → 全量重建。
+        val drop = if (oldCols == other.cols && oldRows == other.rows) offset - oldOffset else -1
+        if (drop < 0 || drop > oldSize) {
+            normal.clear()
+            for (j in offset until other.normal.size) {
+                normal.addLast(cloneLine(other.normal[j]))
+            }
+            changed = true
+        } else {
+            if (drop > 0) changed = true
+            repeat(drop) { normal.removeFirst() }
+            var dstIdx = 0
+            for (j in offset until other.normal.size) {
+                val src = other.normal[j]
+                if (dstIdx < oldSize - drop) {
+                    val dst = normal[dstIdx]
+                    if (dst.identity !== src.identity || dst.version != src.version) {
+                        normal[dstIdx] = cloneLine(src)
+                        changed = true
+                    } else if (dst.wrapped != src.wrapped) {
+                        dst.wrapped = src.wrapped
+                        changed = true
+                    }
+                } else {
+                    normal.addLast(cloneLine(src))
+                    changed = true
+                }
+                dstIdx++
+            }
+        }
+        copySourceOffset = offset
+
+        // 备用屏行同样按 identity/version 增量复用（此前每帧全量克隆所有行，
+        // vim/htop 等 alt 屏程序每个输出帧都白拷 O(行数×列数)）
+        if (alt.size != other.alt.size) {
+            alt = Array(other.rows) { cloneLine(other.alt[it]) }
+            changed = true
+        } else {
+            for (r in other.alt.indices) {
+                val src = other.alt[r]
+                val dst = alt[r]
+                if (dst.identity !== src.identity || dst.version != src.version) {
+                    alt[r] = cloneLine(src)
+                    changed = true
+                } else if (dst.wrapped != src.wrapped) {
+                    dst.wrapped = src.wrapped
+                    changed = true
+                }
+            }
+        }
+        if (copyStateFieldsFrom(other)) changed = true
+        if (changed) markChanged()
+        return changed
+    }
+
+    /** 拷贝显示状态字段；返回是否有字段实际变化。 */
+    private fun copyStateFieldsFrom(other: TerminalBuffer): Boolean {
+        var changed = false
+        // 枚举/Int/Boolean 标量字段逐组比较赋值
+        if (altScreen != other.altScreen) { altScreen = other.altScreen; changed = true }
+        if (cursorRow != other.cursorRow) { cursorRow = other.cursorRow; changed = true }
+        if (cursorCol != other.cursorCol) { cursorCol = other.cursorCol; changed = true }
+        if (cursorVisible != other.cursorVisible) { cursorVisible = other.cursorVisible; changed = true }
+        if (savedCursorRow != other.savedCursorRow) { savedCursorRow = other.savedCursorRow; changed = true }
+        if (savedCursorCol != other.savedCursorCol) { savedCursorCol = other.savedCursorCol; changed = true }
+        if (savedPendingWrap != other.savedPendingWrap) { savedPendingWrap = other.savedPendingWrap; changed = true }
+        if (savedCharset != other.savedCharset) { savedCharset = other.savedCharset; changed = true }
+        if (scrollTop != other.scrollTop) { scrollTop = other.scrollTop; changed = true }
+        if (scrollBottom != other.scrollBottom) { scrollBottom = other.scrollBottom; changed = true }
+        if (autoWrap != other.autoWrap) { autoWrap = other.autoWrap; changed = true }
+        if (originMode != other.originMode) { originMode = other.originMode; changed = true }
+        if (insertMode != other.insertMode) { insertMode = other.insertMode; changed = true }
+        if (applicationCursorKeys != other.applicationCursorKeys) { applicationCursorKeys = other.applicationCursorKeys; changed = true }
+        if (bracketedPaste != other.bracketedPaste) { bracketedPaste = other.bracketedPaste; changed = true }
+        if (mouseTracking != other.mouseTracking) { mouseTracking = other.mouseTracking; changed = true }
+        if (mouseSgr != other.mouseSgr) { mouseSgr = other.mouseSgr; changed = true }
+        if (defaultFgRgb != other.defaultFgRgb) { defaultFgRgb = other.defaultFgRgb; changed = true }
+        if (defaultBgRgb != other.defaultBgRgb) { defaultBgRgb = other.defaultBgRgb; changed = true }
+        if (defaultCursorRgb != other.defaultCursorRgb) { defaultCursorRgb = other.defaultCursorRgb; changed = true }
+        if (applicationKeypad != other.applicationKeypad) { applicationKeypad = other.applicationKeypad; changed = true }
+        if (cursorStyle != other.cursorStyle) { cursorStyle = other.cursorStyle; changed = true }
+        if (cursorColor != other.cursorColor) { cursorColor = other.cursorColor; changed = true }
+        if (focusEvents != other.focusEvents) { focusEvents = other.focusEvents; changed = true }
+        if (alternateScroll != other.alternateScroll) { alternateScroll = other.alternateScroll; changed = true }
+        if (mouseUrxvt != other.mouseUrxvt) { mouseUrxvt = other.mouseUrxvt; changed = true }
+        if (currentLink != other.currentLink) { currentLink = other.currentLink; changed = true }
+        if (!tabStops.contentEquals(other.tabStops)) { tabStops = other.tabStops.copyOf(); changed = true }
+        if (lastPrintedCodePoint != other.lastPrintedCodePoint) { lastPrintedCodePoint = other.lastPrintedCodePoint; changed = true }
+        if (currentCharset != other.currentCharset) { currentCharset = other.currentCharset; changed = true }
+        if (pendingWrap != other.pendingWrap) { pendingWrap = other.pendingWrap; changed = true }
+        return changed
+    }
+
+    private fun cloneLine(src: TerminalLine): TerminalLine {
+        val dst = TerminalLine(src.cols)
+        for (i in 0 until src.cols) dst.cells[i].copyFrom(src.cells[i])
+        dst.wrapped = src.wrapped
+        // 保留逻辑身份与内容版本：跨缓冲行级增量比较依赖它
+        dst.identity = src.identity
+        dst.version = src.version
+        dst.shared = false
+        return dst
     }
 
     private fun resizeLine(line: TerminalLine, newCols: Int) {

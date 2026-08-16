@@ -13,7 +13,7 @@ import dev.mssh.ssh.SshException
 import dev.mssh.ssh.SshCallbacks
 import dev.mssh.ssh.SshConnection
 import dev.mssh.ssh.SshSession
-import dev.mssh.ssh.createMoshClient
+import dev.mssh.ssh.createKmpMoshSession
 import dev.mssh.ssh.createSshSession
 import dev.mssh.ssh.parseMoshConnect
 import dev.mssh.term.TerminalBuffer
@@ -28,6 +28,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
 enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
+
+/** mosh 链路失联提示阈值（秒）：双方心跳约 3s，5s 避免单包丢失抖动。
+ *  失联 banner 与状态点共用。 */
+internal const val LINK_LOST_THRESHOLD_SECONDS = 5
 
 data class AuthPromptRequest(val prompt: AuthPrompt) {
     internal val deferred = CompletableDeferred<List<String>?>()
@@ -65,6 +69,9 @@ class TerminalController(
     /** 当前重连尝试次数：>0 且状态为 CONNECTING 时表示正在自动重连。 */
     var reconnectCount by mutableStateOf(0)
         private set
+    /** mosh 链路失联秒数（0=健康；达到阈值时 UI 显示「失去联系」banner，会话仍保持）。 */
+    var linkLostSeconds by mutableStateOf(0)
+        private set
     var title by mutableStateOf(host.name)
         private set
     var authPrompt by mutableStateOf<AuthPromptRequest?>(null)
@@ -100,9 +107,6 @@ class TerminalController(
     /** Mosh 主题注入：非空表示本会话开启（见 [prepareThemeSync]）。 */
     private var moshThemePayload: ByteArray? = null
     private var moshThemeInjected = false
-    /** 已在远端输出里见到 herdr 标题（ESC]0;● …），表示远端可接收注入。 */
-    private var moshThemeMarkerSeen = false
-
     init {
         // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
         // 必须在创建时按当前主题设置，不能等 TerminalScreen 组合——后台自动重连、
@@ -203,7 +207,7 @@ class TerminalController(
             }
             val ssh = createSshSession(newConnection(), bootstrapCallbacks)
             val bootstrap = if (host.moshUdpPort in 1024..65535) {
-                "mosh-server new -c 8 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
+                "mosh-server new -c 256 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
                 MOSH_SERVER_BOOTSTRAP
             }
@@ -213,30 +217,40 @@ class TerminalController(
                 ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
 
             prepareThemeSync()
-            val client = createMoshClient(
+            // 纯 Kotlin mosh 客户端：影子终端状态直接同步进 UI buffer，
+            // 不经过字节流路径（emulator.write）。
+            val client = createKmpMoshSession(
                 ip = host.hostname,
                 port = moshPort,
                 key = moshKey,
                 columns = lastCols,
                 rows = lastRows,
-                onOutput = { data ->
-                    maybeInjectThemeOnOutput(data)
-                    emulator.write(data)
-                    frame++
+                scope = scope,
+                uiBuffer = buffer,
+                onTitle = { t -> title = t },
+                onClipboard = { text ->
+                    if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
                 },
-                onExit = {
+                onExit = { reason ->
                     if (status == ConnStatus.CONNECTED) {
                         status = ConnStatus.CLOSED
+                        // 会话异常/超时等原因必须浮现（此前被静默丢弃，
+                        // 用户只能看到「已断开」且不知为何）
+                        if (reason != null) errorMessage = reason
                         stopKeepAlive()
                     } else if (status == ConnStatus.CONNECTING) {
-                        // mosh-client 在连接建立前就退出（如 UDP 端口不可达）：
-                        // 不能继续显示 Connected，把真实原因留在画布（stderr 已合并），
-                        // 状态置为 ERROR 而不是被后续代码覆盖成 CONNECTED。
                         status = ConnStatus.ERROR
-                        errorMessage = "mosh 连接失败：客户端已退出（检查 UDP 端口/防火墙）"
+                        errorMessage = reason ?: "mosh 连接失败：客户端已退出"
                         stopKeepAlive()
                     }
                 },
+                // 状态拷进 buffer 后显式触发重绘，否则新输出/预测回显要等
+                // 光标闪烁等偶发 frame 变更（0~530ms）才上屏
+                onFrame = { frame++ },
+                // 收到对端首包才算真正连上（mosh still_connecting 语义）：
+                // UDP 不通时状态停留在「连接中」，15s 超时由 onExit 报出原因
+                onPeerConnected = { moshSession?.let { onMoshConnected(it) } },
+                onLinkStatus = { secs -> linkLostSeconds = secs },
             )
             moshSession = client
             // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须拉起后立即销毁
@@ -252,24 +266,7 @@ class TerminalController(
                 stopKeepAlive()
                 return@doConnectMosh
             }
-            // herdr 的 ● 标记可能因 mosh 转发时序不稳定而检测不到，
-            // 固定延迟兜底注入（字节会等握手完成后才送达远端 stdin）。
-            if (moshThemePayload != null) {
-                scope.launch {
-                    kotlinx.coroutines.delay(2500)
-                    injectThemeIfNeeded(requireMarker = false)
-                }
-            }
-            status = ConnStatus.CONNECTED
-            reconnectAttempts = 0
-            reconnectCount = 0
-            errorMessage = null
-            startKeepAlive()
-            // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
-            if (host.startupCommand.isNotBlank()) {
-                client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
-            }
-            frame++
+            // 等 onPeerConnected 首包回调再置 CONNECTED（UDP 不通时保持「连接中」）
         } catch (e: Throwable) {
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
@@ -278,33 +275,47 @@ class TerminalController(
         }
     }
 
+    /** mosh 会话真正建立后的统一收尾（收到对端首包时回调）。 */
+    private fun onMoshConnected(client: MoshSession) {
+        if (status == ConnStatus.CLOSED) { // 等待首包期间用户已关闭
+            client.close()
+            return
+        }
+        // 固定延迟注入（字节会等握手完成后才送达远端 stdin）。
+        if (moshThemePayload != null) {
+            scope.launch {
+                kotlinx.coroutines.delay(2500)
+                injectThemeIfNeeded()
+            }
+        }
+        status = ConnStatus.CONNECTED
+        reconnectAttempts = 0
+        reconnectCount = 0
+        errorMessage = null
+        linkLostSeconds = 0
+        startKeepAlive()
+        // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
+        if (host.startupCommand.isNotBlank()) {
+            client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+        }
+        frame++
+    }
+
     /**
      * Mosh 下把手机终端主题注入远端（herdr 等从 stdin 解析 OSC 应答）。
      * 见 [dev.mssh.term.TerminalEmulator.buildThemeSyncPayload]。
-     * 连接后固定延迟注入，并在输出里见到 herdr 的 ● 标记（tab 标签）时提前注入；
-     * 字节通过 mosh 输入通道送达，herdr 会像收到终端应答一样解析。
+     * 连接后固定延迟注入；字节通过 mosh 输入通道送达，
+     * herdr 会像收到终端应答一样解析。
      */
     private fun prepareThemeSync() {
         if (!host.moshThemeSync) return
         moshThemePayload = emulator.buildThemeSyncPayload()
         moshThemeInjected = false
-        moshThemeMarkerSeen = false
     }
 
-    /** 输出里出现 herdr 的 ● 标记（tab 标签/标题）时提前注入。 */
-    private fun maybeInjectThemeOnOutput(data: ByteArray) {
-        if (moshThemePayload == null || moshThemeInjected) return
-        val text = data.decodeToString()
-        if (text.contains("●")) {
-            moshThemeMarkerSeen = true
-            injectThemeIfNeeded(requireMarker = true)
-        }
-    }
-
-    private fun injectThemeIfNeeded(requireMarker: Boolean = true) {
+    private fun injectThemeIfNeeded() {
         val payload = moshThemePayload ?: return
         if (moshThemeInjected) return
-        if (requireMarker && !moshThemeMarkerSeen) return
         val client = moshSession ?: return
         if (status == ConnStatus.CONNECTED && client.isActive()) {
             moshThemeInjected = true
@@ -439,6 +450,7 @@ class TerminalController(
 
     fun close() {
         status = ConnStatus.CLOSED
+        linkLostSeconds = 0
         // 取消挂起的自动重连，防止 close 后延迟任务又拉起连接
         reconnectJob?.cancel()
         reconnectJob = null

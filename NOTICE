@@ -10,19 +10,3 @@ MSSH 第三方组件声明
 | BouncyCastle | MIT-style | JVM 端加密 | LICENSES/BouncyCastle-MIT.txt |
 | libssh2 | BSD-3-Clause | iOS 端 SSH 引擎 | LICENSES/libssh2-BSD.txt |
 | OpenSSL | Apache-2.0 | iOS 端 TLS/加密（静态链接） | LICENSES/Apache-2.0.txt |
-| mosh (client) | GPL-3.0 | 三端 Mosh 客户端 | LICENSES/mosh-GPLv3.txt |
-| pty4j | EPL-1.0 | 桌面端 PTY | https://www.eclipse.org/legal/epl-v10.html |
-| ncurses | MIT-style/X11 | iOS mosh 依赖（terminfo） | https://invisible-island.net/ncurses/ncurses-license.html |
-
-关于 mosh (GPL-3.0)
--------------------
-
-mosh-client 以 GPLv3 授权。本项目与 mosh-client 的关系是"并排分发的独立
-进程"（mere aggregation）：App 通过 SSH 引导、以独立进程方式启动
-mosh-client，二者不共享地址空间。按 GPLv3 要求：
-
-- mosh 1.4.0 源代码：https://mosh.org / https://github.com/mobile-shell/mosh
-- 本项目使用的交叉编译脚本完整公开：
-  - Android：scripts/build-android-mosh.sh（NDK 交叉编译 mosh + openssl/ncurses/protobuf）
-  - iOS：scripts/build-ios-mosh.sh（含全部 configure 参数与补丁）
-- 你可以用上述脚本从原始源码复现出完全一致的二进制

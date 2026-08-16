@@ -98,6 +98,41 @@ private fun StringBuilder.appendCodePoint(cp: Int) {
 
 private fun codePointToString(cp: Int): String = StringBuilder().appendCodePoint(cp).toString()
 
+/** 一行内一个测量好的文本 run：x 为行内像素偏移，y 由绘制时行位置决定。 */
+private class CachedTextRun(val layout: androidx.compose.ui.text.TextLayoutResult, val x: Float)
+
+private class LineText(val runs: List<CachedTextRun>)
+
+/** 按 (行 identity, version) 缓存测量好的文本 run：行内容不变（identity 同、
+ *  version 未 bump）时重绘/滚动平移只回放布局，跳过文本测量——全屏文本布局是
+ *  每帧最昂贵的部分。只有可见行会被绘制，LRU 容量取可见屏数倍即可。
+ *  整体失效由外层 remember(style, wideStyle, theme) 负责（字号/主题变化即重建）。 */
+private class LineTextCache(private val capacity: Int = 256) {
+    private class Entry(val version: Long, val text: LineText)
+
+    // LinkedHashMap 保持插入序：get/put 时重插到末尾实现 LRU
+    //（Kotlin common 的 LinkedHashMap 没有 accessOrder/removeEldestEntry）
+    private val map = LinkedHashMap<Any, Entry>()
+
+    fun get(line: TerminalLine): LineText? {
+        val e = map.remove(line.identity) ?: return null
+        map[line.identity] = e // 重插到末尾（标记最近使用）
+        return if (e.version == line.version) e.text else null
+    }
+
+    fun put(line: TerminalLine, text: LineText) {
+        map.remove(line.identity)
+        map[line.identity] = Entry(line.version, text)
+        if (map.size > capacity) {
+            val it = map.keys.iterator()
+            if (it.hasNext()) {
+                it.next()
+                it.remove() // 逐出最久未用
+            }
+        }
+    }
+}
+
 private fun currentStartAbs(buffer: TerminalBuffer, scrollOffset: Int): Int {
     val scrollback = buffer.scrollbackSize()
     val offset = scrollOffset.coerceIn(0, scrollback)
@@ -201,13 +236,55 @@ fun TerminalView(
     val latestCanvasSize by rememberUpdatedState(canvasSize)
     val uriHandler = LocalUriHandler.current
 
-    // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY 尺寸，
-    // 避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不触发平移，
-    // 否则底部有工具栏时会把终端顶部（如 herdr 的 switch 菜单）顶出屏幕。
-    // 用户回看滚动时不平移。
-    // frame 每次输出自增，读取它以在输出后重算平移。
-    @Suppress("UNUSED_VARIABLE")
-    val frame = controller.frame
+    // 行级文本渲染缓存：键 (identity, version) 已随 COW/增量拷贝保证「内容变则
+    // version 变」；style/theme 变化时 remember 重建整体失效。命中时重绘只是
+    // 回放 TextLayoutResult，滚动时整屏平移几乎全部命中。
+    val lineTextCache = remember(style, wideStyle, theme) { LineTextCache() }
+
+    // 测量一行的全部文本 run：窄字符按 (fg, attrs) 连续成 run，宽字符单独测量。
+    // 与下方背景/下划线 pass 的遍历规则保持一致。
+    fun measureLineText(line: TerminalLine): LineText {
+        val runs = ArrayList<CachedTextRun>()
+        var i = 0
+        while (i < buffer.cols) {
+            val cell = line.cells[i]
+            if (cell.isWideTail) { i++; continue }
+            if (cell.codePoint == ' '.code && cell.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) { i++; continue }
+
+            val (fgColor, _) = cellColors(cell, theme)
+            val runStyle = cachedTextStyle(style, fgColor, cell.attrs and CellAttr.BOLD != 0)
+            var j = i
+            val sb = StringBuilder()
+            while (j < buffer.cols) {
+                val c2 = line.cells[j]
+                if (c2.isWideTail || c2.fg != cell.fg || c2.attrs != cell.attrs) break
+                if (c2.width != 1) break
+                if (c2.codePoint == ' '.code && c2.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) break
+                sb.appendCodePoint(c2.codePoint)
+                j++
+            }
+            if (sb.isNotEmpty()) {
+                runs.add(CachedTextRun(textMeasurer.measure(sb.toString(), runStyle), i * cellW))
+            }
+            // 宽字符单独测量
+            if (j < buffer.cols && !line.cells[j].isWideTail && line.cells[j].width == 2) {
+                val wide = line.cells[j]
+                runs.add(
+                    CachedTextRun(
+                        textMeasurer.measure(
+                            codePointToString(wide.codePoint),
+                            cachedTextStyle(wideStyle, cellColors(wide, theme).first, wide.attrs and CellAttr.BOLD != 0),
+                        ),
+                        j * cellW,
+                    ),
+                )
+                j += 2
+            }
+            i = j
+        }
+        return LineText(runs)
+    }
+
     // 触摸 → 终端鼠标事件（X10/SGR）：herdr/vim/htop 等 TUI 开启鼠标上报后，
     // 触摸映射为左键按下/拖拽/释放，滚动手势映射为滚轮。坐标为 1-based 格坐标。
     fun sendMouseEvent(btn: Int, col: Int, row: Int, release: Boolean) {
@@ -231,14 +308,9 @@ fun TerminalView(
         ((pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)) to
             ((pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1))
 
-    val panUp = run {
-        if (!keyboardVisible || scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
-        val cursorBottomY = (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
-        val visibleBottomY = canvasSize.height.toFloat() - coveredBottomPx
-        if (cursorBottomY > visibleBottomY) {
-            (cursorBottomY - visibleBottomY).coerceAtMost(canvasSize.height.toFloat())
-        } else 0f
-    }
+    // 内容不足一屏时的填充空行：共享同一实例（只读），保证行缓存键稳定，
+    // 避免每帧新建实例产生的缓存垃圾
+    val emptyLine = remember(buffer.cols) { TerminalLine(buffer.cols) }
 
     // 尺寸或字号变化时重新计算行列并同步 PTY
     LaunchedEffect(canvasSize, effectiveFontSizeSp) {
@@ -254,7 +326,25 @@ fun TerminalView(
 
     Canvas(
         modifier
-            .graphicsLayer { translationY = -panUp }
+            // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY
+            // 尺寸，避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不平移；
+            // 用户回看滚动时不平移。平移计算放在 graphicsLayer 块内：frame（输出）
+            // 与 scrollOffset 的变化只触发 layer 更新，不再重组整个 TerminalView。
+            .graphicsLayer {
+                @Suppress("UNUSED_VARIABLE") val redraw = controller.frame
+                val panUp =
+                    if (!keyboardVisible || scrollOffset != 0 || size.height <= 0 || coveredBottomPx <= 0f) {
+                        0f
+                    } else {
+                        val cursorBottomY =
+                            (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
+                        val visibleBottomY = size.height - coveredBottomPx
+                        if (cursorBottomY > visibleBottomY) {
+                            (cursorBottomY - visibleBottomY).coerceAtMost(size.height)
+                        } else 0f
+                    }
+                translationY = -panUp
+            }
             .onSizeChanged { size ->
                 canvasSize = size
             }
@@ -555,7 +645,7 @@ fun TerminalView(
         val lines = ArrayList<TerminalLine>(buffer.rows)
         for (r in 0 until buffer.rows) {
             val abs = startAbs + r
-            lines.add(if (abs < totalLines) buffer.absLine(abs) else TerminalLine(buffer.cols))
+            lines.add(if (abs < totalLines) buffer.absLine(abs) else emptyLine)
         }
 
         // 键盘弹起/字号变化时，canvas 尺寸与 buffer 行列数存在一帧的瞬态不一致，
@@ -563,6 +653,12 @@ fun TerminalView(
         fun drawTextInBounds(text: String, topLeft: Offset, textStyle: TextStyle) {
             if (topLeft.x < 0f || topLeft.y < 0f || topLeft.x >= size.width || topLeft.y >= size.height) return
             drawText(textMeasurer = textMeasurer, text = text, topLeft = topLeft, style = textStyle)
+        }
+
+        // 缓存布局的回放版本：跳过测量，直接画 TextLayoutResult
+        fun drawLayoutInBounds(run: CachedTextRun, topLeft: Offset) {
+            if (topLeft.x < 0f || topLeft.y < 0f || topLeft.x >= size.width || topLeft.y >= size.height) return
+            drawText(textLayoutResult = run.layout, topLeft = topLeft)
         }
 
         // 背景色 run
@@ -587,42 +683,15 @@ fun TerminalView(
             }
         }
 
-        // 文本 run
+        // 文本 run：按行 (identity, version) 缓存测量结果——未变行只回放布局，
+        // 滚动时整屏内容平移几乎全部命中缓存，不再每帧全屏文本重排
         for (r in lines.indices) {
             val line = lines[r]
             val y = r * cellH
-            var i = 0
-            while (i < buffer.cols) {
-                val cell = line.cells[i]
-                if (cell.isWideTail) { i++; continue }
-                if (cell.codePoint == ' '.code && cell.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) { i++; continue }
-
-                val (fgColor, _) = cellColors(cell, theme)
-                val runStyle = cachedTextStyle(style, fgColor, cell.attrs and CellAttr.BOLD != 0)
-                var j = i
-                val sb = StringBuilder()
-                while (j < buffer.cols) {
-                    val c2 = line.cells[j]
-                    if (c2.isWideTail || c2.fg != cell.fg || c2.attrs != cell.attrs) break
-                    if (c2.width != 1) break
-                    if (c2.codePoint == ' '.code && c2.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) break
-                    sb.appendCodePoint(c2.codePoint)
-                    j++
-                }
-                if (sb.isNotEmpty()) {
-                    drawTextInBounds(sb.toString(), Offset(i * cellW, y + textTop), runStyle)
-                }
-                // 宽字符单独绘制
-                if (j < buffer.cols && !line.cells[j].isWideTail && line.cells[j].width == 2) {
-                    val wide = line.cells[j]
-                    drawTextInBounds(
-                        codePointToString(wide.codePoint),
-                        Offset(j * cellW, y + textTop),
-                        cachedTextStyle(wideStyle, cellColors(wide, theme).first, wide.attrs and CellAttr.BOLD != 0),
-                    )
-                    j += 2
-                }
-                i = j
+            val lineText = lineTextCache.get(line)
+                ?: measureLineText(line).also { lineTextCache.put(line, it) }
+            for (run in lineText.runs) {
+                drawLayoutInBounds(run, Offset(run.x, y + textTop))
             }
         }
 

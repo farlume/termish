@@ -10,6 +10,52 @@ import kotlin.test.assertTrue
 class TerminalBufferTest {
 
     @Test
+    fun unlimitedScrollbackNotTruncated() {
+        // 影子终端用 Int.MAX_VALUE 表示无上限（mosh Framebuffer 语义），
+        // 滚动后不得丢行，否则 SSP diff 会与服务端 framebuffer 错位
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = Int.MAX_VALUE)
+        repeat(200) { b.scrollUp(1) }
+        assertEquals(200, b.scrollbackSize())
+
+        val capped = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(200) { capped.scrollUp(1) }
+        assertEquals(100, capped.scrollbackSize())
+    }
+
+    @Test
+    fun shallowForkSharesLinesAndCopiesOnWrite() {
+        // COW：fork 后行对象共享；任一 buffer 写共享行时先克隆，互不影响
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        val fork = b.shallowFork()
+        assertTrue(fork.lineAt(0) === b.lineAt(0)) // 未写前共享同一行对象
+
+        fork.putChar('b'.code) // 写第 0 行 → COW 克隆
+        assertTrue(fork.lineAt(0) !== b.lineAt(0))
+        assertEquals('a'.code, b.lineAt(0).cells[0].codePoint) // 原 buffer 不受影响
+        assertEquals('b'.code, fork.lineAt(0).cells[1].codePoint) // 克隆行独立写入
+    }
+
+    @Test
+    fun shallowForkPreservesExactLineCount() {
+        // 回归：shallowFork 曾在构造器预建的 rows 空行之后追加源行，每个分叉
+        // 顶部多出 rows 行幻影空行，且随分叉代数累积（会话越久越卡）
+        val b = TerminalBuffer(10, 5, maxScrollbackLines = 100)
+        repeat(20) { b.scrollUp(1) } // 造 20 行回看
+        b.putChar('x'.code)
+        val fork = b.shallowFork()
+        assertEquals(b.totalLines(), fork.totalLines())
+        assertEquals(b.scrollbackSize(), fork.scrollbackSize())
+        // 逐行引用一致（幻影行会同时改变两者）
+        for (i in 0 until b.totalLines()) {
+            assertTrue(fork.absLine(i) === b.absLine(i), "line $i 应共享同一对象")
+        }
+        // 连续分叉不累积幻影行
+        val fork2 = fork.shallowFork()
+        assertEquals(b.totalLines(), fork2.totalLines())
+    }
+
+    @Test
     fun lineVersionBumpsOnWriteNotOnCursorMove() {
         val b = TerminalBuffer(10, 5)
         b.putChar('a'.code)
