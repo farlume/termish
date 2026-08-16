@@ -22,12 +22,14 @@ import libssh2.LIBSSH2_SFTP_HANDLE
 import libssh2.LIBSSH2_SFTP_S_IFDIR
 import libssh2.LIBSSH2_SFTP_S_IFMT
 import libssh2.LIBSSH2_SFTP_OPENDIR
+import libssh2.LIBSSH2_SFTP_REALPATH
 import libssh2.libssh2_sftp_init
 import libssh2.libssh2_sftp_close_handle
 import libssh2.libssh2_sftp_mkdir_ex
 import libssh2.libssh2_sftp_open_ex
 import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
+import libssh2.libssh2_sftp_symlink_ex
 import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_write
 import platform.posix.usleep
@@ -111,6 +113,28 @@ private class SftpSessionLibssh2(
         val s = sftpOrThrow()
         if (libssh2_sftp_mkdir_ex(s, path, path.length.toUInt(), 0x1EDL) != 0) {
             throw SshException("SFTP 创建目录失败: $path")
+        }
+    }
+
+    override fun home(): String {
+        val s = sftpOrThrow()
+        memScoped {
+            val buf = allocArray<ByteVar>(4096)
+            while (true) {
+                val n = libssh2_sftp_symlink_ex(s, ".", 1u, buf, 4096u, LIBSSH2_SFTP_REALPATH)
+                if (n >= 0) {
+                    val path = buf.readBytes(n).decodeToString()
+                        .trimEnd('\u0000')
+                        .trimEnd('/')
+                        .ifEmpty { "/" }
+                    return path
+                }
+                if (n.toInt() == LIBSSH2_ERROR_EAGAIN) {
+                    usleep(30_000u)
+                    continue
+                }
+                throw SshException("SFTP 获取主目录失败")
+            }
         }
     }
 

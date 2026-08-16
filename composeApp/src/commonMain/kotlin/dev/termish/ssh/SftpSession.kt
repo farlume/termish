@@ -23,6 +23,12 @@ interface SftpSession {
     /** 创建目录。 */
     fun mkdir(path: String)
 
+    /**
+     * 用户主目录（服务器端 SFTP 工作目录，即 ~）：用 realpath(".") 解析，
+     * 比猜 /home/xxx 通用（macOS/BSD/自定义 home 均覆盖）；失败抛异常。
+     */
+    fun home(): String
+
     /** 上传字节内容到远端路径。 */
     fun upload(remotePath: String, content: ByteArray)
 

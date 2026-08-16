@@ -44,6 +44,8 @@ class SftpSessionSshj(
         clientOrThrow().mkdir(path)
     }
 
+    override fun home(): String = clientOrThrow().canonicalize(".")
+
     override fun upload(remotePath: String, content: ByteArray) {
         val c = clientOrThrow()
         val source = object : LocalSourceFile {
