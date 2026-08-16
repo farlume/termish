@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +44,7 @@ import dev.mssh.ui.theme.MsshTheme
 import dev.mssh.ui.theme.TerminalThemes
 import dev.mssh.util.monospaceFontFamily
 import dev.mssh.util.observeAppLifecycle
+import kotlinx.coroutines.delay
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
 
@@ -91,6 +93,25 @@ fun AppRoot(repository: HostRepository) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     /** 终端页当前显示的会话（同主机多会话 tab 切换用）。 */
     var terminalCurrent by remember { mutableStateOf<TerminalController?>(null) }
+    /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
+    var pendingNavigate by remember { mutableStateOf<TerminalController?>(null) }
+    LaunchedEffect(pendingNavigate) {
+        val target = pendingNavigate ?: return@LaunchedEffect
+        // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
+        // 到实际画布尺寸），否则会话停留在 IDLE 永远无法连接
+        if (target.status == ConnStatus.IDLE) {
+            target.connect(80, 24)
+        }
+        // 轮询等待连接结果：成功跳转终端页，失败留在列表（头像停止转圈）
+        while (target.status == ConnStatus.CONNECTING || target.status == ConnStatus.AUTH) {
+            delay(200)
+        }
+        pendingNavigate = null
+        if (target.status == ConnStatus.CONNECTED) {
+            terminalCurrent = target
+            screen = Screen.Terminal(target.host.id)
+        }
+    }
     val sessionManager = remember { SessionManager(repository) }
     // 恢复上次运行时的会话列表（仅一次；进程死亡连接必死，恢复为未连接可重连）
     var sessionsRestored by remember { mutableStateOf(false) }
@@ -171,8 +192,8 @@ fun AppRoot(repository: HostRepository) {
                                         val controller = sessionManager.open(host, settings.autoReconnect) {
                                             hosts = repository.listHosts()
                                         }
-                                        terminalCurrent = controller
-                                        screen = Screen.Terminal(host.id)
+                                        // 先留在列表：卡片头像转圈，连接完成后再跳转
+                                        pendingNavigate = controller
                                     },
                                     onConnectBatch = { batch ->
                                         // 批处理连接：逐个建立会话（后台运行），不跳转终端页
@@ -254,9 +275,14 @@ fun AppRoot(repository: HostRepository) {
                 // 由前台服务保活，从「连接」页可重新进入（终端缓冲原样保留）
                 is Screen.Terminal -> {
                     val host = hosts.firstOrNull { it.id == s.hostId }
-                    val tabs = sessionManager.sessions.filter { it.host.id == s.hostId }
-                    val current = terminalCurrent ?: tabs.firstOrNull()
+                    val all = sessionManager.sessions.filter { it.host.id == s.hostId }
+                    val current = terminalCurrent
+                        ?: all.firstOrNull { isActiveStatus(it.status) }
+                        ?: all.firstOrNull()
                     if (host != null && current != null) {
+                        // tab 只显示活跃会话 + 当前会话：被「关闭」断开的旧会话
+                        // 不再出现在终端页（连接页仍可重入），避免残留一堆 tab
+                        val tabs = all.filter { isActiveStatus(it.status) || it === current }
                         TerminalScreen(
                             controller = current,
                             sessions = tabs,
@@ -272,11 +298,13 @@ fun AppRoot(repository: HostRepository) {
                                 val c = sessionManager.open(host, settings.autoReconnect) {
                                     hosts = repository.listHosts()
                                 }
-                                terminalCurrent = c
+                                pendingNavigate = c
                             },
                             onCloseTab = { c ->
                                 sessionManager.remove(c)
-                                val remaining = sessionManager.sessions.firstOrNull { it.host.id == s.hostId }
+                                val remaining = sessionManager.sessions
+                                    .filter { it.host.id == s.hostId }
+                                    .firstOrNull { isActiveStatus(it.status) }
                                 terminalCurrent = remaining
                                 if (remaining == null) {
                                     refreshHosts()

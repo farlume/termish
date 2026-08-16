@@ -17,6 +17,13 @@ internal class ShadowTerminal internal constructor(
     private val emulator: TerminalEmulator,
     var echoAck: ULong,
 ) {
+    /**
+     * buffer 读写锁：会话协程（applyDiff / resize / fork）与 UI 拷贝线程
+     * （copyContentFrom）并发访问同一 TerminalBuffer；不加锁时 resize 中途
+     * 行 cells 与 cols 字段不同步，cloneLine 会越界崩溃（ArrayIndexOutOfBounds）。
+     */
+    internal val lock = Any()
+
     var onTitleChange: (String) -> Unit = {}
         set(v) {
             field = v
@@ -36,24 +43,28 @@ internal class ShadowTerminal internal constructor(
      *  服务端模型更穷，逐字节镜像反而降级体验；diff 只按行号作用可见区，
      *  语义差异不会破坏协议。不要为“对齐服务端”改这里。 */
     fun applyDiff(diff: ByteArray) {
-        for (ev in decodeHostMessage(diff)) {
-            when (ev) {
-                is HostEventIn.HostBytes -> emulator.write(ev.bytes)
-                is HostEventIn.Resize -> buffer.resize(ev.width, ev.height)
-                is HostEventIn.EchoAck -> if (ev.echoAckNum > echoAck) echoAck = ev.echoAckNum
+        synchronized(lock) {
+            for (ev in decodeHostMessage(diff)) {
+                when (ev) {
+                    is HostEventIn.HostBytes -> emulator.write(ev.bytes)
+                    is HostEventIn.Resize -> buffer.resize(ev.width, ev.height)
+                    is HostEventIn.EchoAck -> if (ev.echoAckNum > echoAck) echoAck = ev.echoAckNum
+                }
             }
         }
     }
 
     /** 分叉：深拷贝当前状态（mosh 收端 时间戳状态 复制）。 */
     fun fork(): ShadowTerminal {
-        // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
-        val buf = buffer.shallowFork()
-        val emu = TerminalEmulator(buf)
-        emu.onTitleChange = onTitleChange
-        emu.onClipboardWrite = onClipboardWrite
-        // 影子终端不应对外回写（DSR 应答等），置空即可
-        return ShadowTerminal(buf, emu, echoAck)
+        synchronized(lock) {
+            // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
+            val buf = buffer.shallowFork()
+            val emu = TerminalEmulator(buf)
+            emu.onTitleChange = onTitleChange
+            emu.onClipboardWrite = onClipboardWrite
+            // 影子终端不应对外回写（DSR 应答等），置空即可
+            return ShadowTerminal(buf, emu, echoAck)
+        }
     }
 
     /** 本地预测回显：在确认态的 COW 分叉上重放用户输入的白名单效果（mosh

@@ -76,8 +76,12 @@ fun createKmpMoshSession(
     val pending = Channel<dev.mssh.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
     scope.launch(Dispatchers.Main) {
         for (view in pending) {
-            // 行级/字段级增量比对：视觉无变化的推送（如预测收编后的重放）不触发重绘
-            if (uiBuffer.copyContentFrom(view.buffer)) onFrame()
+            // 拷贝持影子锁：会话协程正在 applyDiff/resize 时不能读，
+            // 否则 resize 中途行状态不一致导致 cloneLine 越界
+            synchronized(view.lock) {
+                // 行级/字段级增量比对：视觉无变化的推送（如预测收编后的重放）不触发重绘
+                if (uiBuffer.copyContentFrom(view.buffer)) onFrame()
+            }
         }
     }
     val session = dev.mssh.mosh.KmpMoshSession(

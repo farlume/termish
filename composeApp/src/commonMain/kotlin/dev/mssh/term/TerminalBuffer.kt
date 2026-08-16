@@ -42,7 +42,7 @@ class TerminalCell {
 }
 
 /** 一行字符单元。 */
-class TerminalLine(val cols: Int) {
+class TerminalLine(var cols: Int) {
     var cells = Array(cols) { TerminalCell() }
 
     /** 该行是否因自动换行而开始（用于选择 / 回看等）。 */
@@ -826,8 +826,10 @@ class TerminalBuffer(
     }
 
     private fun cloneLine(src: TerminalLine): TerminalLine {
-        val dst = TerminalLine(src.cols)
-        for (i in 0 until src.cols) dst.cells[i].copyFrom(src.cells[i])
+        // 用 cells.size 而非 cols：防御 resize 中途 cols 与 cells 瞬时不一致
+        val n = src.cells.size
+        val dst = TerminalLine(n)
+        for (i in 0 until n) dst.cells[i].copyFrom(src.cells[i])
         dst.wrapped = src.wrapped
         // 保留逻辑身份与内容版本：跨缓冲行级增量比较依赖它
         dst.identity = src.identity
@@ -844,6 +846,7 @@ class TerminalBuffer(
             newCells[i].copyFrom(line.cells[i])
         }
         // 修正：若截断导致宽字符尾巴悬空，清掉
+        line.cols = newCols // 必须与 cells 同步：cloneLine 按 cols 循环读 cells
         line.cells = newCells
         line.touch()
     }

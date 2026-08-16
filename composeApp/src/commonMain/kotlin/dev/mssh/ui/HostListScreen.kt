@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -209,6 +210,7 @@ fun HostListScreen(
                             onLongClick = {
                                 if (!selectionMode) enterSelection(host)
                             },
+                            onNewSession = { onConnect(host) },
                             onOpenSession = onOpenSession,
                             onCloseAllSessions = { onCloseAllSessions(host) },
                         )
@@ -320,11 +322,13 @@ private fun HostCard(
     onCardClick: () -> Unit,
     onAvatarClick: () -> Unit,
     onLongClick: () -> Unit,
+    onNewSession: () -> Unit,
     onOpenSession: (TerminalController) -> Unit,
     onCloseAllSessions: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
+    val connecting = sessions.any { it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH }
     val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
     val detail = if (active) {
         s.hostsActive
@@ -379,21 +383,30 @@ private fun HostCard(
                     .clickable(onClick = onAvatarClick),
                 contentAlignment = Alignment.Center,
             ) {
-                val svg = systemSvg(sys)
-                if (svg != null) {
-                    Icon(
-                        painterResource(svg),
-                        contentDescription = null,
-                        tint = Color.White,
+                if (connecting) {
+                    // 连接中：头像显示转圈，连接完成自动跳转终端页
+                    CircularProgressIndicator(
                         modifier = Modifier.size(22.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp,
                     )
                 } else {
-                    Icon(
-                        systemIcon(sys),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    val svg = systemSvg(sys)
+                    if (svg != null) {
+                        Icon(
+                            painterResource(svg),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    } else {
+                        Icon(
+                            systemIcon(sys),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
             }
             Column(Modifier.weight(1f)) {
@@ -436,7 +449,7 @@ private fun HostCard(
                 SessionCountMenu(
                     sessions = sessions,
                     activeOnly = true,
-                    onConnect = onCardClick,
+                    onConnect = onNewSession,
                     onOpen = onOpenSession,
                     onCloseAll = onCloseAllSessions,
                 )
