@@ -705,8 +705,11 @@ class TerminalBuffer(
 
     /** 用 other 的显示状态替换本缓冲（保持实例不变，供 UI 渲染引用）。
      *  行级增量：同一逻辑行（identity 相同）且版本未变则复用目标行，只克隆变化行，
-     *  避免大回看下每帧全量克隆单元格。 */
-    fun copyContentFrom(other: TerminalBuffer) {
+     *  避免大回看下每帧全量克隆单元格。
+     *  返回是否有实际变化：无变化时调用方可跳过重绘（预测收编后常会推入视觉
+     *  完全相同的状态）。 */
+    fun copyContentFrom(other: TerminalBuffer): Boolean {
+        var changed = false
         val oldCols = cols
         val oldRows = rows
         val oldSize = normal.size
@@ -733,7 +736,9 @@ class TerminalBuffer(
             for (j in offset until other.normal.size) {
                 normal.addLast(cloneLine(other.normal[j]))
             }
+            changed = true
         } else {
+            if (drop > 0) changed = true
             repeat(drop) { normal.removeFirst() }
             var dstIdx = 0
             for (j in offset until other.normal.size) {
@@ -742,54 +747,79 @@ class TerminalBuffer(
                     val dst = normal[dstIdx]
                     if (dst.identity !== src.identity || dst.version != src.version) {
                         normal[dstIdx] = cloneLine(src)
-                    } else {
+                        changed = true
+                    } else if (dst.wrapped != src.wrapped) {
                         dst.wrapped = src.wrapped
+                        changed = true
                     }
                 } else {
                     normal.addLast(cloneLine(src))
+                    changed = true
                 }
                 dstIdx++
             }
         }
         copySourceOffset = offset
 
-        alt = Array(other.rows) { cloneLine(other.alt[it]) }
-        copyStateFieldsFrom(other)
-        markChanged()
+        // 备用屏行同样按 identity/version 增量复用（此前每帧全量克隆所有行，
+        // vim/htop 等 alt 屏程序每个输出帧都白拷 O(行数×列数)）
+        if (alt.size != other.alt.size) {
+            alt = Array(other.rows) { cloneLine(other.alt[it]) }
+            changed = true
+        } else {
+            for (r in other.alt.indices) {
+                val src = other.alt[r]
+                val dst = alt[r]
+                if (dst.identity !== src.identity || dst.version != src.version) {
+                    alt[r] = cloneLine(src)
+                    changed = true
+                } else if (dst.wrapped != src.wrapped) {
+                    dst.wrapped = src.wrapped
+                    changed = true
+                }
+            }
+        }
+        if (copyStateFieldsFrom(other)) changed = true
+        if (changed) markChanged()
+        return changed
     }
 
-    private fun copyStateFieldsFrom(other: TerminalBuffer) {
-        altScreen = other.altScreen
-        cursorRow = other.cursorRow
-        cursorCol = other.cursorCol
-        cursorVisible = other.cursorVisible
-        savedCursorRow = other.savedCursorRow
-        savedCursorCol = other.savedCursorCol
-        savedPendingWrap = other.savedPendingWrap
-        savedCharset = other.savedCharset
-        scrollTop = other.scrollTop
-        scrollBottom = other.scrollBottom
-        autoWrap = other.autoWrap
-        originMode = other.originMode
-        insertMode = other.insertMode
-        applicationCursorKeys = other.applicationCursorKeys
-        bracketedPaste = other.bracketedPaste
-        mouseTracking = other.mouseTracking
-        mouseSgr = other.mouseSgr
-        defaultFgRgb = other.defaultFgRgb
-        defaultBgRgb = other.defaultBgRgb
-        defaultCursorRgb = other.defaultCursorRgb
-        applicationKeypad = other.applicationKeypad
-        cursorStyle = other.cursorStyle
-        cursorColor = other.cursorColor
-        focusEvents = other.focusEvents
-        alternateScroll = other.alternateScroll
-        mouseUrxvt = other.mouseUrxvt
-        currentLink = other.currentLink
-        tabStops = other.tabStops.copyOf()
-        lastPrintedCodePoint = other.lastPrintedCodePoint
-        currentCharset = other.currentCharset
-        pendingWrap = other.pendingWrap
+    /** 拷贝显示状态字段；返回是否有字段实际变化。 */
+    private fun copyStateFieldsFrom(other: TerminalBuffer): Boolean {
+        var changed = false
+        // 枚举/Int/Boolean 标量字段逐组比较赋值
+        if (altScreen != other.altScreen) { altScreen = other.altScreen; changed = true }
+        if (cursorRow != other.cursorRow) { cursorRow = other.cursorRow; changed = true }
+        if (cursorCol != other.cursorCol) { cursorCol = other.cursorCol; changed = true }
+        if (cursorVisible != other.cursorVisible) { cursorVisible = other.cursorVisible; changed = true }
+        if (savedCursorRow != other.savedCursorRow) { savedCursorRow = other.savedCursorRow; changed = true }
+        if (savedCursorCol != other.savedCursorCol) { savedCursorCol = other.savedCursorCol; changed = true }
+        if (savedPendingWrap != other.savedPendingWrap) { savedPendingWrap = other.savedPendingWrap; changed = true }
+        if (savedCharset != other.savedCharset) { savedCharset = other.savedCharset; changed = true }
+        if (scrollTop != other.scrollTop) { scrollTop = other.scrollTop; changed = true }
+        if (scrollBottom != other.scrollBottom) { scrollBottom = other.scrollBottom; changed = true }
+        if (autoWrap != other.autoWrap) { autoWrap = other.autoWrap; changed = true }
+        if (originMode != other.originMode) { originMode = other.originMode; changed = true }
+        if (insertMode != other.insertMode) { insertMode = other.insertMode; changed = true }
+        if (applicationCursorKeys != other.applicationCursorKeys) { applicationCursorKeys = other.applicationCursorKeys; changed = true }
+        if (bracketedPaste != other.bracketedPaste) { bracketedPaste = other.bracketedPaste; changed = true }
+        if (mouseTracking != other.mouseTracking) { mouseTracking = other.mouseTracking; changed = true }
+        if (mouseSgr != other.mouseSgr) { mouseSgr = other.mouseSgr; changed = true }
+        if (defaultFgRgb != other.defaultFgRgb) { defaultFgRgb = other.defaultFgRgb; changed = true }
+        if (defaultBgRgb != other.defaultBgRgb) { defaultBgRgb = other.defaultBgRgb; changed = true }
+        if (defaultCursorRgb != other.defaultCursorRgb) { defaultCursorRgb = other.defaultCursorRgb; changed = true }
+        if (applicationKeypad != other.applicationKeypad) { applicationKeypad = other.applicationKeypad; changed = true }
+        if (cursorStyle != other.cursorStyle) { cursorStyle = other.cursorStyle; changed = true }
+        if (cursorColor != other.cursorColor) { cursorColor = other.cursorColor; changed = true }
+        if (focusEvents != other.focusEvents) { focusEvents = other.focusEvents; changed = true }
+        if (alternateScroll != other.alternateScroll) { alternateScroll = other.alternateScroll; changed = true }
+        if (mouseUrxvt != other.mouseUrxvt) { mouseUrxvt = other.mouseUrxvt; changed = true }
+        if (currentLink != other.currentLink) { currentLink = other.currentLink; changed = true }
+        if (!tabStops.contentEquals(other.tabStops)) { tabStops = other.tabStops.copyOf(); changed = true }
+        if (lastPrintedCodePoint != other.lastPrintedCodePoint) { lastPrintedCodePoint = other.lastPrintedCodePoint; changed = true }
+        if (currentCharset != other.currentCharset) { currentCharset = other.currentCharset; changed = true }
+        if (pendingWrap != other.pendingWrap) { pendingWrap = other.pendingWrap; changed = true }
+        return changed
     }
 
     private fun cloneLine(src: TerminalLine): TerminalLine {

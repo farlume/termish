@@ -201,13 +201,6 @@ fun TerminalView(
     val latestCanvasSize by rememberUpdatedState(canvasSize)
     val uriHandler = LocalUriHandler.current
 
-    // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY 尺寸，
-    // 避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不触发平移，
-    // 否则底部有工具栏时会把终端顶部（如 herdr 的 switch 菜单）顶出屏幕。
-    // 用户回看滚动时不平移。
-    // frame 每次输出自增，读取它以在输出后重算平移。
-    @Suppress("UNUSED_VARIABLE")
-    val frame = controller.frame
     // 触摸 → 终端鼠标事件（X10/SGR）：herdr/vim/htop 等 TUI 开启鼠标上报后，
     // 触摸映射为左键按下/拖拽/释放，滚动手势映射为滚轮。坐标为 1-based 格坐标。
     fun sendMouseEvent(btn: Int, col: Int, row: Int, release: Boolean) {
@@ -231,15 +224,6 @@ fun TerminalView(
         ((pos.x / currentCellW).toInt().coerceIn(0, buffer.cols - 1)) to
             ((pos.y / currentCellH).toInt().coerceIn(0, buffer.rows - 1))
 
-    val panUp = run {
-        if (!keyboardVisible || scrollOffset != 0 || canvasSize.height <= 0 || coveredBottomPx <= 0f) return@run 0f
-        val cursorBottomY = (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
-        val visibleBottomY = canvasSize.height.toFloat() - coveredBottomPx
-        if (cursorBottomY > visibleBottomY) {
-            (cursorBottomY - visibleBottomY).coerceAtMost(canvasSize.height.toFloat())
-        } else 0f
-    }
-
     // 尺寸或字号变化时重新计算行列并同步 PTY
     LaunchedEffect(canvasSize, effectiveFontSizeSp) {
         if (canvasSize.width <= 0 || canvasSize.height <= 0) return@LaunchedEffect
@@ -254,7 +238,25 @@ fun TerminalView(
 
     Canvas(
         modifier
-            .graphicsLayer { translationY = -panUp }
+            // 软键盘弹出且光标被键盘区域遮住时向上平移，保证光标可见（不改变 PTY
+            // 尺寸，避免全屏程序随键盘弹收反复重排）。工具栏/导航条常驻不平移；
+            // 用户回看滚动时不平移。平移计算放在 graphicsLayer 块内：frame（输出）
+            // 与 scrollOffset 的变化只触发 layer 更新，不再重组整个 TerminalView。
+            .graphicsLayer {
+                @Suppress("UNUSED_VARIABLE") val redraw = controller.frame
+                val panUp =
+                    if (!keyboardVisible || scrollOffset != 0 || size.height <= 0 || coveredBottomPx <= 0f) {
+                        0f
+                    } else {
+                        val cursorBottomY =
+                            (buffer.absCursorRow() - currentStartAbs(buffer, scrollOffset) + 1) * cellH
+                        val visibleBottomY = size.height - coveredBottomPx
+                        if (cursorBottomY > visibleBottomY) {
+                            (cursorBottomY - visibleBottomY).coerceAtMost(size.height)
+                        } else 0f
+                    }
+                translationY = -panUp
+            }
             .onSizeChanged { size ->
                 canvasSize = size
             }

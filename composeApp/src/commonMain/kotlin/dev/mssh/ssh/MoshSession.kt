@@ -61,8 +61,8 @@ fun createKmpMoshSession(
     val pending = Channel<dev.mssh.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
     scope.launch(Dispatchers.Main) {
         for (view in pending) {
-            uiBuffer.copyContentFrom(view.buffer)
-            onFrame()
+            // 行级/字段级增量比对：视觉无变化的推送（如预测收编后的重放）不触发重绘
+            if (uiBuffer.copyContentFrom(view.buffer)) onFrame()
         }
     }
     val session = dev.mssh.mosh.KmpMoshSession(
