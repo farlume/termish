@@ -40,7 +40,8 @@ internal class ShadowTerminal private constructor(
 
     /** 分叉：深拷贝当前状态（mosh 收端 时间戳状态 复制）。 */
     fun fork(): ShadowTerminal {
-        val buf = buffer.deepCopy()
+        // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
+        val buf = buffer.shallowFork()
         val emu = TerminalEmulator(buf)
         emu.onTitleChange = onTitleChange
         emu.onClipboardWrite = onClipboardWrite

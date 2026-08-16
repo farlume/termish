@@ -23,6 +23,20 @@ class TerminalBufferTest {
     }
 
     @Test
+    fun shallowForkSharesLinesAndCopiesOnWrite() {
+        // COW：fork 后行对象共享；任一 buffer 写共享行时先克隆，互不影响
+        val b = TerminalBuffer(10, 5)
+        b.putChar('a'.code)
+        val fork = b.shallowFork()
+        assertTrue(fork.lineAt(0) === b.lineAt(0)) // 未写前共享同一行对象
+
+        fork.putChar('b'.code) // 写第 0 行 → COW 克隆
+        assertTrue(fork.lineAt(0) !== b.lineAt(0))
+        assertEquals('a'.code, b.lineAt(0).cells[0].codePoint) // 原 buffer 不受影响
+        assertEquals('b'.code, fork.lineAt(0).cells[1].codePoint) // 克隆行独立写入
+    }
+
+    @Test
     fun lineVersionBumpsOnWriteNotOnCursorMove() {
         val b = TerminalBuffer(10, 5)
         b.putChar('a'.code)
