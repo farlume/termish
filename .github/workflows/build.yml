@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  pull_request:
+  # 注意：公开仓库 + self-hosted runner = RCE 风险（PR 可提交任意代码到 NAS 执行），
+  # 故开源后禁用 pull_request 触发；如需 PR CI，改用 GitHub hosted runner 再恢复
   workflow_dispatch:
 
 concurrency:
