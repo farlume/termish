@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Android：单测 + lint 始终跑；release APK + AAB 只在非 PR 触发时打包
+  # Android：单测 + lint 始终跑；debug/release 产物全部上传 artifact 留档
   #
   # release 签名是可选的：仓库配置好下面 4 个 Secrets 后自动签名，
   # 未配置时产出未签名 APK/AAB（仅用于自测）。
@@ -94,10 +94,15 @@ jobs:
           path: composeApp/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      # 注意：不在此上传 release APK/AAB artifact——NAS → Azure blob storage
-      # 大文件上传必 ECONNRESET（debug 小包可传），而 NAS → GitHub uploads
-      # （gh release upload）正常。release 产物由 release job 独立构建发布
-      # （见下），本步骤留档无下游依赖，故省略；产物在 NAS 本地 build/ 目录。
+      - name: Upload release APK and AAB
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            composeApp/build/outputs/apk/release/*.apk
+            composeApp/build/outputs/bundle/release/*.aab
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包；
@@ -172,64 +177,56 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 发布：仅 tag（vX.Y.Z）触发。独立构建（不依赖 android/desktop 的 artifact
-  # 上传下载——NAS 出口网络上传大文件 ECONNRESET，绕开 blob storage 通道）。
-  # Release 资产上传加重试（5 次指数退避），仍是偶发重置可恢复；
-  # 持续失败时产物留在 NAS 本地 build/ 目录，可手动发布。
+  # 发布：仅 tag（vX.Y.Z）触发，汇总 Android + 桌面产物创建 GitHub Release
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, desktop]
+    # 也走自托管（NAS 有 gh CLI，GH_TOKEN 由 Actions 注入，无需本地登录）
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 60
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
       # gh release create --generate-notes 需要 git 上下文，必须 checkout
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
-        if: runner.environment == 'github-hosted'
+      # 只取签名 release 产物与桌面包（debug APK 仅留档，不进 Release）
+      - uses: actions/download-artifact@v4
         with:
-          distribution: temurin
-          java-version: "17"
+          pattern: |
+            android-release
+            desktop-*
+          path: dist
+          merge-multiple: true
 
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Verify version matches tag
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
-          if [ "$TAG" != "$VN" ]; then
-            echo "::error::tag=$TAG 与 Android versionName=$VN 不一致，先运行 ./scripts/bump-version.sh $TAG"
-            exit 1
-          fi
-          echo "版本一致：$TAG"
-
-      - name: Build release APK and AAB
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          ./gradlew \
-            :composeApp:assembleRelease \
-            :composeApp:bundleRelease
-
-      - name: Collect and checksum artifacts
+      - name: Rename assets with version
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          mkdir -p dist
-          for f in composeApp/build/outputs/apk/release/*.apk composeApp/build/outputs/bundle/release/*.aab; do
-            name=$(basename "$f" | sed "s/^composeApp-//")
-            cp "$f" "dist/Termish-$VER-$name"
-          done
           cd dist
-          shasum -a 256 * > SHA256SUMS
+          # upload-artifact v4 多 path 会保留目录结构（apk/、bundle/、deb/），
+          # 递归收集 apk/aab/deb 统一重命名到顶层；jpackage 的 deb 名含构建号，
+          # 统一为 Termish-<ver>-linux-amd64.deb
+          for f in $(find . -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.deb" \)); do
+            ext="${f##*.}"
+            if [ "$ext" = "deb" ]; then
+              mv "$f" "Termish-$VER-linux-amd64.deb"
+            else
+              name=$(basename "$f" | sed "s/^composeApp-//")
+              mv "$f" "Termish-$VER-$name"
+            fi
+          done
+          rm -rf apk bundle deb
           ls -l
 
-      - name: Create GitHub Release (idempotent, per-asset retry)
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          shasum -a 256 * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release (idempotent)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -239,30 +236,13 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release delete "$TAG" --yes
           fi
-          # 先建空 release：gh release create 带资产上传不支持覆盖同名资产
-          # （delete 后立即重建同名资产会遇 uploads 服务去重延迟 → 422
-          #  ReleaseAsset.name already exists），所以资产单独逐个上传。
+          # 先建空 release，资产逐个 --clobber 上传：gh release create 带资产
+          # 不支持覆盖同名资产（delete 后立即重建同名资产会遇 uploads 服务
+          # 去重延迟 → 422 ReleaseAsset.name already exists），逐资产上传
+          # 幂等且单资产失败可单独补传
           gh release create "$TAG" --title "$TAG" --generate-notes
-          # 逐个上传 + --clobber（幂等覆盖）+ 指数退避重试（NAS 出口网络
-          # 大文件上传偶发 ECONNRESET）
-          failed=0
           for f in dist/*; do
-            name=$(basename "$f")
-            ok=0
-            for i in 1 2 3 4 5; do
-              if gh release upload "$TAG" "$f" --clobber 2>/tmp/gh-up.err; then
-                echo "✅ $name 上传成功（尝试 $i）"
-                ok=1
-                break
-              fi
-              echo "⚠️ $name 第 $i 次失败：$(tail -1 /tmp/gh-up.err | cut -c1-120)，$((i*10))s 后重试…"
-              sleep $((i*10))
-            done
-            [ "$ok" = 1 ] || { failed=1; echo "::error::$name 上传 5 次均失败（产物在 NAS 本地 dist/）"; }
+            gh release upload "$TAG" "$f" --clobber
+            echo "✅ 已上传 $(basename "$f")"
           done
-          if [ "$failed" = 1 ]; then
-            echo "::error::部分资产上传失败；可用 gh release upload --clobber 手动补传"
-            exit 1
-          fi
           echo "✅ Release $TAG 完成"
-          ls -l dist
