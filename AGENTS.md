@@ -24,12 +24,23 @@ make ios-framework       # Kotlin framework (simulator + device debug)
 ```
 
 Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:2222, generates ephemeral ed25519 keys).
+Demo server (screenshots / herdr+pi): Docker container `termish-demo`,
+`termish@127.0.0.1:2223` (password `termish-demo`, fixed UDP 60100 for mosh).
+Android emulator reaches it at `10.0.2.2:2223`; iOS simulator (shares host
+network) at `127.0.0.1:2223` — never `10.0.2.2` on iOS.
 
 ## Architecture & conventions
 
 - **`commonMain/term/` is a pure-Kotlin, zero-platform-dependency terminal
   emulator** (buffer / state machine / color / selection) — never pull platform
   APIs or Compose dependencies into it
+- **`commonMain/mosh/` protocol layer is term-free**: `MoshTransport` /
+  `UserStream` / `Fragmentation` / `Messages` / `Ocb` / `Aes` / `MoshCrypto` /
+  `KmpMoshSession` must never `import dev.termish.term` — only the shadow
+  layer (`ShadowTerminal`, `PredictionLayer`) may use the emulator (a mosh
+  client must mirror the server framebuffer; reusing our own emulator is
+  deliberate, not a shortcut). Keep this boundary: it's what makes the
+  protocol layer extractable as a standalone library
 - Platform code only lives behind expect/actual seams: `ssh/SshSession`, `util/`,
   `data/SecretStore`; `jvmSharedMain/` is the JVM engine shared by Android + desktop
 - The input pipeline treats **IME composing text as a first-class citizen**:
@@ -39,6 +50,10 @@ Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:2222, generates ephemeral ed25519
 - UI design tokens live in `ui/theme/` (Dimens, palettes) — no ad-hoc dp/alpha
   literals in new UI code
 - User-facing strings go through `AppStrings` (Chinese + English), never hardcoded
+- Screenshots in `docs/screenshots/` follow `topic-dark-zh` naming
+  (topic = hosts/terminal/settings/sftp/agent/ios-…, dark/light, zh only for
+  Chinese UI); README shows 6 per language (3×2), English README uses English
+  screenshots, Chinese README uses Chinese ones
 
 ## Testing discipline
 
@@ -54,7 +69,19 @@ Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:2222, generates ephemeral ed25519
 - After editing `.env` / signing secrets run `make gradle-stop` (the Gradle daemon
   does not pick up new environment variables)
 - iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts, and **CI does
-  not build iOS** — verify iOS changes locally: `make ios-native && make ios-framework`
+  not build iOS** — verify iOS changes locally: `make ios-native && make ios-framework`,
+  then build & install the app:
+  ```bash
+  cd iosApp
+  xcodebuild -project iosApp.xcodeproj -target iosApp -sdk iphonesimulator \
+    -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+    ARCHS=arm64 ONLY_ACTIVE_ARCH=YES build   # ARCHS=arm64 is REQUIRED on Xcode 26
+  xcrun simctl install booted build/Debug-iphonesimulator/Termish.app
+  xcrun simctl launch booted dev.termish.app
+  ```
+  Without `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`, Xcode 26's `-target` build passes
+  `arch=undefined_arch` and the Kotlin framework task fails with
+  "Could not infer iOS target architectures"
 - The signing keystore was rebuilt on 2026-08-17 (alias `termish`, CN=Termish) **before any public release** — old `mssh` alias is gone, no upgrade-path constraint. The pre-release legacy keystore is archived at `~/Documents/秘钥/termish-mssh-legacy-20260817.jks`. Once any build is published, the **private key must never change** (breaks signature consistency and upgrade installs) — back it up in `~/Documents/秘钥/` and never commit `.env` / `*.jks`
 - Version numbers are synced in three places (Android / desktop / iOS): always use
   `make bump`, never edit by hand; a pushed `vX.Y.Z` tag is validated by CI against
