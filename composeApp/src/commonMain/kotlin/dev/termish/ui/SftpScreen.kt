@@ -303,8 +303,9 @@ fun SftpContent(
 
     // 首次进入（path 尚未初始化）：realpath 解析真实用户主目录（~），
     // 失败回退 /home/{user}，再失败回退根目录；切回不重置。
-    // session 为 null（进程重启恢复条目）时跳过：重连成功的新组合会再进这里。
-    LaunchedEffect(Unit) {
+    // key 含 session：恢复条目（null）重连成功后（非 null）重新执行——
+    // 否则 path 为空且首次被跳过时永远不解析 home。
+    LaunchedEffect(session) {
         if (state.path.isEmpty() && session != null) {
             path = withContext(ioDispatcher()) {
                 val home = runCatching { session.home() }.getOrNull()?.let { raw ->
@@ -318,7 +319,10 @@ fun SftpContent(
             }
         }
     }
-    LaunchedEffect(path, sort, showHidden) {
+    // key 含 session：重连成功后（null → 新对象）必须重新加载——
+    // 首次组合的 reload 可能被 reconnecting 跳过，仅靠 path/sort 变化
+    // 不会再次触发（否则「一直连接中」，切 tab 才恢复）。
+    LaunchedEffect(path, sort, showHidden, session) {
         if (path.isNotEmpty()) reload()
     }
 
@@ -549,8 +553,10 @@ fun SftpContent(
                 entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(s.sftpConnecting, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                // 断开/加载失败：主提示在顶部 banner（红色+重连按钮，同终端样式），
+                // 内容区只留中性副提示，不重复红色错误文字
                 loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.sftpLoadFailed(loadError!!), color = MaterialTheme.colorScheme.error)
+                    Text(s.sftpDisconnected, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 else -> Column(
                     Modifier

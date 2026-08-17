@@ -60,9 +60,11 @@ import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
 import dev.termish.util.SessionKeepAlive
+import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
 
@@ -128,8 +130,10 @@ fun AppRoot(repository: HostRepository) {
      * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。
      * 供首次连接与断线重连复用；失败由调用方处理（首次=Snackbar，重连=保持 banner）。
      * 定义在 connectSftp 之前：局部函数不能前向引用。
+     * suspend：createSftpSession 是阻塞连接，必须切 IO 线程（调用方在 Main scope，
+     * 否则重连按钮点击后 UI 冻结几秒——「点了没反应」）。
      */
-    fun establishSftp(host: Host, onEstablished: (SftpSession) -> Unit) {
+    suspend fun establishSftp(host: Host, onEstablished: (SftpSession) -> Unit) {
         val (pw, key) = resolveCredentials(host)
         val callbacks = object : SshCallbacks {
             override suspend fun onOutput(data: ByteArray) {}
@@ -171,7 +175,7 @@ fun AppRoot(repository: HostRepository) {
             privateKeyPem = key,
             keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
         )
-        val session = createSftpSession(conn, callbacks)
+        val session = withContext(ioDispatcher()) { createSftpSession(conn, callbacks) }
         onEstablished(session)
     }
 

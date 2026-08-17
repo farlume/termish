@@ -110,4 +110,26 @@ class HostRepositoryTest {
         r.saveRecentSessionHostIds(emptyList())
         assertTrue(r.loadRecentSessionHostIds().isEmpty())
     }
+
+    @Test
+    fun recentSftpRoundtripWithPath() {
+        val r = repo()
+        assertTrue(r.loadRecentSftpEntries().isEmpty())
+
+        // 路径随条目持久化：杀 App 重进后恢复到上次浏览目录
+        r.saveRecentSftpEntries(
+            listOf(
+                HostRepository.RecentSftpEntry("host-a", "/var/www"),
+                HostRepository.RecentSftpEntry("host-b"), // 默认路径为空
+            )
+        )
+        val loaded = r.loadRecentSftpEntries()
+        assertEquals(2, loaded.size)
+        assertEquals("host-a", loaded[0].hostId)
+        assertEquals("/var/www", loaded[0].path)
+        assertEquals("", loaded[1].path)
+
+        r.saveRecentSftpEntries(emptyList())
+        assertTrue(r.loadRecentSftpEntries().isEmpty())
+    }
 }
