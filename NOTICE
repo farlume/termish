@@ -6,6 +6,7 @@ Termish 第三方组件声明
 | 组件 | 许可证 | 用途 | 许可全文 |
 |------|--------|------|----------|
 | JetBrains Mono | OFL-1.1 | 内置终端字体 | LICENSES/JetBrainsMono-OFL.txt |
+| Noto Sans SC | OFL-1.1 | 内置 CJK 字体（iOS 中文回退） | LICENSES/Noto-OFL.txt |
 | sshj | Apache-2.0 | JVM 端 SSH 引擎（Android/Desktop） | LICENSES/Apache-2.0.txt |
 | BouncyCastle | MIT-style | JVM 端加密 | LICENSES/BouncyCastle-MIT.txt |
 | libssh2 | BSD-3-Clause | iOS 端 SSH 引擎 | LICENSES/libssh2-BSD.txt |

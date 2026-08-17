@@ -310,6 +310,7 @@ Termish 免费、开源（MIT）、无广告。如果它帮你省了时间——
 | 项目 | 许可证 | 用途 |
 |------|--------|------|
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt) | 内置终端字体 |
+| [Noto Sans SC](https://github.com/notofonts/noto-cjk) | [OFL-1.1](LICENSES/Noto-OFL.txt) | 内置 CJK 字体（iOS 中文回退） |
 | [sshj](https://github.com/hierynomus/sshj) | [Apache-2.0](LICENSES/Apache-2.0.txt) | JVM SSH 引擎 |
 | [BouncyCastle](https://www.bouncycastle.org) | [MIT-style](LICENSES/BouncyCastle-MIT.txt) | JVM 密码学 |
 | [libssh2](https://libssh2.org/) | [BSD-3-Clause](LICENSES/libssh2-BSD.txt) | iOS SSH 引擎 |
