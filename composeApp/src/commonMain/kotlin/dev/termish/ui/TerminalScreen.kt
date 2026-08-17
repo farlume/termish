@@ -299,15 +299,26 @@ private fun TerminalBody(
             } else {
                 androidx.compose.ui.graphics.Color(0xFFFFA726)
             }
-            Text(
-                message,
-                color = bannerColor,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier
+            Row(
+                Modifier
                     .fillMaxWidth()
                     .background(bannerColor.copy(alpha = 0.12f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
+                    .padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    message,
+                    color = bannerColor,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+                )
+                // 断开/失败状态的手动重连入口（自动重连 3 次耗尽后唯一出路）
+                if (controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED) {
+                    TextButton(onClick = { controller.reconnect() }) {
+                        Text(s.terminalReconnect, color = bannerColor, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
         }
 
         // 快速命令

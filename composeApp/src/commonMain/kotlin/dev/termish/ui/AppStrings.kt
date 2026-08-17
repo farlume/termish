@@ -203,6 +203,8 @@ data class AppStrings(
     val terminalHostkeySaved: String,
     val terminalHostkeyCurrent: String,
     val terminalTrust: String,
+    /** 断开/失败 banner 的手动重连按钮。 */
+    val terminalReconnect: String,
 )
 
 /** 当前 UI 树使用的文案集合；由 AppRoot 根据设置注入。 */
@@ -375,6 +377,7 @@ private val EnStrings = AppStrings(
     terminalHostkeySaved = "Saved:",
     terminalHostkeyCurrent = "Current",
     terminalTrust = "Trust and connect",
+    terminalReconnect = "Reconnect",
 )
 
 private val ZhStrings = AppStrings(
@@ -536,4 +539,5 @@ private val ZhStrings = AppStrings(
     terminalHostkeySaved = "已保存：",
     terminalHostkeyCurrent = "当前",
     terminalTrust = "信任并连接",
+    terminalReconnect = "重新连接",
 )
