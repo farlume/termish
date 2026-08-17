@@ -1,6 +1,7 @@
 package dev.termish.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -43,10 +45,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
+import dev.termish.generated.resources.Res
+import dev.termish.generated.resources.alipay_qr
+import org.jetbrains.compose.resources.painterResource
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
@@ -88,6 +94,8 @@ fun SettingsScreen(
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
     var osc52Clipboard by remember { mutableStateOf(settings.osc52Clipboard) }
     var language by remember { mutableStateOf(settings.language) }
+
+    var showDonateDialog by remember { mutableStateOf(false) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
@@ -164,6 +172,8 @@ fun SettingsScreen(
                 SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsDonate, "Alipay") { showDonateDialog = true }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -188,6 +198,9 @@ fun SettingsScreen(
             onDismiss = { showTerminalThemeDialog = false },
         )
     }
+    if (showDonateDialog) {
+        DonateDialog(onDismiss = { showDonateDialog = false })
+    }
     if (showLanguageDialog) {
         val codes = listOf("", "zh", "en")
         val options = listOf(
@@ -203,6 +216,25 @@ fun SettingsScreen(
             onDismiss = { showLanguageDialog = false },
         )
     }
+}
+
+/** 打赏弹窗：展示支付宝收款码（图片来自 composeResources/drawable/alipay_qr.jpg）。 */
+@Composable
+private fun DonateDialog(onDismiss: () -> Unit) {
+    val s = LocalAppStrings.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.settingsDonate) },
+        text = {
+            Image(
+                painterResource(Res.drawable.alipay_qr),
+                contentDescription = s.settingsDonate,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Fit,
+            )
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(s.settingsClose) } },
+    )
 }
 
 /** 卡片分组：外间距 + 圆角 + 组标题。 */
