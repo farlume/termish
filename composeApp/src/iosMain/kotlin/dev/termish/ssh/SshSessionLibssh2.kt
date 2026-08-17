@@ -205,11 +205,13 @@ class SshSessionLibssh2(
     /** 建立 TCP + SSH 握手 + 主机密钥校验 + 认证，返回会话与 banner。 */
     private fun connectAndAuthenticate(): Pair<CPointer<LIBSSH2_SESSION>?, String> {
         sock = tcpConnect(connection.host, connection.port)
+        callbacks.onTraceStep("tcp")
         val s = libssh2_session_init_ex(null, null, null, null) ?: throw SshException("libssh2 初始化失败")
         session = s
         if (libssh2_session_handshake(s, sock) != 0) {
             throw SshException("SSH 握手失败: ${lastError(s)}")
         }
+        callbacks.onTraceStep("kex")
         val banner = libssh2_session_banner_get(s)?.toKString() ?: ""
 
         val hostKey = computeHostKey(s)
@@ -222,6 +224,7 @@ class SshSessionLibssh2(
             cleanup()
             throw SshException("认证失败${authFailureReason ?: ""}")
         }
+        callbacks.onTraceStep("auth")
         return s to banner
     }
 

@@ -237,6 +237,12 @@ class TerminalController(
     private fun doConnect() {
         val t0 = nowMs()
         TermLog.i("ssh") { "connect start ${host.name} ${host.hostname}:${host.port} mode=${host.connectionMode} attempt=${reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms" }
+        // 连接 span：引擎经 onTraceStep 填充阶段耗时（tcp+kex/auth/shell）
+        val trace = dev.termish.util.TermTrace.begin(
+            "ssh.connect", "ssh",
+            "host" to host.name, "attempt" to reconnectAttempts.toString(),
+            "mode" to host.connectionMode.name,
+        )
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
@@ -244,7 +250,7 @@ class TerminalController(
                     doConnectMosh()
                     return@launch
                 }
-                val s = sessionFactory(newConnection(), callbacks())
+                val s = sessionFactory(newConnection(), callbacks(trace))
                 session = s
                 val info = s.connectAndStart(lastCols, lastRows)
                 // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须释放刚建好的连接
@@ -256,6 +262,8 @@ class TerminalController(
                 }
                 // TOFU：记录主机指纹
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
+                trace.step("connected")
+                trace.end()
                 TermLog.i("ssh") { "connected ${host.name} kex=${info.kexAlgorithm} in ${nowMs() - t0}ms" }
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
@@ -289,6 +297,7 @@ class TerminalController(
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
                     val elapsed = nowMs() - t0
+                    trace.fail(e.message)
                     if (elapsed > 10_000) {
                         TermLog.w("ssh") { "connect SLOW/FAIL after ${elapsed}ms ${host.name}: ${e.message}（TCP 超时特征：网络黑洞/防火墙丢包）" }
                     } else {
@@ -522,7 +531,10 @@ class TerminalController(
         }
     }
 
-    private fun callbacks() = object : SshCallbacks {
+    private fun callbacks(trace: dev.termish.util.TermTrace.Span? = null) = object : SshCallbacks {
+        override fun onTraceStep(step: String) {
+            trace?.step(step)
+        }
         override suspend fun onOutput(data: ByteArray) {
             enqueueOutput(data)
         }

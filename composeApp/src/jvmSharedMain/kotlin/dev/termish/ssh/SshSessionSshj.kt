@@ -62,6 +62,7 @@ class SshSessionSshj(
         s.allocatePTY(connection.terminalType, columns, rows, 0, 0, emptyMap())
         val sh = s.startShell()
         shell = sh
+        callbacks.onTraceStep("shell")
 
         // 空闲保活：按设置间隔发送 keepalive（<=0 关闭）
         try {
@@ -99,8 +100,11 @@ class SshSessionSshj(
         client.setTimeout(0) // 交互会话不设读超时
 
         client.connect(connection.host, connection.port)
+        // sshj 的 connect() 阻塞到 KEX 完成：TCP 与 KEX 合并为一个阶段
+        callbacks.onTraceStep("tcp+kex")
         serverVersion = client.transport.serverVersion
         authenticate()
+        callbacks.onTraceStep("auth")
     }
 
     override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {

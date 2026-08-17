@@ -107,6 +107,12 @@ interface SshCallbacks {
     suspend fun onPrompt(prompt: AuthPrompt): List<String>?
 
     fun verifyHostKey(hostKey: HostKeyInfo): Boolean
+
+    /**
+     * 连接阶段事件（tcp/kex/auth…）：引擎在对应阶段完成时回调，
+     * 供 TermTrace 做阶段耗时分解。默认空实现（不关心 trace 的调用方可忽略）。
+     */
+    fun onTraceStep(step: String) {}
 }
 
 /**
