@@ -266,6 +266,7 @@ class TerminalController(
                     val ssh = s
                     scope.launch {
                         val raw = runCatching { ssh.probeSystem() }.getOrNull()
+                        TermLog.d("ssh") { "probeSystem ${host.name}: ${raw?.take(60) ?: "null"}" }
                         val detected = raw?.let { detectSystemFromOutput(it) }
                         if (detected != null && detected.isNotBlank() && status == ConnStatus.CONNECTED) {
                             val updated = host.copy(system = detected)
@@ -371,7 +372,12 @@ class TerminalController(
                 // 收到对端首包才算真正连上（mosh still_connecting 语义）：
                 // UDP 不通时状态停留在「连接中」，15s 超时由 onExit 报出原因
                 onPeerConnected = { moshSession?.let { onMoshConnected(it) } },
-                onLinkStatus = { secs -> linkLostSeconds = secs },
+                onLinkStatus = { secs ->
+                    if (secs >= LINK_LOST_THRESHOLD_SECONDS && linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
+                        TermLog.w("mosh") { "link lost ${host.name} ${secs}s" }
+                    }
+                    linkLostSeconds = secs
+                },
             )
             moshSession = client
             TermLog.i("mosh") { "mosh client started ${host.name} cols=${lastCols}x$lastRows" }
@@ -572,9 +578,13 @@ class TerminalController(
             val known = repository.getHost(host.id)?.knownHostFingerprint
                 ?: host.knownHostFingerprint
             if (known != null) {
-                if (known == hostKey.fingerprintSha256) return true
+                if (known == hostKey.fingerprintSha256) {
+                    TermLog.d("ssh") { "hostkey ok ${host.name} ${hostKey.algorithm}" }
+                    return true
+                }
                 // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
                 // 改为弹窗让用户核对新旧指纹后决定。
+                TermLog.w("ssh") { "hostkey CHANGED ${host.name}: $known -> ${hostKey.fingerprintSha256}" }
                 val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                 hostKeyPrompt = req
                 val ok = awaitHostKeyAnswer(req)
@@ -583,8 +593,12 @@ class TerminalController(
                 return ok
             }
             // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
-            if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
+            if (!repository.loadSettings().verifyHostKeyOnFirstUse) {
+                TermLog.d("ssh") { "hostkey trust-on-first-use skipped (setting off) ${host.name}" }
+                return true
+            }
             // TOFU：首次连接由用户确认
+            TermLog.d("ssh") { "hostkey TOFU prompt ${host.name} ${hostKey.fingerprintSha256}" }
             val req = HostKeyRequest(hostKey)
             hostKeyPrompt = req
             val ok = awaitHostKeyAnswer(req)

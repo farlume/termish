@@ -60,6 +60,7 @@ import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
 import dev.termish.util.SessionKeepAlive
+import dev.termish.util.TermLog
 import dev.termish.util.TerminalFont
 import dev.termish.util.LocalTerminalFont
 import dev.termish.util.ioDispatcher
@@ -178,6 +179,7 @@ fun AppRoot(repository: HostRepository) {
             keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
         )
         val session = withContext(ioDispatcher()) { createSftpSession(conn, callbacks) }
+        TermLog.i("sftp") { "connected ${host.name} ${host.hostname}:${host.port}" }
         onEstablished(session)
     }
 
@@ -239,6 +241,7 @@ fun AppRoot(repository: HostRepository) {
         dev.termish.notify.NotificationCenter.settingsProvider = { repository.loadSettings() }
         dev.termish.notify.NotificationCenter.foreground = true
         dev.termish.notify.NotificationCenter.onReconnectRequest = { hostId ->
+            TermLog.i("notify") { "reconnect action hostId=$hostId" }
             scope.launch {
                 sessionManager.sessions
                     .firstOrNull { it.host.id == hostId }
@@ -252,6 +255,7 @@ fun AppRoot(repository: HostRepository) {
             }
         }
         val dispose = observeAppLifecycle { foreground ->
+            TermLog.d("life") { "foreground=$foreground" }
             dev.termish.notify.NotificationCenter.foreground = foreground
             if (foreground) {
                 sessionManager.reconnectDroppedSessions()

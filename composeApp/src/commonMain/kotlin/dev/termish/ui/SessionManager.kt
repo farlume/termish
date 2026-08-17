@@ -69,6 +69,7 @@ class SessionManager(private val repository: HostRepository) {
         onSystemDetected: ((Host) -> Unit)? = null,
     ) {
         if (sessions.isNotEmpty()) return
+        TermLog.i("session") { "restoreRecent terminals=${repository.loadRecentSessionHostIds().size} sftp=${repository.loadRecentSftpEntries().size}" }
         val byId = hosts.associateBy { it.id }
         repository.loadRecentSessionHostIds().forEach { id ->
             val host = byId[id] ?: return@forEach
@@ -104,6 +105,7 @@ class SessionManager(private val repository: HostRepository) {
         autoReconnect: Boolean,
         onSystemDetected: ((Host) -> Unit)? = null,
     ): TerminalController {
+        TermLog.i("session") { "open ${host.name} (${sessions.count { it.host.id == host.id } + 1}th)" }
         // 同一主机支持多个会话（Termius 风格）：每次打开都新建，
         // 旧的保留在列表，可从卡片下拉/连接页重入。
         val (pw, key) = resolveCredentials(host)
@@ -121,6 +123,7 @@ class SessionManager(private val repository: HostRepository) {
 
     /** 从列表中移除（针对已断开的会话）：销毁控制器，回收协程作用域。 */
     fun remove(controller: TerminalController) {
+        TermLog.i("session") { "remove ${controller.host.name}" }
         controller.destroy()
         sessions.remove(controller)
         persist()

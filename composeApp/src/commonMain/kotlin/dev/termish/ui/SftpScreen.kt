@@ -206,6 +206,7 @@ fun SftpContent(
         try {
             entries = withContext(ioDispatcher()) { s.list(path) }
         } catch (e: Exception) {
+            dev.termish.util.TermLog.w("sftp") { "list failed $path: ${e.message}" }
             loadError = e.message
             entries = emptyList()
         }
