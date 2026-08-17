@@ -100,6 +100,18 @@ where it matters — the terminal experience.
 - **Built for real workflows** — tmux-friendly sessions, background keep-alive,
   leave-and-return session restore, zero Material-default looks
 
+### Architecture at a glance
+
+```mermaid
+flowchart TB
+    UI[Compose Multiplatform UI<br/>Android · iOS · Desktop] --> TERM[纯 Kotlin 终端模拟器<br/>VT100/xterm · CJK · OSC]
+    TERM --> SSH[SSH 传输<br/>sshj JVM · libssh2 iOS]
+    TERM --> MOSH[dev.termish.mosh<br/>纯 Kotlin SSP · AES-128-OCB]
+    SSH --> SRV[(你的服务器)]
+    MOSH -->|UDP 漫游 60000-61000| SRV
+    SEC[系统保险库<br/>Keystore · Keychain] -.-> UI
+```
+
 ### CJK input, done right
 
 Webview-based terminals (xterm.js inside Termius & friends) struggle with CJK IMEs on

@@ -90,6 +90,18 @@ sshj，iOS 用 libssh2）。全部精力花在最值得的地方——终端体�
 - **为真实工作流而生**——tmux 友好会话、后台保活、离开-回来会话恢复、
   告别 Material 默认观感
 
+### 架构一览
+
+```mermaid
+flowchart TB
+    UI[Compose Multiplatform UI<br/>Android · iOS · 桌面] --> TERM[纯 Kotlin 终端模拟器<br/>VT100/xterm · CJK · OSC]
+    TERM --> SSH[SSH 传输<br/>sshj JVM · libssh2 iOS]
+    TERM --> MOSH[dev.termish.mosh<br/>纯 Kotlin SSP · AES-128-OCB]
+    SSH --> SRV[(你的服务器)]
+    MOSH -->|UDP 漫游 60000-61000| SRV
+    SEC[系统保险库<br/>Keystore · Keychain] -.-> UI
+```
+
 ### 中文输入，做到位
 
 Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法很吃力：组合文本被吞或
