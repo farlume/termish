@@ -52,6 +52,14 @@ class HostRepository(
         saveHosts(hosts)
     }
 
+    /** 仅记录主机密钥指纹（TOFU 弹窗点信任后立即调用，与后续认证成败解耦）。 */
+    fun recordHostKey(id: String, fingerprint: String) {
+        val hosts = listHosts().map { h ->
+            if (h.id == id) h.copy(knownHostFingerprint = fingerprint) else h
+        }
+        saveHosts(hosts)
+    }
+
     private fun saveHosts(hosts: List<Host>) {
         settings.putString(hostsKey, json.encodeToString(hosts))
     }

@@ -542,14 +542,21 @@ class TerminalController(
                 // 改为弹窗让用户核对新旧指纹后决定。
                 val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                 hostKeyPrompt = req
-                return awaitHostKeyAnswer(req)
+                val ok = awaitHostKeyAnswer(req)
+                // 接受即采纳新指纹：即使后续认证失败也不重复弹窗（TOFU 信任的是主机密钥）
+                if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
+                return ok
             }
             // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
             if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
             // TOFU：首次连接由用户确认
             val req = HostKeyRequest(hostKey)
             hostKeyPrompt = req
-            return awaitHostKeyAnswer(req)
+            val ok = awaitHostKeyAnswer(req)
+            // 点信任即记录指纹，与认证成败解耦：否则认证失败（如密码错）时
+            // 每次连接都重复弹授信窗
+            if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
+            return ok
         }
     }
 
