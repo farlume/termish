@@ -13,7 +13,9 @@ import android.os.Looper
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * SSH 会话前台服务：防止切后台时进程被系统回收导致连接断开。
@@ -23,24 +25,39 @@ class SessionService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
-    /** wakelock 兜底超时续期：有活跃会话时每 8 小时刷新一次 12h 超时。 */
+    /**
+     * 下次续期时刻（elapsedRealtime 单调钟）。只由 [scheduleRenew] 到点推进；
+     * 后续会话 start 只补排班、不重置计时——否则新会话会推迟旧会话的续期，
+     * 让先启动会话的 wakelock 在 12h 超时后无人续期（保活空洞）。
+     */
+    private var nextRenewAt = 0L
+
+    /** wakelock 兜底超时续期：有活跃会话时按 [nextRenewAt] 刷新 12h 超时。 */
     private val renewWakeLock = object : Runnable {
         override fun run() {
-            if (activeSessions > 0) {
-                releaseWakeLock()
-                acquireWakeLock()
-                handler.postDelayed(this, RENEW_INTERVAL_MS)
-            }
+            if (activeSessions.get() > 0) scheduleRenew()
         }
+    }
+
+    /** 按 [nextRenewAt] 安排续期；已到点则立即续期并推进时刻（幂等，可随时调用）。 */
+    private fun scheduleRenew() {
+        val now = SystemClock.elapsedRealtime()
+        if (nextRenewAt <= now) {
+            releaseWakeLock()
+            acquireWakeLock()
+            nextRenewAt = now + RENEW_INTERVAL_MS
+        }
+        handler.removeCallbacks(renewWakeLock)
+        handler.postDelayed(renewWakeLock, (nextRenewAt - now).coerceAtLeast(1))
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            activeSessions = (activeSessions - 1).coerceAtLeast(0)
-            Log.i(TAG, "stop: activeSessions=$activeSessions")
-            if (activeSessions == 0) {
+            val n = activeSessions.updateAndGet { it.coerceAtLeast(1) - 1 }
+            Log.i(TAG, "stop: activeSessions=$n")
+            if (n == 0) {
                 releaseWakeLock()
                 handler.removeCallbacks(renewWakeLock)
                 stopSelf()
@@ -50,20 +67,19 @@ class SessionService : Service() {
         if (intent == null) {
             // START_STICKY 重启：进程被杀后计数已归零，没有活跃会话就不该残留
             // 一个空转的前台服务 + wakelock；进程活着但服务被杀时计数仍有效，正常恢复。
-            if (activeSessions <= 0) {
+            if (activeSessions.get() <= 0) {
                 Log.w(TAG, "restarted with no active sessions, stopping")
                 stopSelf()
                 return START_NOT_STICKY
             }
-            Log.i(TAG, "restarted by system, activeSessions=$activeSessions")
+            Log.i(TAG, "restarted by system, activeSessions=${activeSessions.get()}")
         } else {
-            activeSessions++
-            Log.i(TAG, "start: activeSessions=$activeSessions")
+            Log.i(TAG, "start: activeSessions=${activeSessions.incrementAndGet()}")
         }
         startForegroundCompat()
+        isRunning = true
         acquireWakeLock()
-        handler.removeCallbacks(renewWakeLock)
-        handler.postDelayed(renewWakeLock, RENEW_INTERVAL_MS)
+        scheduleRenew()
         return START_STICKY
     }
 
@@ -79,7 +95,9 @@ class SessionService : Service() {
     override fun onDestroy() {
         handler.removeCallbacks(renewWakeLock)
         releaseWakeLock()
-        activeSessions = 0
+        nextRenewAt = 0
+        activeSessions.set(0)
+        isRunning = false
         Log.i(TAG, "destroyed")
         super.onDestroy()
     }
@@ -134,19 +152,29 @@ class SessionService : Service() {
         private const val ACTION_STOP = "dev.termish.SESSION_STOP"
         private const val RENEW_INTERVAL_MS = 8 * 60 * 60 * 1000L
 
+        /** 活跃会话计数：多会话并发 start/stop 时必须是原子的（曾用 @Volatile Int，并发会丢计数）。 */
+        private val activeSessions = AtomicInteger(0)
+
+        /**
+         * 前台服务是否真的在运行。服务被系统停掉（Android 15 dataSync 6h 超时、
+         * 进程内服务被杀）后为 false，上层据此重新拉起保活。
+         */
         @Volatile
-        private var activeSessions = 0
+        var isRunning = false
+            private set
 
         fun start(ctx: Context) {
+            isRunning = true
             try {
                 ctx.startForegroundService(Intent(ctx, SessionService::class.java))
             } catch (e: Exception) {
+                isRunning = false
                 Log.e(TAG, "startForegroundService failed", e)
             }
         }
 
         fun stop(ctx: Context) {
-            if (activeSessions <= 0) return
+            if (activeSessions.get() <= 0) return
             try {
                 ctx.startService(Intent(ctx, SessionService::class.java).setAction(ACTION_STOP))
             } catch (e: Exception) {

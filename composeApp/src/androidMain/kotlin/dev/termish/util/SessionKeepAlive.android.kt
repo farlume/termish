@@ -21,4 +21,6 @@ actual object SessionKeepAlive {
             Log.e("Termish-SessionKeepAlive", "onSessionEnd failed", e)
         }
     }
+
+    actual fun isActive(): Boolean = SessionService.isRunning
 }

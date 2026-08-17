@@ -28,32 +28,39 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
         var lastLostAt = 0L // LOST 节流：与切换节流分开，避免吞掉紧随的 TRANSPORT_CHANGED
         var lastSwitchAt = 0L // TRANSPORT_CHANGED 节流
 
-        fun transportOf(network: Network?): Int {
-            val caps = network?.let { cm.getNetworkCapabilities(it) } ?: return -1
-            return when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 0
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 2
-                else -> 3
+        fun transportOf(caps: NetworkCapabilities?): Int = when {
+            caps == null -> -1
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 0
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 2
+            else -> 3
+        }
+
+        fun handleTransport(t: Int) {
+            if (t == -1) return // capabilities 未就绪：等 onCapabilitiesChanged 再判，避免假"传输切换"
+            if (lastTransport == -1) {
+                lastTransport = t // 首次注册回调：建立基线，不触发
+                return
             }
+            if (t != lastTransport) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastSwitchAt >= 3_000) { // 防抖动：3 秒内只触发一次
+                    lastSwitchAt = now
+                    latestOnChange(NetworkChangeKind.TRANSPORT_CHANGED)
+                }
+            }
+            lastTransport = t
         }
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val t = transportOf(network)
-                if (t == -1) return // capabilities 未就绪：忽略，避免假"传输切换"
-                if (lastTransport == -1) {
-                    lastTransport = t // 首次注册回调：建立基线，不触发
-                    return
-                }
-                if (t != lastTransport) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastSwitchAt >= 3_000) { // 防抖动：3 秒内只触发一次
-                        lastSwitchAt = now
-                        latestOnChange(NetworkChangeKind.TRANSPORT_CHANGED)
-                    }
-                }
-                lastTransport = t
+                // onAvailable 时 capabilities 未必就绪（会拿到 null）；真正就绪后
+                // onCapabilitiesChanged 还会回调一次，由它兜底判定，不会丢事件
+                handleTransport(transportOf(cm.getNetworkCapabilities(network)))
+            }
+
+            override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
+                handleTransport(transportOf(caps))
             }
 
             override fun onLost(network: Network) {

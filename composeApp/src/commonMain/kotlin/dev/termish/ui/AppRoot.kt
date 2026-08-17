@@ -59,6 +59,7 @@ import dev.termish.ui.theme.TerminalThemes
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
+import dev.termish.util.SessionKeepAlive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -210,13 +211,21 @@ fun AppRoot(repository: HostRepository) {
     // iOS：退到桌面后系统挂起进程、掐断 socket；回前台时自动重连活跃会话（缓冲保留）。
     // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
     val disposeNetwork = observeNetworkChange { kind ->
-        // 网络事件：SSH 断开/切换都重连；mosh 仅传输切换时重建（断网靠 UDP 自动续传）
+        // 网络事件：SSH 断开/切换都重连；mosh 断网与传输切换都靠 UDP 漫游自愈，不重建
+        // （实现与 NetworkChangeKind 注释一致：mosh 仅客户端异常退出时才走自动重连）
         sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
     }
     DisposableEffect(Unit) {
         val dispose = observeAppLifecycle { foreground ->
             if (foreground) {
                 sessionManager.reconnectDroppedSessions()
+                // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
+                // 回前台立即重新拉起，避免 wakelock 缺失导致锁屏断连。
+                // 只对【已连接】会话拉起：disconnect 的会话保留在列表里，误拉起会
+                // 造成计数无对应 stop 的服务空转；待重连的会话由 startKeepAlive 自己拉。
+                if (sessionManager.sessions.any { it.isConnected() } && !SessionKeepAlive.isActive()) {
+                    SessionKeepAlive.onSessionStart()
+                }
             } else {
                 sessionManager.noteBackgrounded()
             }

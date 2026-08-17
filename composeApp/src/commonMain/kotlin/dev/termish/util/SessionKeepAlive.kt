@@ -8,4 +8,11 @@ package dev.termish.util
 expect object SessionKeepAlive {
     fun onSessionStart()
     fun onSessionEnd()
+
+    /**
+     * 保活服务是否真的在运行。Android 前台服务被系统停掉（Android 15
+     * dataSync 6h 超时、服务被杀）后返回 false，供上层重新拉起；
+     * iOS / desktop 无保活服务，恒为 true（保持原行为）。
+     */
+    fun isActive(): Boolean
 }

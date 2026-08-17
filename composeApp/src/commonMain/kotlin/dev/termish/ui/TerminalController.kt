@@ -115,8 +115,13 @@ class TerminalController(
     /** Mosh 主题注入：非空表示本会话开启（见 [prepareThemeSync]）。 */
     private var moshThemePayload: ByteArray? = null
     private var moshThemeInjected = false
-    /** 网络切换触发的主动重连时间戳：15 秒防抖，避免网络抖动引发连续重连。 */
-    private var lastNetworkReconnectAt = 0L
+    /** 单调钟：网络免疫期/防抖用单调毫秒，避免墙钟被用户改时间/NTP 校正干扰。 */
+    private val mono = kotlin.time.TimeSource.Monotonic.markNow()
+    private fun nowMs(): Long = mono.elapsedNow().inWholeMilliseconds
+    /** 连接成功后的网络事件免疫截止（单调毫秒）：期内不触发主动重连（防刚连上即断）。 */
+    private var networkImmuneUntilMs = 0L
+    /** 最近一次主动重连时刻（单调毫秒）：15 秒防抖，避免网络抖动引发连续重连。 */
+    private var lastNetworkReconnectAtMs = 0L
     init {
         // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
         // 必须在创建时按当前主题设置，不能等 TerminalScreen 组合——后台自动重连、
@@ -191,7 +196,7 @@ class TerminalController(
                 errorMessage = null
                 startKeepAlive()
                 // 网络切换免疫期：刚连上 30 秒内的网络事件不再触发主动重连
-                lastNetworkReconnectAt = kotlinx.datetime.Clock.System.now().toEpochMilliseconds() + 30_000
+                networkImmuneUntilMs = nowMs() + 30_000
                 // 自动探测远端系统（Termius 式）：system 未知时在已认证连接上
                 // 后台 exec 一次，不重新认证、不阻塞交互；成功即保存并刷新列表。
                 if (host.system.isBlank()) {
@@ -215,6 +220,9 @@ class TerminalController(
                 if (status != ConnStatus.CLOSED) {
                     status = ConnStatus.ERROR
                     errorMessage = e.message
+                    // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
+                    //（首连失败时 keepAliveActive=false，stopKeepAlive 有 guard，安全）
+                    stopKeepAlive()
                 }
             }
         }
@@ -326,6 +334,8 @@ class TerminalController(
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
                 errorMessage = e.message
+                // 重连失败：停保活防空转（见 doConnect 的 catch 注释）
+                stopKeepAlive()
             }
         }
     }
@@ -352,7 +362,7 @@ class TerminalController(
         // 网络切换免疫期 + 稳定期重置：
         // 刚连上 30 秒内网络事件不再触发主动重连；连接保持 30 秒后重连计数归零，
         // 避免「连上即退」场景下 onExit 自动重连无限循环
-        lastNetworkReconnectAt = kotlinx.datetime.Clock.System.now().toEpochMilliseconds() + 30_000
+        networkImmuneUntilMs = nowMs() + 30_000
         scope.launch {
             kotlinx.coroutines.delay(30_000)
             if (status == ConnStatus.CONNECTED) reconnectAttempts = 0
@@ -391,7 +401,9 @@ class TerminalController(
     }
 
     private fun startKeepAlive() {
-        if (!keepAliveActive) {
+        // keepAliveActive 只挡同进程内的重复计数；前台服务被系统停掉（Android 15
+        // dataSync 6h 超时、服务被杀）后 isActive() 为 false，必须重新拉起服务
+        if (!keepAliveActive || !dev.termish.util.SessionKeepAlive.isActive()) {
             keepAliveActive = true
             dev.termish.util.SessionKeepAlive.onSessionStart()
         }
@@ -548,9 +560,10 @@ class TerminalController(
         // onLost 时新网络未必就绪（尤其流量→Wi-Fi），纯断网交给 TCP 自然断开 +
         // onClosed 退避重连。
         if (kind == NetworkChangeKind.LOST) return
-        val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
-        if (now - lastNetworkReconnectAt < 15_000) return // 防抖：15 秒内只主动重连一次
-        lastNetworkReconnectAt = now
+        val now = nowMs()
+        if (now < networkImmuneUntilMs) return // 连接后免疫期（30 秒）：刚连上不折腾
+        if (now - lastNetworkReconnectAtMs < 15_000) return // 防抖：15 秒内只主动重连一次
+        lastNetworkReconnectAtMs = now
         when (status) {
             ConnStatus.CONNECTED -> {
                 reconnectAttempts = 0

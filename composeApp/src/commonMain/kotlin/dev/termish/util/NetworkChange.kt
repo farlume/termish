@@ -6,7 +6,7 @@ import androidx.compose.runtime.Composable
 enum class NetworkChangeKind {
     /** 网络断开（同 IP 的网络抖动；mosh 可自行恢复，无需重建）。 */
     LOST,
-    /** 传输类型切换（IP 变化；SSH 需重连、mosh 需重建）。 */
+    /** 传输类型切换（IP 变化；SSH 需主动重连，mosh 靠 UDP 漫游自愈、也不重建）。 */
     TRANSPORT_CHANGED,
 }
 
