@@ -282,6 +282,16 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [ ] E2EE 跨设备同步
 - [ ] 后期：横屏双栏、kana/hangul 输入法、深链
 
+## 支持作者
+
+Termish 免费、开源（MIT）、无广告。如果它帮你省了时间——无论是工作、随身
+使用还是你的 agent 会话——可以请作者喝杯咖啡。打赏完全自愿，每一份支持都会
+用于让项目持续维护下去。
+
+| 支付宝 | 微信 |
+|--------|------|
+| [![支付宝收款码](docs/donate/alipay-qr.jpg)](https://qr.alipay.com/fkx12790skh105nviquzaea) | ![微信收款码](docs/donate/wechat-qr.jpg) |
+
 ## 参与贡献
 
 欢迎提 Issue 和 PR——完整指引见 [CONTRIBUTING.md](CONTRIBUTING.md)。几个要点：

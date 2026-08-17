@@ -314,6 +314,17 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [ ] E2EE cross-device sync
 - [ ] Later: landscape dual-pane, kana/hangul IME, deep links
 
+## Support the developer
+
+Termish is free, open source (MIT) and ad-free. If it has been useful to you —
+for work, in your pocket, or for your agent sessions — you can buy the
+developer a coffee. Support is completely voluntary, and every bit goes into
+keeping the project alive.
+
+| Alipay | WeChat |
+|--------|--------|
+| [![Alipay QR](docs/donate/alipay-qr.jpg)](https://qr.alipay.com/fkx12790skh105nviquzaea) | ![WeChat QR](docs/donate/wechat-qr.jpg) |
+
 ## Contributing
 
 Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
