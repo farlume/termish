@@ -4,13 +4,20 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.documentfile.provider.DocumentFile
 
-/** Android：SAF OpenDocumentTree 选目标目录，按相对路径在树内创建文件。 */
+/** Android：SAF OpenDocumentTree 选目标目录，在树内创建 <远端目录名> 子目录再写入（与 iOS 语义一致）。 */
 @Composable
 actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -> Unit): (name: String) -> Unit {
     val context = LocalContext.current
+    // 记住本次保存的远端目录名：用户选定目标目录后在其下建同名子目录
+    //（OpenDocumentTree 无法预设目录名，只能在回调里拿到用户选择）
+    var pendingName by remember { mutableStateOf("download") }
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri ->
@@ -23,12 +30,28 @@ actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -
             } catch (_: Exception) {
             }
             val root = DocumentFile.fromTreeUri(context, uri)
-            val name = uri.lastPathSegment?.substringAfterLast(':')?.ifBlank { "download" } ?: "download"
+            val name = sanitizeDirName(pendingName)
             if (root != null) {
                 onReady(name, object : DirectorySink {
+                    /** 本次下载在用户选定目录下创建的 <远端目录名> 根目录（同名已存在则追加序号）。 */
+                    var createdRoot: DocumentFile? = null
+
                     override fun openFile(relativePath: String): FileSink {
                         val parts = relativePath.split('/')
-                        var dir = root ?: throw IllegalStateException("保存目录不可用")
+                        val base = root ?: throw IllegalStateException("保存目录不可用")
+                        val rootDir = createdRoot ?: run {
+                            var candidate = name
+                            var n = 1
+                            while (base.findFile(candidate) != null) {
+                                candidate = "${name}_$n"
+                                n++
+                            }
+                            val d = base.createDirectory(candidate)
+                                ?: throw IllegalStateException("无法创建目录: $candidate")
+                            createdRoot = d
+                            d
+                        }
+                        var dir = rootDir
                         for (p in parts.dropLast(1)) {
                             dir = dir.findFile(p) ?: dir.createDirectory(p)
                                 ?: throw IllegalStateException("无法创建目录: $p")
@@ -54,5 +77,8 @@ actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -
             }
         }
     }
-    return { name -> launcher.launch(null) }
+    return { name ->
+        pendingName = name
+        launcher.launch(null)
+    }
 }

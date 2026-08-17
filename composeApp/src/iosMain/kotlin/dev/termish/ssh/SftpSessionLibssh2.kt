@@ -5,10 +5,12 @@ package dev.termish.ssh
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
@@ -19,9 +21,11 @@ import libssh2.LIBSSH2_FXF_READ
 import libssh2.LIBSSH2_FXF_TRUNC
 import libssh2.LIBSSH2_FXF_WRITE
 import libssh2.LIBSSH2_SFTP
+import libssh2.LIBSSH2_SFTP_ATTRIBUTES
 import libssh2.LIBSSH2_SFTP_HANDLE
 import libssh2.LIBSSH2_SFTP_S_IFDIR
 import libssh2.LIBSSH2_SFTP_S_IFMT
+import libssh2.LIBSSH2_SFTP_STAT
 import libssh2.LIBSSH2_SFTP_OPENDIR
 import libssh2.LIBSSH2_SFTP_REALPATH
 import libssh2.libssh2_sftp_init
@@ -30,6 +34,7 @@ import libssh2.libssh2_sftp_mkdir_ex
 import libssh2.libssh2_sftp_open_ex
 import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
+import libssh2.libssh2_sftp_stat_ex
 import libssh2.libssh2_sftp_symlink_ex
 import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_write
@@ -78,9 +83,11 @@ private class SftpSessionLibssh2(
                         n > 0 -> {
                             val name = buf.readBytes(n.toInt()).decodeToString()
                             // libssh2 的 attrs 结构在 cinterop 中不透明，
-                            // 从 longentry（drwxr-xr-x 2 root root 4096 Jan 1 12:34 name）解析
+                            // 从 longentry（drwxr-xr-x 2 root root 4096 Jan 1 12:34 name）解析；
+                            // 服务器不返回 longentry（Windows OpenSSH、部分嵌入式 SFTP）时
+                            // 类型未知，用 stat 兜底——递归下载目录依赖准确的 isDirectory
                             val long = longBuf.toKString()
-                            val entry = parseLongEntry(name, long)
+                            val entry = parseLongEntry(name, long) ?: statEntry(path, name)
                             entries.add(entry)
                         }
                         n == 0 -> return@memScoped
@@ -95,10 +102,14 @@ private class SftpSessionLibssh2(
         }
     }
 
-    /** 解析 readdir 的 longentry（权限/大小），时间降级为空（Android/desktop 有完整属性）。 */
-    private fun parseLongEntry(name: String, long: String): SftpEntry {
+    /**
+     * 解析 readdir 的 longentry（权限/大小），时间降级为空（Android/desktop 有完整属性）。
+     * 类型字符无法识别（longentry 缺失/格式异常）时返回 null，由 [statEntry] 兜底。
+     */
+    private fun parseLongEntry(name: String, long: String): SftpEntry? {
         val parts = long.trim().split(Regex("\\s+"))
-        val perm = parts.firstOrNull() ?: "-rw-r--r--"
+        val perm = parts.firstOrNull() ?: return null
+        if (perm.isEmpty() || perm.first() !in "dl-") return null
         val isDir = perm.startsWith("d")
         val size = parts.getOrNull(parts.size - 5)?.toLongOrNull() ?: 0L
         return SftpEntry(
@@ -109,6 +120,50 @@ private class SftpSessionLibssh2(
             modifiedAt = 0L,
             isHidden = name.startsWith("."),
         )
+    }
+
+    /** longentry 缺失时的类型兜底：stat 拿真实类型（目录/文件/链接），并带上大小/时间。 */
+    private fun statEntry(dirPath: String, name: String): SftpEntry {
+        val s = sftpOrThrow()
+        val full = if (dirPath == "/") "/$name" else "$dirPath/$name"
+        memScoped {
+            val attrs = alloc<LIBSSH2_SFTP_ATTRIBUTES>()
+            var guard = 0
+            while (true) {
+                val rc = libssh2_sftp_stat_ex(s, full, full.length.toUInt(), LIBSSH2_SFTP_STAT, attrs.ptr)
+                if (rc == 0) {
+                    val perm = attrs.permissions
+                    return SftpEntry(
+                        name = name,
+                        isDirectory = perm and LIBSSH2_SFTP_S_IFDIR.toULong() != 0uL,
+                        permissions = formatPerm(perm),
+                        size = attrs.filesize.toLong(),
+                        modifiedAt = attrs.mtime.toLong() * 1000L,
+                        isHidden = name.startsWith("."),
+                    )
+                }
+                if (rc == LIBSSH2_ERROR_EAGAIN && guard++ < 200) {
+                    usleep(30_000u)
+                    continue
+                }
+                // stat 失败：按普通文件处理（下载/进入时自然会再报错），不中断整个列表
+                return SftpEntry(
+                    name = name, isDirectory = false, permissions = "-rw-r--r--",
+                    size = 0L, modifiedAt = 0L, isHidden = name.startsWith("."),
+                )
+            }
+        }
+    }
+
+    /** 数字 mode → "drwxr-xr-x" 权限串（stat 兜底路径用，展示用途）。 */
+    private fun formatPerm(mode: ULong): String {
+        val type = if (mode and LIBSSH2_SFTP_S_IFDIR.toULong() != 0uL) 'd' else '-'
+        val chars = "rwxrwxrwx"
+        val bits = longArrayOf(0x100, 0x80, 0x40, 0x20, 0x10, 0x8, 0x4, 0x2, 0x1)
+        return buildString {
+            append(type)
+            for (i in 0..8) append(if (mode and bits[i].toULong() != 0uL) chars[i] else '-')
+        }
     }
 
     override fun mkdir(path: String) {

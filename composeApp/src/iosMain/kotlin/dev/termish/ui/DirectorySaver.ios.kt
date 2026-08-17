@@ -33,8 +33,10 @@ actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -
     return { name ->
         val tmpDir = NSTemporaryDirectory()
         if (tmpDir != null) {
-            val safeName = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "download" }
+            val safeName = sanitizeDirName(name)
             val root = "$tmpDir/termish-dir-$safeName"
+            // 清掉上次失败/中断残留的同名目录，避免陈旧文件混入本次导出（O_TRUNC 只覆盖同名文件）
+            NSFileManager.defaultManager.removeItemAtPath(root, null)
             NSFileManager.defaultManager.createDirectoryAtPath(root, true, null, null)
             onReady(name, object : DirectorySink {
                 override fun openFile(relativePath: String): FileSink {
@@ -49,7 +51,9 @@ actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -
                                 var off = 0
                                 while (off < bytes.size) {
                                     val n = write(fd, pinned.addressOf(off), (bytes.size - off).toULong())
-                                    if (n <= 0L) break
+                                    // 写失败/写 0 字节必须抛错：静默截断会让上层误报下载成功
+                                    if (n < 0) throw IllegalStateException("写入失败: $relativePath")
+                                    if (n == 0L) throw IllegalStateException("写入中断: $relativePath")
                                     off += n.toInt()
                                 }
                             }

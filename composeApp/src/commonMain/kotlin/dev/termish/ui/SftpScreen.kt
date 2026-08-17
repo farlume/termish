@@ -241,7 +241,8 @@ fun SftpContent(
     val saveDir = rememberDirectorySaver { _, sink ->
         val target = pendingDownloadDir
         if (target == null) {
-            sink.close()
+            // 没有待下载目录（防御路径）：直接放弃，不调 sink.close()——
+            // iOS 的 close 会弹导出面板，空目录也会弹
             return@rememberDirectorySaver
         }
         scope.launch {
@@ -252,10 +253,7 @@ fun SftpContent(
                 sink.close()
                 snackbar.showSnackbar(s.sftpDownloaded)
             } catch (e: Exception) {
-                try {
-                    sink.close()
-                } catch (_: Exception) {
-                }
+                // 失败不调 sink.close()：iOS 只在全部成功时弹导出面板，避免导出半成品目录
                 snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
             }
         }
