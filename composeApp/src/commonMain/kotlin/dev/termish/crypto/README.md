@@ -17,7 +17,7 @@ SHA-512 等）仅供研究与测试参考，**未经第三方密码学审计**�
 mosh 的 SSP 协议强制使用 AES-128-OCB 作为 AEAD，且 mosh 密钥经 SSH 引导通道
 下发（`MOSH CONNECT <port> <key>`），UDP 层加密防的是「链路监听者篡改/重放
 终端流量」，密钥本身的安全性由 SSH 保证。为保持「纯 Kotlin、零原生依赖」
-（替代 GPLv3 的 原生客户端），`mosh/Aes.kt` + `mosh/Ocb.kt` 是自研实现
+（替代 GPLv3 原生客户端的自研实现），`mosh/Aes.kt` + `mosh/Ocb.kt` 是自研实现
 并运行在生产链路，属于本目录政策的**显式例外**：
 
 - 正确性：`commonTest/mosh/OcbTest` 含独立标准解密向量
