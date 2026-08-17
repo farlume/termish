@@ -186,49 +186,81 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 发布：仅 tag（vX.Y.Z）触发，汇总 Android 产物创建 GitHub Release
-  # （desktop 暂时禁用，见上；恢复后 needs 加回 desktop）
+  # 发布：仅 tag（vX.Y.Z）触发。独立构建（不依赖 android/desktop 的 artifact
+  # 上传下载——NAS 出口网络上传大文件 ECONNRESET，绕开 blob storage 通道）。
+  # Release 资产上传加重试（5 次指数退避），仍是偶发重置可恢复；
+  # 持续失败时产物留在 NAS 本地 build/ 目录，可手动发布。
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android]
-    # 也走自托管（NAS 有 gh CLI，GH_TOKEN 由 Actions 注入，无需本地登录）
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
       # gh release create --generate-notes 需要 git 上下文，必须 checkout
       - uses: actions/checkout@v4
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/setup-java@v4
+        if: runner.environment == 'github-hosted'
         with:
-          path: dist
-          merge-multiple: true
+          distribution: temurin
+          java-version: "17"
 
-      - name: Rename Android assets with version
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
+          if [ "$TAG" != "$VN" ]; then
+            echo "::error::tag=$TAG 与 Android versionName=$VN 不一致，先运行 ./scripts/bump-version.sh $TAG"
+            exit 1
+          fi
+          echo "版本一致：$TAG"
+
+      - name: Build release APK and AAB
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew \
+            :composeApp:assembleRelease \
+            :composeApp:bundleRelease
+
+      - name: Collect and checksum artifacts
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          cd dist
-          # upload-artifact v4 多 path 会保留目录结构（apk/、bundle/），递归收集并统一重命名到顶层
-          for f in $(find . -type f \( -name "*.apk" -o -name "*.aab" \)); do
+          mkdir -p dist
+          for f in composeApp/build/outputs/apk/release/*.apk composeApp/build/outputs/bundle/release/*.aab; do
             name=$(basename "$f" | sed "s/^composeApp-//")
-            mv "$f" "Termish-$VER-$name"
+            cp "$f" "dist/Termish-$VER-$name"
           done
-          rm -rf apk bundle
-          ls -l
-
-      - name: Generate SHA-256 checksums
-        run: |
           cd dist
           shasum -a 256 * > SHA256SUMS
-          cat SHA256SUMS
+          ls -l
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (with retry)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes
+          set -e
+          # 上次失败可能留下同名 release（资产不完整）：删掉重建
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
+          for i in 1 2 3 4 5; do
+            if gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
+                --title "$GITHUB_REF_NAME" --generate-notes 2>/tmp/gh-rel.err; then
+              echo "✅ Release $GITHUB_REF_NAME 创建成功（尝试 $i）"
+              exit 0
+            fi
+            echo "⚠️ 第 $i 次创建失败（ECONNRESET 类网络抖动常见），$((i*15))s 后重试…"
+            cat /tmp/gh-rel.err | tail -3
+            sleep $((i*15))
+          done
+          echo "::error::Release 创建 5 次均失败；产物在 NAS 本地 dist/ 目录，可手动 gh release create"
+          exit 1
