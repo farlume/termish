@@ -55,8 +55,7 @@ Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:2222, generates ephemeral ed25519
   does not pick up new environment variables)
 - iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts, and **CI does
   not build iOS** — verify iOS changes locally: `make ios-native && make ios-framework`
-- The signing keystore alias is the legacy value `mssh` — **do not change it**
-  (renaming breaks signature consistency and upgrade installs)
+- The signing keystore was rebuilt on 2026-08-17 (alias `termish`, CN=Termish) **before any public release** — old `mssh` alias is gone, no upgrade-path constraint. The pre-release legacy keystore is archived at `~/Documents/秘钥/termish-mssh-legacy-20260817.jks`. Once any build is published, the **private key must never change** (breaks signature consistency and upgrade installs) — back it up in `~/Documents/秘钥/` and never commit `.env` / `*.jks`
 - Version numbers are synced in three places (Android / desktop / iOS): always use
   `make bump`, never edit by hand; a pushed `vX.Y.Z` tag is validated by CI against
   the checked-in version
