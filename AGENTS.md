@@ -55,6 +55,36 @@ network) at `127.0.0.1:2223` — never `10.0.2.2` on iOS.
   Chinese UI); README shows 6 per language (3×2), English README uses English
   screenshots, Chinese README uses Chinese ones
 
+## Development workflow（开发工作流）
+
+分层验证，由快到慢，逐级上升；**日常迭代全走 debug + 模拟器，release 只在功能里程碑/准备验收时构建**：
+
+```bash
+# ① 单元测试（秒级）——改动涉及 term/、mosh/、crypto/、逻辑层时必跑
+./gradlew :composeApp:desktopTest
+
+# ② debug 构建 + 模拟器安装启动（分钟级）——日常迭代主力
+make run
+
+# ③ 集成测试（分钟级）——传输层（sshj/libssh2/mosh/SFTP）改动时必跑
+make test-integration
+
+# ④ 真机抽查（手动）——模拟器测不了的点
+#    - IME 中文/日文输入（模拟器常无真实输入法，CJK 组合态管线必须真机）
+#    - Mosh 漫游（WiFi↔蜂窝切换续传）、后台保活、断线重连
+#    - 性能 / 电池
+
+# ⑤ 签名 release（分钟级）——功能完成/准备验收时构建
+make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
+```
+
+规则：
+
+- **release 不是每次改动的必做项**——R8 混淆/资源收缩/签名问题在里程碑验证时暴露即可，日常被 debug 循环拖慢
+- **有模拟器时模拟器安装验证优先**（`make run`）；真机按上面 ④ 的点抽查
+- **提交时机由用户验收驱动**：本地改动不着急 commit，攒批等用户确认后再提交；但每个功能块完成时建议 `git stash` 或 WIP commit 防丢失（当天改动当天有备份）
+- 改动涉及 `term/` 或 `mosh/` 时先跑 ① 再上模拟器（秒级反馈，别浪费模拟器循环）
+
 ## Testing discipline
 
 - Any change to `term/` (escape sequences, buffer, wide-char behavior) → add a
