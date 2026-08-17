@@ -132,6 +132,8 @@ data class AppStrings(
     val settingsLanguageSystem: String,
     val languageZh: String,
     val languageEn: String,
+    // 主机列表分组标题（首页）
+    val hostsSectionTitle: String,
     // 设置页「关于」区（版本/官网/联系/支持作者入口）
     val settingsGroupAbout: String,
     val settingsVersion: String,
@@ -287,6 +289,7 @@ private val EnStrings = AppStrings(
     settingsLanguageSystem = "Follow system",
     languageZh = "中文",
     languageEn = "English",
+    hostsSectionTitle = "My hosts",
     settingsGroupAbout = "About",
     settingsVersion = "Version",
     settingsWebsite = "Website",
@@ -428,6 +431,7 @@ private val ZhStrings = AppStrings(
     settingsLanguageSystem = "跟随系统",
     languageZh = "中文",
     languageEn = "English",
+    hostsSectionTitle = "我的主机",
     settingsGroupAbout = "关于",
     settingsVersion = "版本",
     settingsWebsite = "官网",

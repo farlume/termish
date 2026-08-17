@@ -180,7 +180,7 @@ fun HostListScreen(
                     },
                 )
             } else {
-                TermishLargeHeader(title = "Termish")
+                TermishLargeHeader(title = s.appTabHosts)
             }
         },
         floatingActionButton = {
@@ -201,6 +201,13 @@ fun HostListScreen(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 placeholder = { Text(s.hostsSearch) },
                 singleLine = true,
+            )
+            // 分组标题（与设置页 SettingsGroup 同款样式）
+            Text(
+                s.hostsSectionTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
             )
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
