@@ -266,16 +266,16 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## 路线图
 
-- [x] SFTP 文件浏览与传输
-- [ ] herdr 会话切换器——一键跳进运行中的 agent
-- [ ] 更多输入法语言——日文假名 / 韩文谚文组合输入
-  （管线已按组合态设计，见[中文输入](#中文输入做到位)）
-- [ ] 端口转发（-L / -R）
-- [ ] `~/.ssh/config` 导入
-- [ ] 平板分屏多窗口——多 tab 会话已支持，见[特性](#特性)
-- [ ] 密钥管理界面——查看/删除系统保险库（Keystore / Keychain）中的密钥
-- [ ] Snippets 片段库——可复用命令片段，工具行一键插入发送
-- [ ] known_hosts 管理——固定/查看/删除主机指纹
+- [x] 纯 Kotlin Mosh 客户端（含本地回显预测）
+- [x] 会话管理——多会话 tab、Connections、自动重连
+- [x] SFTP 与密钥/known_hosts 管理
+- [ ] **Agent 友好支持**——herdr/codex 会话接管、状态徽章、任务通知、手机端批准
+- [ ] 连接增强——端口转发、ProxyJump、`~/.ssh/config` 导入
+- [ ] Snippets 片段库
+- [ ] 语音输入
+- [ ] tmux 会话列表
+- [ ] E2EE 跨设备同步
+- [ ] 后期：横屏双栏、kana/hangul 输入法、深链
 
 ## 参与贡献
 

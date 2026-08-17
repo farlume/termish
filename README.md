@@ -297,18 +297,17 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## Roadmap
 
-- [x] SFTP file browser & transfers
-- [ ] herdr session switcher — jump straight into a running agent
-- [ ] More IME languages — kana (Japanese) / hangul (Korean) composition
-  (the pipeline is already composition-safe, see [CJK input](#cjk-input-done-right))
-- [ ] Port forwarding (-L / -R)
-- [ ] `~/.ssh/config` import
-- [ ] Multi-window (split-view) sessions on tablets — multi-tab sessions are
-  already supported, see [Features](#features)
-- [ ] Secret/key management UI — review and remove keys in the platform vault
-  (Keystore / Keychain)
-- [ ] Snippets — reusable command fragments, insert-and-send from the toolbar
-- [ ] Known-hosts management — pin, review and remove host fingerprints
+- [x] Pure-Kotlin Mosh client (incl. local echo prediction)
+- [x] Session manager — multi-session tabs, Connections, auto-reconnect
+- [x] SFTP & secret/known-hosts management
+- [ ] **Agent-friendly** — herdr/codex session takeover, status badges,
+  task notifications, phone approve
+- [ ] Connection — port forwarding, ProxyJump, `~/.ssh/config` import
+- [ ] Snippets
+- [ ] Voice input
+- [ ] tmux session list
+- [ ] E2EE cross-device sync
+- [ ] Later: landscape dual-pane, kana/hangul IME, deep links
 
 ## Contributing
 
