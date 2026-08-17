@@ -50,13 +50,9 @@ import dev.termish.data.AppSettings
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
-// ---- 关于区外链（官网 / 文档 / 仓库） ----
+// ---- 关于区外链（官网；文档/GitHub 待仓库公开后再加回） ----
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
-private const val DOCS_URL = "https://github.com/ttermish/termish/tree/main/docs"
-private const val DOCS_HOST = "github.com/ttermish/termish/docs"
-private const val GITHUB_URL = "https://github.com/ttermish/termish"
-private const val GITHUB_REPO = "ttermish/termish"
 
 private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
     ThemeMode.DARK -> s.settingsThemeDark
@@ -165,10 +161,6 @@ fun SettingsScreen(
                 SettingsOptionItem(s.settingsVersion, APP_VERSION) {}
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsOptionItem(s.settingsDocs, DOCS_HOST) { uriHandler.openUri(DOCS_URL) }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsOptionItem(s.settingsGithub, GITHUB_REPO) { uriHandler.openUri(GITHUB_URL) }
             }
 
             Spacer(Modifier.height(24.dp))
