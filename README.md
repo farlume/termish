@@ -4,13 +4,13 @@
 > switches and roaming, and the pocket entry point to any TUI agent
 > (herdr · codex · claude). 极致手机端 Mosh + SSH 终端。
 
-[中文文档](README.zh-CN.md)
+[中文文档](README.zh-CN.md) · [🌐 官网 termish.dev](https://termish.dev)
 
+[![Website](https://img.shields.io/badge/Website-termish.dev-0ea5e9?style=flat&logo=globe&logoColor=white)](https://termish.dev)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Website](https://img.shields.io/badge/Website-termish.dev-0ea5e9?style=flat&logo=globe&logoColor=white)](https://termish.dev)
 
 <p>
   <img src="docs/screenshots/hosts-dark.png" width="230" alt="Hosts" />
