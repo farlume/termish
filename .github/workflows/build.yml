@@ -110,28 +110,19 @@ jobs:
   # ---------------------------------------------------------------------------
   desktop:
     name: Desktop (${{ matrix.platform }})
-    # 注意：job 级 if 不可用 matrix context（GitHub 限制），PR 只跑 Linux 的
-    # 控制下沉到步骤级：非 Linux 平台在 PR 下跑完 setup 即无后续动作
+    # 注意：job 级 if 不可用 matrix context（GitHub 限制）
+    # macOS/Windows 暂从 matrix 移除：hosted 额度被暂停（账单问题），
+    # NAS 只能打 Linux 包；账单恢复后加回（见 git 历史中的原配置）
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: macOS
-            os: macos-14
-            runner: macos-14
-            task: packageDmg
-            artifact_path: composeApp/build/compose/binaries/main/dmg/*.dmg
           - platform: Linux
             os: ubuntu-latest
             # Linux 桌面包跑自托管 runner（NAS）：hosted 额度已耗尽
             runner: [self-hosted, Linux, X64]
             task: packageDeb
             artifact_path: composeApp/build/compose/binaries/main/deb/*.deb
-          - platform: Windows
-            os: windows-latest
-            runner: windows-latest
-            task: packageMsi
-            artifact_path: composeApp/build/compose/binaries/main/msi/*.msi
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
@@ -145,16 +136,6 @@ jobs:
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v4
-
-      # jpackage 打 MSI 需要 WiX Toolset，GitHub Windows runner 未预装；
-      # choco 装 wixtoolset 在 runner 上不稳定，改为直接下载 wix3 二进制
-      - name: Install WiX Toolset
-        if: matrix.platform == 'Windows' && github.event_name != 'pull_request'
-        shell: pwsh
-        run: |
-          curl.exe -L -o wix.zip https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
-          Expand-Archive wix.zip -DestinationPath C:\wix -Force
-          "C:\wix" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
       # 失败则本平台不打包。集成测试需要本地 sshd：
@@ -182,15 +163,7 @@ jobs:
 
       - name: Package (${{ matrix.platform }})
         if: github.event_name != 'pull_request'
-        # Windows 必须用 gradlew.bat：PowerShell 执行无扩展名 ./gradlew 会静默
-        # 失败（exit 0 但任务未运行，产物缺失）；统一用 bash 分支执行
-        shell: bash
-        run: |
-          if [ "${{ matrix.platform }}" = "Windows" ]; then
-            ./gradlew.bat :composeApp:${{ matrix.task }}
-          else
-            ./gradlew :composeApp:${{ matrix.task }}
-          fi
+        run: ./gradlew :composeApp:${{ matrix.task }}
 
       - name: Upload artifact
         if: github.event_name != 'pull_request'
