@@ -1,2 +1,28 @@
+# 行尾规范化：按平台锁定
 *.bat text eol=crlf
-*.sh text eol=lf
+*.sh   text eol=lf
+
+# 二进制文件：禁止行尾转换
+# （Windows runner 默认 autocrlf=true，若不声明 binary，
+#   jar/png/ttf 等会被 CRLF 转换损坏 → "no main manifest attribute"）
+*.jar     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.webp    binary
+*.ico     binary
+*.icns    binary
+*.ttf     binary
+*.otf     binary
+*.woff    binary
+*.woff2   binary
+*.keystore binary
+*.p12     binary
+*.aab     binary
+*.apk     binary
+*.dmg     binary
+*.msi     binary
+*.deb     binary
+*.zip     binary
+*.gz      binary
