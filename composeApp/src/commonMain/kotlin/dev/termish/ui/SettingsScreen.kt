@@ -9,12 +9,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -53,6 +55,7 @@ import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.alipay_qr
+import dev.termish.generated.resources.wechat_qr
 import org.jetbrains.compose.resources.painterResource
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
@@ -176,7 +179,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsOptionItem(s.settingsSupport, "Alipay") { showSupportDialog = true }
+                SettingsOptionItem(s.settingsSupport, "Alipay / WeChat") { showSupportDialog = true }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -221,37 +224,69 @@ fun SettingsScreen(
     }
 }
 
-/** 支持作者弹窗：收款码图（桌面/无支付宝环境扫码兜底）+ 主按钮直接唤起支付宝。 */
+/** 支持作者弹窗：支付宝 / 微信双收款码。支付宝有 universal link 直链唤起；
+ *  微信无公开调起链接，只能保存图片后相册识别（提示文案）。 */
 @Composable
 private fun SupportDialog(onDismiss: () -> Unit) {
     val s = LocalAppStrings.current
     val uriHandler = LocalUriHandler.current
+    var tab by remember { mutableStateOf(0) } // 0=支付宝，1=微信
+    // 支付宝 tab 才有直链按钮；微信无公开调起链接，confirmButton 渲染空占位。
+    // material3 AlertDialog 的 confirmButton 为非空参数，不能传 null。
+    val confirmButton: @Composable () -> Unit = if (tab == 0) {
+        ({
+            Button(onClick = {
+                onDismiss()
+                uriHandler.openUri(ALIPAY_URL)
+            }) { Text(s.settingsOpenAlipay) }
+        })
+    } else {
+        ({})
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(s.settingsSupport) },
         text = {
             Column {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    SupportTab(s.settingsTabAlipay, selected = tab == 0) { tab = 0 }
+                    Spacer(Modifier.width(8.dp))
+                    SupportTab(s.settingsTabWechat, selected = tab == 1) { tab = 1 }
+                }
+                Spacer(Modifier.height(12.dp))
                 Image(
-                    painterResource(Res.drawable.alipay_qr),
+                    painterResource(if (tab == 0) Res.drawable.alipay_qr else Res.drawable.wechat_qr),
                     contentDescription = s.settingsSupport,
                     modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).clip(RoundedCornerShape(8.dp)),
                     contentScale = ContentScale.Fit,
                 )
-                Text(
-                    s.settingsSupportHint,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(top = 10.dp),
-                )
+                if (tab == 1) {
+                    Text(
+                        s.settingsSupportHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
             }
         },
-        confirmButton = {
-            Button(onClick = {
-                onDismiss()
-                uriHandler.openUri(ALIPAY_URL)
-            }) { Text(s.settingsOpenAlipay) }
-        },
+        confirmButton = confirmButton,
         dismissButton = { TextButton(onClick = onDismiss) { Text(s.settingsClose) } },
+    )
+}
+
+/** 支持弹窗内的渠道切换 chip。 */
+@Composable
+private fun SupportTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelLarge,
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
     )
 }
 
