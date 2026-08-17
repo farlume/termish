@@ -94,15 +94,10 @@ jobs:
           path: composeApp/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Upload release APK and AAB
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-release
-          path: |
-            composeApp/build/outputs/apk/release/*.apk
-            composeApp/build/outputs/bundle/release/*.aab
-          if-no-files-found: error
+      # 注意：不在此上传 release APK/AAB artifact——NAS → Azure blob storage
+      # 大文件上传必 ECONNRESET（debug 小包可传），而 NAS → GitHub uploads
+      # （gh release upload）正常。release 产物由 release job 独立构建发布
+      # （见下），本步骤留档无下游依赖，故省略；产物在 NAS 本地 build/ 目录。
 
   # ---------------------------------------------------------------------------
   # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包；
