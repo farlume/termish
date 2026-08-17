@@ -45,7 +45,8 @@ class SshSessionSshj(
     private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
     // 单线程读调度器：stdout/stderr 两个 reader 若并发回调 onOutput/onStderr，
     // 会同时进入无锁的 TerminalEmulator 状态机（转义序列被打断、UTF-8 跨块错乱），
-    // 必须串行喂给上层
+    // 必须串行喂给上层。onOutput/onStderr 是挂起回调（可做背压），在 reader
+    // 协程里调用，挂起时释放本调度器线程
     private val readerDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private val closed = java.util.concurrent.atomic.AtomicBoolean(false)

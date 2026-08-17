@@ -100,9 +100,9 @@ class SessionManager(private val repository: HostRepository) {
         controller.close()
     }
 
-    /** 从列表中移除（针对已断开的会话）。 */
+    /** 从列表中移除（针对已断开的会话）：销毁控制器，回收协程作用域。 */
     fun remove(controller: TerminalController) {
-        controller.close()
+        controller.destroy()
         sessions.remove(controller)
         persist()
     }
@@ -129,7 +129,7 @@ class SessionManager(private val repository: HostRepository) {
 
     /** 主机被删除时，连带断开并移除其会话。 */
     fun closeForHost(hostId: String) {
-        sessions.filter { it.host.id == hostId }.forEach { it.close() }
+        sessions.filter { it.host.id == hostId }.forEach { it.destroy() }
         sessions.removeAll { it.host.id == hostId }
         sftpSessions.filter { it.host.id == hostId }.toList().forEach { closeSftp(it) }
         persist()

@@ -28,8 +28,8 @@ class SftpIntegrationTest {
                 privateKeyPem = pemFile.readText(),
             ),
             object : SshCallbacks {
-                override fun onOutput(data: ByteArray) {}
-                override fun onStderr(data: ByteArray) {}
+                override suspend fun onOutput(data: ByteArray) {}
+                override suspend fun onStderr(data: ByteArray) {}
                 override fun onExitStatus(status: Int) {}
                 override fun onClosed(reason: String?) {}
                 override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null

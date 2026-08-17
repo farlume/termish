@@ -38,11 +38,11 @@ class SshjIntegrationTest {
         val session = createSshSession(
             connection,
             object : SshCallbacks {
-                override fun onOutput(data: ByteArray) {
+                override suspend fun onOutput(data: ByteArray) {
                     output.append(String(data, Charsets.UTF_8))
                 }
 
-                override fun onStderr(data: ByteArray) {
+                override suspend fun onStderr(data: ByteArray) {
                     output.append(String(data, Charsets.UTF_8))
                 }
 
@@ -150,8 +150,8 @@ class SshjIntegrationTest {
                 privateKeyPem = pemFile.readText(),
             ),
             object : SshCallbacks {
-                override fun onOutput(data: ByteArray) {}
-                override fun onStderr(data: ByteArray) {}
+                override suspend fun onOutput(data: ByteArray) {}
+                override suspend fun onStderr(data: ByteArray) {}
                 override fun onExitStatus(status: Int) {}
                 override fun onClosed(reason: String?) {}
                 override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null

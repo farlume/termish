@@ -89,14 +89,15 @@ data class SshConnection(
 /**
  * 会话回调。所有回调都在会话的后台线程上触发（[onPrompt] 除外，见下）。
  *
- * - [onOutput]/[onStderr]/[onExitStatus]/[onClosed] 必须线程安全并尽快返回，
- *   由上层决定如何切回 UI 线程。
+ * - [onOutput]/[onStderr] 是挂起函数：引擎在 reader 协程中调用，上层可在
+ *   边界做背压（例如投递到有界队列时挂起，而不是阻塞 reader 线程）。
+ * - [onExitStatus]/[onClosed] 必须线程安全并尽快返回，由上层决定如何切回 UI 线程。
  * - [onPrompt] 是挂起函数：引擎在认证流程中调用它，允许上层弹出 UI。
  * - [verifyHostKey] 在握手阶段同步调用；返回 false 将中止连接。
  */
 interface SshCallbacks {
-    fun onOutput(data: ByteArray)
-    fun onStderr(data: ByteArray)
+    suspend fun onOutput(data: ByteArray)
+    suspend fun onStderr(data: ByteArray)
     fun onExitStatus(status: Int)
     fun onClosed(reason: String?)
 

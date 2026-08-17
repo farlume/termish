@@ -131,8 +131,8 @@ fun AppRoot(repository: HostRepository) {
         scope.launch {
             try {
                 val callbacks = object : SshCallbacks {
-                    override fun onOutput(data: ByteArray) {}
-                    override fun onStderr(data: ByteArray) {}
+                    override suspend fun onOutput(data: ByteArray) {}
+                    override suspend fun onStderr(data: ByteArray) {}
                     override fun onExitStatus(status: Int) {}
                     override fun onClosed(reason: String?) {}
                     override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {

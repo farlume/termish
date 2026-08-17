@@ -25,10 +25,17 @@ import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalThemes
 import dev.termish.util.ioDispatcher
 import dev.termish.util.NetworkChangeKind
+import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 
 enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
 
@@ -116,11 +123,30 @@ class TerminalController(
         private const val MOSH_STABLE_RESET_MS = 30_000L
         /** mosh 主题注入延迟：太早会被 shell readline 当输入回显成乱码，太晚 herdr 显示灰蒙层。 */
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
+        /** SSH 输出队列容量（chunk 数，单 chunk ≤64KB）：满时 reader 协程挂起施加
+         *  TCP 背压，不丢字节也不无限撑爆内存（cat 大文件场景）。 */
+        private const val OUTPUT_QUEUE_CAPACITY = 256
+        /** 主线程批量消费单帧预算：抽干同帧到达的输出后一次性触发重绘，
+         *  避免小包洪泛时每包一次 frame 抖动；到预算即让出主线程。 */
+        private const val OUTPUT_BATCH_BUDGET_MS = 8
+        /** 认证/主机密钥弹窗等待上限：页面销毁或用户长期不响应时按拒绝处理，
+         *  防止连接线程永久阻塞（sshd 自身也有登录宽限，超时连接本就会被掐断）。 */
+        private const val PROMPT_TIMEOUT_MS = 120_000L
     }
 
     private var session: SshSession? = null
     private var moshSession: MoshSession? = null
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
+    /** destroy() 后置位：reader 协程停止向输出队列投递（队列已关闭，投递会抛）。 */
+    @Volatile
+    private var destroyed = false
+    /**
+     * SSH 字节输出队列。reader 协程只投递，主线程单点消费喂 emulator——
+     * 由此 buffer 的全部读写（渲染 / resize / 选择 / 模拟器写入）都串行在主线程，
+     * 消除 reader 写入与 Canvas 绘制之间的竞争（此前 resize 重建行数组中途遇到
+     * reader 写入可能越界；mosh 路径本就是主线程拷贝同步，无此问题）。
+     */
+    private val outputQueue = Channel<ByteArray>(capacity = OUTPUT_QUEUE_CAPACITY)
     private var lastCols = 80
     private var lastRows = 24
     /** 会话唯一标识（同主机多会话区分；Compose key() 重组用）。 */
@@ -155,6 +181,21 @@ class TerminalController(
         emulator.onClipboardWrite = { text ->
             // OSC 52 远端写剪贴板受设置开关控制（远端可静默覆盖剪贴板，默认开）
             if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
+        }
+        // 输出消费循环：只在主线程动 buffer。批量抽干同帧到达的输出再统一重绘；
+        // 持续洪泛时 receiveCatching 不挂起，必须显式 yield 让 Compose 有机会绘制。
+        scope.launch(Dispatchers.Main) {
+            while (true) {
+                val first = outputQueue.receiveCatching().getOrNull() ?: break
+                emulator.write(first)
+                val mark = kotlin.time.TimeSource.Monotonic.markNow()
+                while (mark.elapsedNow().inWholeMilliseconds < OUTPUT_BATCH_BUDGET_MS) {
+                    val next = outputQueue.tryReceive().getOrNull() ?: break
+                    emulator.write(next)
+                }
+                frame++
+                yield()
+            }
         }
     }
 
@@ -233,6 +274,8 @@ class TerminalController(
                     s.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
                 }
                 frame++
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // 协程取消不是连接失败：不置 ERROR、不停保活
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
                     status = ConnStatus.ERROR
@@ -283,7 +326,10 @@ class TerminalController(
                 }
             }
 
-            prepareThemeSync()
+            // payload 读 buffer 默认色（buildThemeSyncPayload），而 buffer 只在
+            // 主线程读写（TerminalScreen 换主题时也会更新默认色）：构建必须切到
+            // 主线程，不能在这个 IO 协程里读
+            withContext(Dispatchers.Main) { prepareThemeSync() }
             // 纯 Kotlin mosh 客户端：影子终端状态直接同步进 UI buffer，
             // 不经过字节流路径（emulator.write）。
             val client = createKmpMoshSession(
@@ -322,6 +368,8 @@ class TerminalController(
                 return@doConnectMosh
             }
             // 等 onPeerConnected 首包回调再置 CONNECTED（UDP 不通时保持「连接中」）
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Throwable) {
             if (status != ConnStatus.CLOSED) {
                 status = ConnStatus.ERROR
@@ -346,7 +394,7 @@ class TerminalController(
                 scope.launch {
                     kotlinx.coroutines.delay(RECONNECT_BASE_DELAY_MS * reconnectAttempts)
                     if (status != ConnStatus.CLOSED) doConnect()
-                }
+                }.also { reconnectJob = it }
             } else {
                 status = ConnStatus.CLOSED
                 // 会话异常/超时等原因必须浮现（此前被静默丢弃，
@@ -438,14 +486,12 @@ class TerminalController(
     }
 
     private fun callbacks() = object : SshCallbacks {
-        override fun onOutput(data: ByteArray) {
-            emulator.write(data)
-            frame++
+        override suspend fun onOutput(data: ByteArray) {
+            enqueueOutput(data)
         }
 
-        override fun onStderr(data: ByteArray) {
-            emulator.write(data)
-            frame++
+        override suspend fun onStderr(data: ByteArray) {
+            enqueueOutput(data)
         }
 
         override fun onExitStatus(status: Int) {
@@ -476,7 +522,10 @@ class TerminalController(
         override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
             val req = AuthPromptRequest(prompt)
             authPrompt = req
-            return req.deferred.await()
+            // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
+            val r = kotlinx.coroutines.withTimeoutOrNull(PROMPT_TIMEOUT_MS) { req.deferred.await() }
+            if (authPrompt === req && r == null) authPrompt = null
+            return r
         }
 
         override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
@@ -491,19 +540,39 @@ class TerminalController(
                 // 改为弹窗让用户核对新旧指纹后决定。
                 val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                 hostKeyPrompt = req
-                return runBlockingAwait(req.deferred)
+                return awaitHostKeyAnswer(req)
             }
             // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
             if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
             // TOFU：首次连接由用户确认
             val req = HostKeyRequest(hostKey)
             hostKeyPrompt = req
-            return runBlockingAwait(req.deferred)
+            return awaitHostKeyAnswer(req)
         }
     }
 
+    /** 等待主机密钥确认并兜底清弹窗状态（正常应答已被 respondToHostKey 清过，超时按拒绝）。 */
+    private fun awaitHostKeyAnswer(req: HostKeyRequest): Boolean {
+        val r = runBlockingAwait(req.deferred)
+        if (hostKeyPrompt === req) hostKeyPrompt = null
+        return r
+    }
+
     private fun runBlockingAwait(d: CompletableDeferred<Boolean>): Boolean =
-        kotlinx.coroutines.runBlocking { d.await() }
+        kotlinx.coroutines.runBlocking {
+            // 与 onPrompt 同理：超时按拒绝处理，防止连接线程永久阻塞
+            kotlinx.coroutines.withTimeoutOrNull(PROMPT_TIMEOUT_MS) { d.await() } ?: false
+        }
+
+    /** reader 协程投递输出：队列满则挂起施加背压（TCP 窗口收敛），不丢字节。 */
+    private suspend fun enqueueOutput(data: ByteArray) {
+        if (destroyed) return
+        try {
+            outputQueue.send(data)
+        } catch (_: ClosedSendChannelException) {
+            // destroy() 关闭队列后 send 抛 ClosedSendChannelException：会话已死，丢弃
+        }
+    }
 
     fun respondToPrompt(answers: List<String>?) {
         authPrompt?.let { req ->
@@ -562,6 +631,19 @@ class TerminalController(
         moshSession = null
         session?.close()
         session = null
+    }
+
+    /**
+     * 销毁控制器（从会话列表移除时调用）：关闭连接、关闭输出队列并取消协程
+     * 作用域，回收延迟任务（稳定期重置/主题注入/重连退避）占用的资源。
+     * 与 [close] 的区别：close 保留重入能力（scope 存活，可 reconnect()），
+     * destroy 后控制器不可再用。
+     */
+    fun destroy() {
+        close()
+        destroyed = true
+        outputQueue.close()
+        scope.cancel()
     }
 
     fun isConnected(): Boolean = status == ConnStatus.CONNECTED || status == ConnStatus.AUTH
