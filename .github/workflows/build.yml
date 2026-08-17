@@ -157,10 +157,13 @@ jobs:
 
       - name: Start test sshd
         if: matrix.platform == 'Linux'
-        # Ubuntu 的 sshd 需要特权分离目录 /run/sshd（macOS 上不需要）
+        # Ubuntu 需要特权分离目录 /run/sshd（root 创建一次）；
+        # sshd 必须以非 root 运行：root sshd 会拒绝锁定账号（GitHub runner
+        # 用户无密码被锁），且 root 属主的 authorized_keys 对非 root 认证
+        # 用户不可见——本地 macOS 也是非 root 跑，行为一致
         run: |
           sudo mkdir -p /run/sshd
-          sudo bash scripts/test-sshd.sh
+          bash scripts/test-sshd.sh
 
       - name: Run desktop tests
         if: matrix.platform == 'Linux'
@@ -169,7 +172,15 @@ jobs:
 
       - name: Package (${{ matrix.platform }})
         if: github.event_name != 'pull_request'
-        run: ./gradlew :composeApp:${{ matrix.task }}
+        # Windows 必须用 gradlew.bat：PowerShell 执行无扩展名 ./gradlew 会静默
+        # 失败（exit 0 但任务未运行，产物缺失）；统一用 bash 分支执行
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "Windows" ]; then
+            ./gradlew.bat :composeApp:${{ matrix.task }}
+          else
+            ./gradlew :composeApp:${{ matrix.task }}
+          fi
 
       - name: Upload artifact
         if: github.event_name != 'pull_request'

@@ -39,6 +39,12 @@ elif [ -x /usr/lib/openssh/sftp-server ]; then
 fi
 echo "Subsystem sftp $SFTP_SERVER" >> "$DIR/sshd_config"
 
+# Ubuntu 的 sshd 需要特权分离目录 /run/sshd（root 可写时自动创建；
+# macOS 本地非 root 运行时跳过，不影响）
+if [ ! -d /run/sshd ] && [ -w / ]; then
+  mkdir -p /run/sshd
+fi
+
 echo "启动 sshd 于 127.0.0.1:$PORT（日志: $DIR/sshd.log）"
 /usr/sbin/sshd -f "$DIR/sshd_config" -E "$DIR/sshd.log"
 sleep 0.5
