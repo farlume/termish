@@ -4,7 +4,7 @@
 > Mosh + SSH mobile terminal for your phone — sessions that survive roaming,
 > the pocket entry point to any TUI agent.
 
-[English](README.md) · [🌐 官网 termish.dev](https://termish.dev)
+[English](README.md) 丨 [🌐 官网 termish.dev](https://termish.dev)
 
 [![官网](https://img.shields.io/badge/官网-termish.dev-0ea5e9?style=flat&logo=globe&logoColor=white)](https://termish.dev)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
