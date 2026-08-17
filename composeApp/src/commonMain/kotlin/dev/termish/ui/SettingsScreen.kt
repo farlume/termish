@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -47,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -342,7 +344,10 @@ private fun SettingsSliderItem(
     valueRange: ClosedFloatingPointRange<Float>,
     enabled: Boolean = true,
 ) {
-    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
+    // top 14dp 与其他行一致；bottom 7dp 补偿 Slider 内部 thumb 下方空间
+    // （thumb 18dp 在 32dp 内居中，下缘距 Slider 底约 7dp）——
+    // 视觉上 thumb 下缘到下一行的空白与其他行文本底到下一行一致
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 7.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 title,
@@ -356,12 +361,15 @@ private fun SettingsSliderItem(
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 0.5f else 0.3f),
             )
         }
-        // 圆头细轨滑杆（默认竖条 thumb 在列表里太突兀）
+        // 圆头细轨滑杆（默认竖条 thumb 在列表里太突兀）；
+        // height(32.dp)：默认 48dp 触摸目标让行高 ~96dp，远超其他行——
+        // 设置页滑杆压缩高度与 OptionItem 行高接近（仍可拖动）
         Slider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
             enabled = enabled,
+            modifier = Modifier.fillMaxWidth().requiredHeight(32.dp),
             thumb = {
                 Box(
                     Modifier.size(18.dp).clip(CircleShape).background(
@@ -387,8 +395,10 @@ private fun SettingsSliderItem(
 /** 开关型设置行。 */
 @Composable
 private fun SettingsSwitchItem(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    // vertical 8dp：行高 = Switch 32dp + 16 = 48dp，与 OptionItem（文本 20 + 28）一致——
+    // 否则 Switch 行距比其他行大 12dp（用户反馈上下间距偏大）
     Row(
-        Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(horizontal = 16.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().clickable { onCheckedChange(!checked) }.padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f), modifier = Modifier.weight(1f))
