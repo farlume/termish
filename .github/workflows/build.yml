@@ -34,7 +34,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # self-hosted（NAS）已预装 JDK17（.env 的 JAVA_HOME），跳过下载避免网络超时
       - uses: actions/setup-java@v4
+        if: runner.environment == 'github-hosted'
         with:
           distribution: temurin
           java-version: "17"
@@ -135,7 +137,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # self-hosted（NAS）已预装 JDK17，跳过下载避免网络超时
       - uses: actions/setup-java@v4
+        if: runner.environment == 'github-hosted'
         with:
           distribution: temurin
           java-version: "17"
@@ -203,7 +207,8 @@ jobs:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [android, desktop]
-    runs-on: ubuntu-latest
+    # 也走自托管（NAS 有 gh CLI，GH_TOKEN 由 Actions 注入，无需本地登录）
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 30
     permissions:
       contents: write
