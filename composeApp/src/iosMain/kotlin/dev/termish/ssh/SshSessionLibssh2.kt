@@ -69,14 +69,26 @@ import libssh2.libssh2_userauth_keyboard_interactive_ex
 import libssh2.libssh2_userauth_password_ex
 import libssh2.libssh2_userauth_publickey_frommemory
 import platform.posix.IPPROTO_TCP
+import platform.posix.POLLERR
+import platform.posix.POLLHUP
+import platform.posix.POLLOUT
 import platform.posix.SOCK_STREAM
+import platform.posix.EINPROGRESS
+import platform.posix.EISCONN
+import platform.posix.ETIMEDOUT
+import platform.posix.F_GETFL
+import platform.posix.F_SETFL
+import platform.posix.O_NONBLOCK
 import platform.posix.close
 import platform.posix.connect
 import platform.posix.errno
+import platform.posix.fcntl
 import platform.posix.getaddrinfo
 import platform.posix.freeaddrinfo
 import platform.posix.gai_strerror
 import platform.posix.malloc
+import platform.posix.poll
+import platform.posix.pollfd
 import platform.posix.socket
 import platform.posix.usleep
 import platform.posix.addrinfo
@@ -588,6 +600,10 @@ class SshSessionLibssh2(
         var fd = -1
         var cur = res.value
         var lastErr = 0
+        var flags = 0
+        // 连接超时：与 sshj 的 setConnectTimeout 对齐（黑洞地址/防火墙丢包时快速失败，
+        // 而不是依赖内核 TCP 重试（macOS/iOS 上可达 60s+，UI 表现为一直转圈））
+        val timeoutMs = connection.connectTimeoutMillis.toInt()
         while (cur != null) {
             val s = socket(cur.pointed.ai_family, cur.pointed.ai_socktype, cur.pointed.ai_protocol)
             if (s < 0) {
@@ -595,16 +611,52 @@ class SshSessionLibssh2(
                 cur = cur.pointed.ai_next
                 continue
             }
-            if (connect(s, cur.pointed.ai_addr, cur.pointed.ai_addrlen) == 0) {
-                fd = s
+            // 非阻塞 connect：立即返回 EINPROGRESS，用 poll 等待可写 + 超时
+            flags = fcntl(s, F_GETFL, 0)
+            fcntl(s, F_SETFL, flags or O_NONBLOCK)
+            val rc = connect(s, cur.pointed.ai_addr, cur.pointed.ai_addrlen)
+            if (rc == 0) {
+                fd = s // 立即连上（回环/本机场景）
                 break
             }
-            lastErr = errno
+            if (errno != EINPROGRESS) {
+                lastErr = errno
+                close(s)
+                cur = cur.pointed.ai_next
+                continue
+            }
+            val pfd = alloc<pollfd>()
+            pfd.fd = s
+            pfd.events = POLLOUT.toShort()
+            val prc = poll(pfd.ptr, 1u, timeoutMs)
+            if (prc > 0 && (pfd.revents.toInt() and (POLLOUT or POLLERR or POLLHUP)) != 0) {
+                // poll 就绪后二次 connect 判定结果：0 或 EISCONN 即连接成功
+                // （POSIX 标准技巧，避免 getsockopt SO_ERROR 的跨平台类型负担）
+                val rc2 = connect(s, cur.pointed.ai_addr, cur.pointed.ai_addrlen)
+                if (rc2 == 0 || errno == EISCONN) {
+                    fd = s
+                    break
+                }
+                lastErr = errno
+            } else if (prc == 0) {
+                lastErr = ETIMEDOUT
+            } else {
+                lastErr = errno
+            }
             close(s)
             cur = cur.pointed.ai_next
         }
         freeaddrinfo(res.value)
-        if (fd < 0) throw SshException("无法连接 $host:$port (errno $lastErr)")
+        if (fd < 0) {
+            val msg = if (lastErr == ETIMEDOUT) {
+                "连接超时（${timeoutMs / 1000}s 无响应）"
+            } else {
+                "无法连接 $host:$port (errno $lastErr)"
+            }
+            throw SshException(msg)
+        }
+        // 恢复阻塞模式：libssh2 后续读写依赖阻塞 socket
+        fcntl(fd, F_SETFL, flags)
         fd
     }
 }

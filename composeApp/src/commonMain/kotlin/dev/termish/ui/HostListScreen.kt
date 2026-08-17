@@ -86,18 +86,22 @@ sealed interface HostSessionItem {
     val hostId: String
     val isActive: Boolean
     val isConnecting: Boolean
+    /** 真正已连上（CONNECTED）：连接中不算，首页统计与标签据此三态显示。 */
+    val isConnected: Boolean
 
     data class Terminal(val controller: TerminalController) : HostSessionItem {
         override val hostId: String get() = controller.host.id
         override val isActive: Boolean get() = isActiveStatus(controller.status)
         override val isConnecting: Boolean
             get() = controller.status == ConnStatus.CONNECTING || controller.status == ConnStatus.AUTH
+        override val isConnected: Boolean get() = controller.status == ConnStatus.CONNECTED
     }
 
     data class Sftp(val host: Host, val session: SftpSession) : HostSessionItem {
         override val hostId: String get() = host.id
         override val isActive: Boolean get() = true
         override val isConnecting: Boolean get() = false
+        override val isConnected: Boolean get() = true
     }
 }
 
@@ -363,9 +367,11 @@ private fun HostCard(
     val connecting = sessions.any { it.isConnecting }
     // 第一行：alias（名称）优先，为空时回退主机地址
     val title = host.name.ifBlank { host.hostname }
-    val activeCount = sessions.count { it.isActive }
-    val disconnectedCount = sessions.size - activeCount
-    // 有会话：统计文字分段着色（已连接绿色、已断开灰色）；无会话显示连接详情
+    // 三态统计：已连接（绿）/ 连接中（橙）/ 已断开（灰）——连接中不再算作已连接
+    val connectedCount = sessions.count { it.isConnected }
+    val connectingCount = sessions.count { it.isConnecting }
+    val disconnectedCount = sessions.size - connectedCount - connectingCount
+    // 有会话：统计文字分段着色；无会话显示连接详情
     val sessionStats = sessions.isNotEmpty()
     val detail = if (!sessionStats) {
         val mode = if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh
@@ -383,13 +389,19 @@ private fun HostCard(
     }
     val statsText = if (sessionStats) {
         buildAnnotatedString {
-            if (activeCount > 0) {
+            if (connectedCount > 0) {
                 withStyle(SpanStyle(color = Color(0xFF34C759))) {
-                    append("$activeCount ${s.hostsConnected}")
+                    append("$connectedCount ${s.hostsConnected}")
+                }
+            }
+            if (connectingCount > 0) {
+                if (connectedCount > 0) append(", ")
+                withStyle(SpanStyle(color = Color(0xFFFFA726))) {
+                    append("$connectingCount ${s.connStatusConnecting}")
                 }
             }
             if (disconnectedCount > 0) {
-                if (activeCount > 0) append(", ")
+                if (connectedCount > 0 || connectingCount > 0) append(", ")
                 withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
                     append("$disconnectedCount ${s.connStatusClosed}")
                 }
@@ -546,8 +558,23 @@ private fun SessionCountMenu(
             )
             HorizontalDivider()
             sessions.forEach { item ->
-                val statusLabel = if (item.isActive) s.hostsActive else s.connStatusClosed
-                val statusColor = if (item.isActive) Color(0xFF34C759) else Color(0xFF9E9E9E)
+                // 三态标签：已连接绿 / 连接中橙 / 已断开灰（Sftp 会话恒为活跃）
+                val statusLabel = when (item) {
+                    is HostSessionItem.Terminal -> when (item.controller.status) {
+                        ConnStatus.CONNECTED -> s.hostsActive
+                        ConnStatus.CONNECTING, ConnStatus.AUTH -> s.connStatusConnecting
+                        else -> s.connStatusClosed
+                    }
+                    is HostSessionItem.Sftp -> s.hostsActive
+                }
+                val statusColor = when (item) {
+                    is HostSessionItem.Terminal -> when (item.controller.status) {
+                        ConnStatus.CONNECTED -> Color(0xFF34C759)
+                        ConnStatus.CONNECTING, ConnStatus.AUTH -> Color(0xFFFFA726)
+                        else -> Color(0xFF9E9E9E)
+                    }
+                    is HostSessionItem.Sftp -> Color(0xFF34C759)
+                }
                 when (item) {
                     is HostSessionItem.Terminal -> DropdownMenuItem(
                         text = {
