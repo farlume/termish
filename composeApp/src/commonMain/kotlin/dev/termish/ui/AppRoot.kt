@@ -318,10 +318,12 @@ fun AppRoot(repository: HostRepository) {
                                     onAdd = { screen = Screen.Edit(null) },
                                     onEdit = { screen = Screen.Edit(it.id) },
                                     onConnect = { host ->
-                                        // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建
+                                        // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建；
+                                        // 但配置/凭据已变更的旧会话不复用（用当前配置新建）
                                         val connecting = sessionManager.sessions.firstOrNull {
                                             it.host.id == host.id &&
-                                                (it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH)
+                                                (it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) &&
+                                                it.credentialKey == sessionManager.signatureFor(host)
                                         }
                                         if (connecting != null) {
                                             currentTab = SessionTab.Terminal(connecting)
@@ -347,9 +349,18 @@ fun AppRoot(repository: HostRepository) {
                                             .firstOrNull { it.host.id == host.id }
                                             ?.let { sessionManager.disconnect(it) }
                                     },
-                                    onOpenSession = {
-                                        currentTab = SessionTab.Terminal(it)
-                                        screen = Screen.Terminal(it.host.id)
+                                    onOpenSession = { controller ->
+                                        // 卡片点击 = 用当前配置连这台主机：配置/凭据已变更的旧会话不复用，
+                                        // 用当前配置新建（旧会话保留在连接页，可手动关闭/重入）
+                                        if (controller.credentialKey != sessionManager.signatureFor(controller.host)) {
+                                            val fresh = sessionManager.open(controller.host, settings.autoReconnect) {
+                                                hosts = repository.listHosts()
+                                            }
+                                            pendingNavigate = fresh
+                                        } else {
+                                            currentTab = SessionTab.Terminal(controller)
+                                            screen = Screen.Terminal(controller.host.id)
+                                        }
                                     },
                                     onOpenSftp = { host, session ->
                                         currentTab = SessionTab.Sftp(host, session)

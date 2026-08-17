@@ -2,12 +2,15 @@ package dev.termish.ui
 
 import com.russhwolf.settings.PropertiesSettings
 import dev.termish.data.Host
+import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
+import dev.termish.data.ConnectionMode
 import java.util.Properties
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -90,5 +93,27 @@ class SessionManagerTest {
 
         assertTrue(m.sessions.isEmpty())
         assertTrue(r.loadRecentSessionHostIds().isEmpty())
+    }
+
+    @Test
+    fun signatureForChangesWhenConfigChanges() {
+        val m = SessionManager(repo())
+        val h = host("a")
+        val base = m.signatureFor(h)
+
+        // 连接参数任一变化 → 签名变化（旧会话应判为过期）
+        assertNotEquals(base, m.signatureFor(h.copy(hostname = "other.example.com")))
+        assertNotEquals(base, m.signatureFor(h.copy(username = "other")))
+        assertNotEquals(base, m.signatureFor(h.copy(port = 2222)))
+        assertNotEquals(base, m.signatureFor(h.copy(authMethod = HostAuthMethod.PRIVATE_KEY)))
+        assertNotEquals(base, m.signatureFor(h.copy(startupCommand = "tmux new -A")))
+        assertNotEquals(base, m.signatureFor(h.copy(connectionMode = ConnectionMode.MOSH)))
+    }
+
+    @Test
+    fun signatureForIsDeterministic() {
+        val m = SessionManager(repo())
+        val h = host("a")
+        assertEquals(m.signatureFor(h), m.signatureFor(h))
     }
 }

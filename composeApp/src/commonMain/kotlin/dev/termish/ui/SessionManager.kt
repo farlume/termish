@@ -107,6 +107,15 @@ class SessionManager(private val repository: HostRepository) {
         persist()
     }
 
+    /**
+     * 当前主机配置 + 已存凭据的签名。与 [TerminalController.credentialKey] 比对：
+     * 不一致即主机配置/凭据已变更——旧会话不复用，应新建（旧会话保留可手动关闭）。
+     */
+    fun signatureFor(host: Host): String {
+        val (pw, key) = resolveCredentials(host)
+        return credentialSignature(host, pw, key)
+    }
+
     /** 登记 SFTP 会话（连接成功后由调用方加入）。 */
     fun addSftp(host: Host, session: SftpSession) {
         sftpSessions.add(SftpSessionEntry(host, session))
