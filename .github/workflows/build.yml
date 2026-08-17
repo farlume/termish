@@ -106,8 +106,8 @@ jobs:
   # ---------------------------------------------------------------------------
   desktop:
     name: Desktop (${{ matrix.platform }})
-    # PR 只需 Linux 单测；macOS/Windows 打包仅在 main/tag/手动触发
-    if: github.event_name != 'pull_request' || matrix.platform == 'Linux'
+    # 注意：job 级 if 不可用 matrix context（GitHub 限制），PR 只跑 Linux 的
+    # 控制下沉到步骤级：非 Linux 平台在 PR 下跑完 setup 即无后续动作
     strategy:
       fail-fast: false
       matrix:
@@ -138,7 +138,7 @@ jobs:
 
       # jpackage 打 MSI 需要 WiX Toolset，GitHub Windows runner 未预装
       - name: Install WiX Toolset
-        if: matrix.platform == 'Windows'
+        if: matrix.platform == 'Windows' && github.event_name != 'pull_request'
         run: choco install wixtoolset --yes --no-progress
 
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
