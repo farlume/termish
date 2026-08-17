@@ -68,6 +68,13 @@ fun SftpHostPickerOverlay(
                 )
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            // 分组标题（与首页「我的主机」同款样式，左距对齐卡片 8dp）
+            Text(
+                s.sftpSectionTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
+            )
             LazyColumn(Modifier.fillMaxSize()) {
                 items(hosts, key = { it.id }) { host ->
                     SftpHostRow(host = host, onClick = { onSelect(host) })

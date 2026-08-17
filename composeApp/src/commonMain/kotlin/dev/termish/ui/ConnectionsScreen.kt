@@ -66,6 +66,13 @@ fun ConnectionsScreen(
                     placeholder = { Text(s.connSearch) },
                     singleLine = true,
                 )
+                // 分组标题（与首页「我的主机」同款样式，左距对齐卡片 8dp）
+                Text(
+                    s.connSectionTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
+                )
             }
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

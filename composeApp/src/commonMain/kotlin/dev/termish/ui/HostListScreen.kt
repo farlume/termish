@@ -97,11 +97,12 @@ sealed interface HostSessionItem {
         override val isConnected: Boolean get() = controller.status == ConnStatus.CONNECTED
     }
 
-    data class Sftp(val host: Host, val session: SftpSession) : HostSessionItem {
+    data class Sftp(val host: Host, val session: SftpSession?) : HostSessionItem {
         override val hostId: String get() = host.id
-        override val isActive: Boolean get() = true
+        /** session=null 是进程重启后恢复的未连接条目：灰色断开态。 */
+        override val isActive: Boolean get() = session != null
         override val isConnecting: Boolean get() = false
-        override val isConnected: Boolean get() = true
+        override val isConnected: Boolean get() = session != null
     }
 }
 
@@ -121,7 +122,7 @@ fun HostListScreen(
     onDisconnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
     onOpenSession: (TerminalController) -> Unit,
-    onOpenSftp: (Host, SftpSession) -> Unit,
+    onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: (Host) -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -202,12 +203,12 @@ fun HostListScreen(
                 placeholder = { Text(s.hostsSearch) },
                 singleLine = true,
             )
-            // 分组标题（与设置页 SettingsGroup 同款样式）
+            // 分组标题（与设置页 SettingsGroup 同款样式；左距对齐下方卡片的 8dp）
             Text(
                 s.hostsSectionTitle,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp),
+                modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
             )
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -366,7 +367,7 @@ private fun HostCard(
     onLongClick: () -> Unit,
     onNewSession: () -> Unit,
     onOpenSession: (TerminalController) -> Unit,
-    onOpenSftp: (Host, SftpSession) -> Unit,
+    onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: () -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -531,7 +532,7 @@ private fun SessionCountMenu(
     sessions: List<HostSessionItem>,
     onConnect: () -> Unit,
     onOpenTerminal: (TerminalController) -> Unit,
-    onOpenSftp: (Host, SftpSession) -> Unit,
+    onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAll: () -> Unit,
 ) {
     val s = LocalAppStrings.current
