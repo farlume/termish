@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -56,10 +57,12 @@ import org.jetbrains.compose.resources.painterResource
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
-// ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 待仓库公开后再加回） ----
+// ---- 关于区外链（官网 / 联系邮箱 / 支付宝收款；文档/GitHub 待仓库公开后再加回） ----
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
 private const val CONTACT_EMAIL = "ttermish@gmail.com"
+/** 支付宝收款码链接：Android/iOS 上 qr.alipay.com 为 universal link，直接唤起支付宝 App。 */
+private const val ALIPAY_URL = "https://qr.alipay.com/fkx12790skh105nviquzaea"
 
 private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
     ThemeMode.DARK -> s.settingsThemeDark
@@ -95,7 +98,7 @@ fun SettingsScreen(
     var osc52Clipboard by remember { mutableStateOf(settings.osc52Clipboard) }
     var language by remember { mutableStateOf(settings.language) }
 
-    var showDonateDialog by remember { mutableStateOf(false) }
+    var showSupportDialog by remember { mutableStateOf(false) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
@@ -173,7 +176,7 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsOptionItem(s.settingsDonate, "Alipay") { showDonateDialog = true }
+                SettingsOptionItem(s.settingsSupport, "Alipay") { showSupportDialog = true }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -198,8 +201,8 @@ fun SettingsScreen(
             onDismiss = { showTerminalThemeDialog = false },
         )
     }
-    if (showDonateDialog) {
-        DonateDialog(onDismiss = { showDonateDialog = false })
+    if (showSupportDialog) {
+        SupportDialog(onDismiss = { showSupportDialog = false })
     }
     if (showLanguageDialog) {
         val codes = listOf("", "zh", "en")
@@ -218,22 +221,37 @@ fun SettingsScreen(
     }
 }
 
-/** 打赏弹窗：展示支付宝收款码（图片来自 composeResources/drawable/alipay_qr.jpg）。 */
+/** 支持作者弹窗：收款码图（桌面/无支付宝环境扫码兜底）+ 主按钮直接唤起支付宝。 */
 @Composable
-private fun DonateDialog(onDismiss: () -> Unit) {
+private fun SupportDialog(onDismiss: () -> Unit) {
     val s = LocalAppStrings.current
+    val uriHandler = LocalUriHandler.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(s.settingsDonate) },
+        title = { Text(s.settingsSupport) },
         text = {
-            Image(
-                painterResource(Res.drawable.alipay_qr),
-                contentDescription = s.settingsDonate,
-                modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp).clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Fit,
-            )
+            Column {
+                Image(
+                    painterResource(Res.drawable.alipay_qr),
+                    contentDescription = s.settingsSupport,
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Fit,
+                )
+                Text(
+                    s.settingsSupportHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(s.settingsClose) } },
+        confirmButton = {
+            Button(onClick = {
+                onDismiss()
+                uriHandler.openUri(ALIPAY_URL)
+            }) { Text(s.settingsOpenAlipay) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(s.settingsClose) } },
     )
 }
 

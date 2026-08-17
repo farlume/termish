@@ -188,7 +188,7 @@ never appear. Termish's input pipeline is designed around composition from day o
   passphrase asked once per connection, never persisted) & keyboard-interactive
   auth, TOFU host-key verification
 - **Bilingual UI** — Chinese / English / follow system, switchable in Settings
-- **About section in Settings** — version, website, contact email, Alipay donate QR (Termius-style bottom placement)
+- **About section in Settings** — version, website, contact email, "Support the developer" with Alipay QR + one-tap Alipay deep link (Termius-style bottom placement)
 - Secrets in platform stores: **Android Keystore (AES-GCM) / iOS Keychain**
 - Design system: zinc neutrals + emerald accent, JetBrains Mono titles,
   dark & light themes; terminal palettes (Default / Solarized / Dracula / Light)
