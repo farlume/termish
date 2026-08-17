@@ -40,6 +40,11 @@ data class AppStrings(
     val hostsConnectFailed: String,
     /** SFTP 连接失败（带原因）。 */
     val sftpConnectFailed: (String) -> String,
+    /** SFTP 断线 banner：连接已断开（红色，同终端错误样式）。 */
+    val sftpDisconnected: String,
+    /** SFTP 断线 banner：重新连接中（琥珀色，同终端重连样式）。 */
+    val sftpReconnecting: String,
+    val sftpReconnect: String,
     // SFTP
     val sftpNewTitle: String,
     val sftpUser: String,
@@ -132,8 +137,10 @@ data class AppStrings(
     val settingsLanguageSystem: String,
     val languageZh: String,
     val languageEn: String,
-    // 主机列表分组标题（首页）
+    // 分组标题（首页主机列表 / 连接页 / SFTP 选主机）
     val hostsSectionTitle: String,
+    val connSectionTitle: String,
+    val sftpSectionTitle: String,
     // 设置页「关于」区（版本/官网/联系/支持作者入口）
     val settingsGroupAbout: String,
     val settingsVersion: String,
@@ -204,6 +211,9 @@ private val EnStrings = AppStrings(
     hostsConnectSftp = "Connect via SFTP",
     hostsConnectFailed = "Connection failed",
     sftpConnectFailed = { "SFTP connection failed: $it" },
+    sftpDisconnected = "Connection lost",
+    sftpReconnecting = "Reconnecting…",
+    sftpReconnect = "Reconnect",
     sftpNewTitle = "New SFTP connection",
     sftpUser = "User",
     sftpUpload = "Upload",
@@ -290,6 +300,8 @@ private val EnStrings = AppStrings(
     languageZh = "中文",
     languageEn = "English",
     hostsSectionTitle = "My hosts",
+    connSectionTitle = "Sessions",
+    sftpSectionTitle = "Select a host",
     settingsGroupAbout = "About",
     settingsVersion = "Version",
     settingsWebsite = "Website",
@@ -346,6 +358,9 @@ private val ZhStrings = AppStrings(
     hostsConnectSftp = "连接 SFTP",
     hostsConnectFailed = "连接失败",
     sftpConnectFailed = { "SFTP 连接失败：$it" },
+    sftpDisconnected = "连接已断开",
+    sftpReconnecting = "重新连接中…",
+    sftpReconnect = "重新连接",
     sftpNewTitle = "新建 SFTP 连接",
     sftpUser = "User",
     sftpUpload = "上传",
@@ -432,6 +447,8 @@ private val ZhStrings = AppStrings(
     languageZh = "中文",
     languageEn = "English",
     hostsSectionTitle = "我的主机",
+    connSectionTitle = "会话",
+    sftpSectionTitle = "选择主机",
     settingsGroupAbout = "关于",
     settingsVersion = "版本",
     settingsWebsite = "官网",

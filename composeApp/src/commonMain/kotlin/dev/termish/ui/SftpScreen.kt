@@ -101,6 +101,10 @@ class SftpUiState {
     var path by mutableStateOf("")
     var entries by mutableStateOf<List<SftpEntry>?>(null)
     var loadError by mutableStateOf<String?>(null)
+    /** 断线重连中：顶部显示琥珀色「重新连接中…」banner（同终端重连样式）。 */
+    var reconnecting by mutableStateOf(false)
+    /** 断线自动重连是否已尝试：跨重组保留，整个会话生命周期只自动一次（防循环）。 */
+    var autoReconnectAttempted by mutableStateOf(false)
     var sort by mutableStateOf(SftpSort.NAME)
     var showHidden by mutableStateOf(false)
     var searching by mutableStateOf(false)
@@ -147,9 +151,11 @@ internal fun downloadDir(session: SftpSession, remotePath: String, sink: Directo
 @Composable
 fun SftpContent(
     host: Host,
-    session: SftpSession,
+    session: SftpSession?,
     state: SftpUiState,
     onBack: () -> Unit,
+    /** 断线重连（由 AppRoot 重建会话并替换当前 tab）。 */
+    onReconnect: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -191,21 +197,44 @@ fun SftpContent(
     }
 
     suspend fun reload() {
+        // 重连中不碰旧 session：组合时 reload effect 与自动重连 effect 都会跑，
+        // 旧连接已死必然失败——跳过等重连完成的新组合（新 session 再 reload）。
+        if (state.reconnecting) return
+        val s = session ?: return // 进程重启恢复的条目：等自动重连重建后新组合再加载
         entries = null
         loadError = null
         try {
-            entries = withContext(ioDispatcher()) { session.list(path) }
+            entries = withContext(ioDispatcher()) { s.list(path) }
         } catch (e: Exception) {
             loadError = e.message
             entries = emptyList()
         }
     }
 
+    // 断线重连：上次浏览失败（连接已断）或进程重启恢复的条目（session=null）
+    // 时进入 tab 自动重连一次；之后用户可点 banner 上的「重新连接」手动重试。
+    // 标记放 uiState：tab 重组（重连成功后替换 session）会重置 remember，
+    // 放 uiState 才能保证整个会话生命周期只自动重连一次，防循环。
+    LaunchedEffect(Unit) {
+        if ((loadError != null || session == null) && !state.autoReconnectAttempted) {
+            state.autoReconnectAttempted = true
+            state.reconnecting = true
+            onReconnect()
+        }
+    }
+
+    fun requestReconnect() {
+        if (state.reconnecting) return
+        state.reconnecting = true
+        onReconnect()
+    }
+
     val pickFile = rememberFilePicker { name, bytes ->
+        val sc = session ?: return@rememberFilePicker
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    session.upload(joinPath(path, name), bytes)
+                    sc.upload(joinPath(path, name), bytes)
                 }
                 snackbar.showSnackbar(s.sftpUploaded)
                 reload()
@@ -218,11 +247,12 @@ fun SftpContent(
     // 选择保存位置后流式下载；取消保存则完全不回调（不产生下载流量）
     val savePicker = rememberFileSaver { _, sink ->
         val target = pendingDownload ?: return@rememberFileSaver
+        val sc = session ?: return@rememberFileSaver
         val remotePath = joinPath(path, target.name)
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    session.download(remotePath) { chunk -> sink.write(chunk) }
+                    sc.download(remotePath) { chunk -> sink.write(chunk) }
                     sink.close()
                 }
                 snackbar.showSnackbar(s.sftpDownloaded)
@@ -249,10 +279,11 @@ fun SftpContent(
             // iOS 的 close 会弹导出面板，空目录也会弹
             return@rememberDirectorySaver
         }
+        val sc = session ?: return@rememberDirectorySaver
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    downloadDir(session, target, sink)
+                    downloadDir(sc, target, sink)
                 }
                 sink.close()
                 snackbar.showSnackbar(s.sftpDownloaded)
@@ -271,9 +302,10 @@ fun SftpContent(
     }
 
     // 首次进入（path 尚未初始化）：realpath 解析真实用户主目录（~），
-    // 失败回退 /home/{user}，再失败回退根目录；切回不重置
+    // 失败回退 /home/{user}，再失败回退根目录；切回不重置。
+    // session 为 null（进程重启恢复条目）时跳过：重连成功的新组合会再进这里。
     LaunchedEffect(Unit) {
-        if (state.path.isEmpty()) {
+        if (state.path.isEmpty() && session != null) {
             path = withContext(ioDispatcher()) {
                 val home = runCatching { session.home() }.getOrNull()?.let { raw ->
                     if (raw.length > 1) raw.trimEnd('/') else raw
@@ -322,6 +354,38 @@ fun SftpContent(
     // SFTP 是独立页面类型的 tab：主题随应用（浅色页面），不随终端主题
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize()) {
+            // 断线 banner：样式与终端页对齐（红色=断开 + 重连按钮 / 琥珀=重连中）
+            val bannerText = when {
+                state.reconnecting -> s.sftpReconnecting
+                loadError != null -> s.sftpDisconnected
+                else -> null
+            }
+            if (bannerText != null) {
+                val bannerColor = if (state.reconnecting) {
+                    androidx.compose.ui.graphics.Color(0xFFFFA726)
+                } else {
+                    androidx.compose.ui.graphics.Color(0xFFEF5350)
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(bannerColor.copy(alpha = 0.12f))
+                        .padding(start = 12.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        bannerText,
+                        color = bannerColor,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f).padding(vertical = 6.dp),
+                    )
+                    if (!state.reconnecting) {
+                        TextButton(onClick = { requestReconnect() }) {
+                            Text(s.sftpReconnect, color = bannerColor, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
             // 精简头部：无边框、小字体、图标用终端前景色（深色背景下可见）
             Row(
                 Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
@@ -566,15 +630,18 @@ fun SftpContent(
         NewFolderDialog(
             onConfirm = { name ->
                 newFolderDialog = false
+                val sc = session
+                if (sc != null) {
                 scope.launch {
                     try {
                         withContext(ioDispatcher()) {
-                            session.mkdir(joinPath(path, name))
+                            sc.mkdir(joinPath(path, name))
                         }
                         reload()
                     } catch (e: Exception) {
                         snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "mkdir"))
                     }
+                }
                 }
             },
             onDismiss = { newFolderDialog = false },

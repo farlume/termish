@@ -124,56 +124,68 @@ fun AppRoot(repository: HostRepository) {
     // 语言文案（提前声明供 connectSftp 等 lambda 使用）
     val appStrings = remember(settings.language) { appStringsFor(settings.language) }
 
+    /**
+     * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。
+     * 供首次连接与断线重连复用；失败由调用方处理（首次=Snackbar，重连=保持 banner）。
+     * 定义在 connectSftp 之前：局部函数不能前向引用。
+     */
+    fun establishSftp(host: Host, onEstablished: (SftpSession) -> Unit) {
+        val (pw, key) = resolveCredentials(host)
+        val callbacks = object : SshCallbacks {
+            override suspend fun onOutput(data: ByteArray) {}
+            override suspend fun onStderr(data: ByteArray) {}
+            override fun onExitStatus(status: Int) {}
+            override fun onClosed(reason: String?) {}
+            override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+                val req = AuthPromptRequest(prompt)
+                sftpAuth = req
+                return req.deferred.await()
+            }
+            override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                // 与终端连接同源：已授信指纹匹配自动通过，不重复弹窗
+                val known = repository.getHost(host.id)?.knownHostFingerprint
+                    ?: host.knownHostFingerprint
+                if (known != null) {
+                    if (known == hostKey.fingerprintSha256) return true
+                    // 指纹变更：弹窗让用户核对新旧指纹
+                    val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                    sftpHostKey = req
+                    val accepted = runBlocking { req.deferred.await() }
+                    if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                    return accepted
+                }
+                // 首次连接：设置关闭首次确认则直接信任
+                if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
+                val req = HostKeyRequest(hostKey)
+                sftpHostKey = req
+                val accepted = runBlocking { req.deferred.await() }
+                if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                return accepted
+            }
+        }
+        val conn = SshConnection(
+            host = host.hostname,
+            port = host.port,
+            username = host.username,
+            password = pw,
+            privateKeyPem = key,
+            keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
+        )
+        val session = createSftpSession(conn, callbacks)
+        onEstablished(session)
+    }
+
     // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）
     val connectSftp: (Host) -> Unit = { host ->
-        val (pw, key) = resolveCredentials(host)
         sftpPickerVisible = false
         scope.launch {
             try {
-                val callbacks = object : SshCallbacks {
-                    override suspend fun onOutput(data: ByteArray) {}
-                    override suspend fun onStderr(data: ByteArray) {}
-                    override fun onExitStatus(status: Int) {}
-                    override fun onClosed(reason: String?) {}
-                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-                        val req = AuthPromptRequest(prompt)
-                        sftpAuth = req
-                        return req.deferred.await()
-                    }
-                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-                        // 与终端连接同源：已授信指纹匹配自动通过，不重复弹窗
-                        val known = repository.getHost(host.id)?.knownHostFingerprint
-                            ?: host.knownHostFingerprint
-                        if (known != null) {
-                            if (known == hostKey.fingerprintSha256) return true
-                            // 指纹变更：弹窗让用户核对新旧指纹
-                            val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
-                            sftpHostKey = req
-                            val accepted = runBlocking { req.deferred.await() }
-                            if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
-                            return accepted
-                        }
-                        // 首次连接：设置关闭首次确认则直接信任
-                        if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
-                        val req = HostKeyRequest(hostKey)
-                        sftpHostKey = req
-                        val accepted = runBlocking { req.deferred.await() }
-                        if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
-                        return accepted
-                    }
+                establishSftp(host) { session ->
+                    val entry = sessionManager.addSftp(host, session)
+                    // 与 entry 共用同一 uiState：浏览路径变化能反映到持久化（退后台保存）
+                    currentTab = SessionTab.Sftp(host, session, entry.uiState)
+                    screen = Screen.Terminal(host.id)
                 }
-                val conn = SshConnection(
-                    host = host.hostname,
-                    port = host.port,
-                    username = host.username,
-                    password = pw,
-                    privateKeyPem = key,
-                    keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
-                )
-                val session = createSftpSession(conn, callbacks)
-                sessionManager.addSftp(host, session)
-                currentTab = SessionTab.Sftp(host, session)
-                screen = Screen.Terminal(host.id)
             } catch (e: Exception) {
                 snackbarHostState.showSnackbar(appStrings.sftpConnectFailed(e.message ?: ""))
             }
@@ -228,6 +240,8 @@ fun AppRoot(repository: HostRepository) {
                 }
             } else {
                 sessionManager.noteBackgrounded()
+                // 退后台即保存最新 SFTP 浏览路径：杀 App 重进后恢复到上次目录
+                sessionManager.persistNow()
             }
         }
         onDispose {
@@ -363,7 +377,9 @@ fun AppRoot(repository: HostRepository) {
                                         }
                                     },
                                     onOpenSftp = { host, session ->
-                                        currentTab = SessionTab.Sftp(host, session)
+                                        // 用 entry 的 uiState（若已存在）：重新进入不重置浏览状态/路径
+                                        val entry = sessionManager.sftpSessions.firstOrNull { it.host.id == host.id }
+                                        currentTab = SessionTab.Sftp(host, session, entry?.uiState ?: SftpUiState())
                                         screen = Screen.Terminal(host.id)
                                     },
                                     onCloseAllSessions = { host ->
@@ -389,7 +405,11 @@ fun AppRoot(repository: HostRepository) {
                                                 screen = Screen.Terminal(item.controller.host.id)
                                             }
                                             is HostSessionItem.Sftp -> {
-                                                currentTab = SessionTab.Sftp(item.host, item.session)
+                                                // 连接页重入：用 entry 的 uiState（浏览状态/路径保留）
+                                                val entry = sessionManager.sftpSessions.firstOrNull {
+                                                    it.host.id == item.host.id && it.session === item.session
+                                                }
+                                                currentTab = SessionTab.Sftp(item.host, item.session, entry?.uiState ?: SftpUiState())
                                                 screen = Screen.Terminal(item.host.id)
                                             }
                                         }
@@ -493,6 +513,28 @@ fun AppRoot(repository: HostRepository) {
                                 }
                             },
                             onOpenSftpPicker = { sftpPickerVisible = true },
+                            // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
+                            onReconnectSftp = { tab ->
+                                // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，
+                                // 避免多个 null-session 条目时错配
+                                val entry = sessionManager.sftpSessions.find {
+                                    it.host.id == tab.host.id && it.session === tab.session
+                                }
+                                scope.launch {
+                                    try {
+                                        establishSftp(tab.host) { newSession ->
+                                            entry?.let { sessionManager.reconnectSftp(it, newSession) }
+                                            currentTab = SessionTab.Sftp(tab.host, newSession, tab.uiState)
+                                            // 重连成功：清除重连中状态，SftpContent 继续用原路径浏览
+                                            tab.uiState.reconnecting = false
+                                        }
+                                    } catch (e: Exception) {
+                                        // 重连失败：保持 banner，用户可点按钮重试
+                                        tab.uiState.reconnecting = false
+                                        tab.uiState.loadError = e.message
+                                    }
+                                }
+                            },
                         )
                     }
                 }

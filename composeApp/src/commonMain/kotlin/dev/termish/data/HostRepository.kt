@@ -1,6 +1,7 @@
 package dev.termish.data
 
 import com.russhwolf.settings.Settings
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
@@ -96,6 +97,25 @@ class HostRepository(
 
     fun saveRecentSessionHostIds(ids: List<String>) {
         settings.putString(recentSessionsKey, json.encodeToString(ids))
+    }
+
+    /** 最近 SFTP 会话：主机 id + 浏览路径（v2 起带路径，进程重启后恢复到上次目录）。 */
+    @Serializable
+    data class RecentSftpEntry(val hostId: String, val path: String = "")
+
+    private val recentSftpKey = "termish.recent_sftp.v2"
+
+    fun loadRecentSftpEntries(): List<RecentSftpEntry> {
+        val raw = settings.getStringOrNull(recentSftpKey) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<RecentSftpEntry>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveRecentSftpEntries(entries: List<RecentSftpEntry>) {
+        settings.putString(recentSftpKey, json.encodeToString(entries))
     }
 
     /** 解析失败时把原始内容备份到独立 key（最多保留 3 份），避免静默丢数据。 */

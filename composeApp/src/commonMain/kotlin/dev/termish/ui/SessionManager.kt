@@ -3,16 +3,19 @@ package dev.termish.ui
 import androidx.compose.runtime.mutableStateListOf
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
+import dev.termish.data.HostRepository.RecentSftpEntry
 import dev.termish.ssh.SftpSession
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** SFTP 会话条目（与终端会话平级管理，跨页面存活）。 */
+/** SFTP 会话条目（与终端会话平级管理，跨页面存活）。
+ *  [session] 可空：进程重启后恢复的条目未连接（session=null），
+ *  进入 SFTP tab 时触发自动重连（见 SftpContent / AppRoot.onReconnectSftp）。 */
 data class SftpSessionEntry(
     val host: Host,
-    val session: SftpSession,
+    val session: SftpSession?,
     /** 浏览状态（路径/列表/排序等）：随条目存活，切 tab 不重置。 */
     val uiState: SftpUiState = SftpUiState(),
 )
@@ -57,7 +60,8 @@ class SessionManager(private val repository: HostRepository) {
             .forEach { it.reconnect() }
     }
 
-    /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。 */
+    /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。
+     *  终端与 SFTP 条目都恢复（SFTP 的 session=null，进 tab 自动重连）。 */
     fun restoreRecent(
         hosts: List<Host>,
         autoReconnect: Boolean,
@@ -73,11 +77,25 @@ class SessionManager(private val repository: HostRepository) {
                 sessions.add(it)
             }
         }
+        // SFTP：恢复为未连接条目（session=null），进 tab 时自动重连；
+        // 浏览路径从持久化恢复（进程重启后回到上次目录，而非 home）
+        if (sftpSessions.isEmpty()) {
+            repository.loadRecentSftpEntries().forEach { entry ->
+                val host = byId[entry.hostId] ?: return@forEach
+                sftpSessions.add(SftpSessionEntry(host, null, SftpUiState().also { it.path = entry.path }))
+            }
+        }
     }
 
     private fun persist() {
         repository.saveRecentSessionHostIds(sessions.map { it.host.id })
+        repository.saveRecentSftpEntries(
+            sftpSessions.map { RecentSftpEntry(it.host.id, it.uiState.path) }
+        )
     }
+
+    /** 供 AppRoot 退后台时调用：保存最新 SFTP 浏览路径（杀 App 后恢复到上次目录）。 */
+    fun persistNow() = persist()
 
     /** 打开主机：有活跃会话则复用，否则凭据解析后新建。 */
     fun open(
@@ -116,15 +134,33 @@ class SessionManager(private val repository: HostRepository) {
         return credentialSignature(host, pw, key)
     }
 
-    /** 登记 SFTP 会话（连接成功后由调用方加入）。 */
-    fun addSftp(host: Host, session: SftpSession) {
-        sftpSessions.add(SftpSessionEntry(host, session))
+    /** 登记 SFTP 会话（连接成功后由调用方加入）。返回条目：调用方建 tab 时用同一 uiState。 */
+    fun addSftp(host: Host, session: SftpSession): SftpSessionEntry {
+        val entry = SftpSessionEntry(host, session)
+        sftpSessions.add(entry)
+        persist()
+        return entry
+    }
+
+    /**
+     * SFTP 断线重连：替换条目中的 session（uiState 保留，浏览路径/列表不丢）。
+     * 旧 session 先 close 释放连接；重连失败由调用方负责提示。
+     */
+    fun reconnectSftp(entry: SftpSessionEntry, newSession: SftpSession) {
+        val idx = sftpSessions.indexOf(entry)
+        if (idx >= 0) {
+            try {
+                entry.session?.close()
+            } catch (_: Exception) {
+            }
+            sftpSessions[idx] = SftpSessionEntry(entry.host, newSession, entry.uiState)
+        }
     }
 
     /** 关闭并移除 SFTP 会话。 */
     fun closeSftp(entry: SftpSessionEntry) {
         try {
-            entry.session.close()
+            entry.session?.close()
         } catch (_: Exception) {
         }
         sftpSessions.remove(entry)

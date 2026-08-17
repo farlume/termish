@@ -101,10 +101,10 @@ sealed interface SessionTab {
 
     data class Sftp(
         val host: Host,
-        val session: SftpSession,
+        val session: SftpSession?,
         val uiState: SftpUiState = SftpUiState(),
     ) : SessionTab {
-        override val id: String get() = "sftp:${host.id}:${session.hashCode()}"
+        override val id: String get() = "sftp:${host.id}:${session?.hashCode() ?: "restored"}"
     }
 }
 
@@ -129,6 +129,8 @@ fun TerminalScreen(
     onAddSession: () -> Unit,
     onCloseTab: (SessionTab) -> Unit,
     onOpenSftpPicker: () -> Unit,
+    /** SFTP 断线重连：重建会话后替换 tab 中的 session（由 AppRoot 实现）。 */
+    onReconnectSftp: (SessionTab.Sftp) -> Unit = {},
 ) {
     val s = LocalAppStrings.current
     // 关闭 tab 前确认：x 太容易误触
@@ -161,6 +163,7 @@ fun TerminalScreen(
                 session = tab.session,
                 state = tab.uiState,
                 onBack = onBack,
+                onReconnect = { onReconnectSftp(tab) },
             )
         }
     }
