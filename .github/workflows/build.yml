@@ -214,22 +214,24 @@ jobs:
         run: |
           VER="${GITHUB_REF_NAME#v}"
           cd dist
-          for f in composeApp-*.apk composeApp-*.aab; do
-            [ -e "$f" ] || continue
-            mv "$f" "Termish-$VER-${f#composeApp-}"
+          # upload-artifact v4 多 path 会保留目录结构（apk/、bundle/），递归收集并统一重命名到顶层
+          for f in $(find . -type f \( -name "*.apk" -o -name "*.aab" \)); do
+            name=$(basename "$f" | sed "s/^composeApp-//")
+            mv "$f" "Termish-$VER-$name"
           done
+          rm -rf apk bundle
           ls -l
 
       - name: Generate SHA-256 checksums
         run: |
           cd dist
-          shasum -a 256 Termish-* > SHA256SUMS
+          shasum -a 256 * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
