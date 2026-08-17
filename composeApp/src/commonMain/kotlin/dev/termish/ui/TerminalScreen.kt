@@ -87,6 +87,7 @@ import dev.termish.ssh.SftpSession
 import dev.termish.ssh.AuthPrompt
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalTheme
+import dev.termish.util.hapticTick
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
@@ -263,6 +264,15 @@ private fun TerminalBody(
         }
     }
 
+    // 连接成功触感反馈（刚进入 CONNECTED 的那一次）
+    var prevStatus by remember { mutableStateOf(controller.status) }
+    LaunchedEffect(controller.status) {
+        if (controller.status == ConnStatus.CONNECTED && prevStatus != ConnStatus.CONNECTED) {
+            if (settings.hapticFeedback) hapticTick()
+        }
+        prevStatus = controller.status
+    }
+
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         // 会话主体：切换 tab 时按会话唯一 id 整体重组（输入框/局部状态独立）
         key(controller.sessionId) {
@@ -361,6 +371,7 @@ private fun TerminalBody(
                         onToggleAlt = { altActive = !altActive },
                         applicationCursorKeys = appCursorKeys,
                         onKey = { key ->
+                            if (settings.hapticFeedback) hapticTick()
                             controller.sendBytes(specialKeyBytes(key, appCursorKeys))
                             // 任何按键发出后消耗粘性修饰键，避免 CTRL 残留污染后续输入
                             // （残留会导致下个字母变成 Ctrl+D/C 等而意外退出会话）
@@ -368,6 +379,7 @@ private fun TerminalBody(
                             altActive = false
                         },
                         onToggleKeyboard = {
+                            if (settings.hapticFeedback) hapticTick()
                             if (imeVisible) keyboardController?.hide() else showKeyboard()
                         },
                         onPaste = {

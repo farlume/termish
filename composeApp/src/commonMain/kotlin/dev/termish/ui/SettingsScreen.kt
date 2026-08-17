@@ -105,6 +105,7 @@ fun SettingsScreen(
     var terminalType by remember { mutableStateOf(settings.terminalType) }
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
     var autoReconnect by remember { mutableStateOf(settings.autoReconnect) }
+    var keepalive by remember { mutableStateOf(settings.keepaliveSeconds.toFloat()) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
     var osc52Clipboard by remember { mutableStateOf(settings.osc52Clipboard) }
     var language by remember { mutableStateOf(settings.language) }
@@ -125,6 +126,7 @@ fun SettingsScreen(
             terminalType = terminalType,
             hapticFeedback = haptics,
             autoReconnect = autoReconnect,
+            keepaliveSeconds = keepalive.toInt(),
             verifyHostKeyOnFirstUse = verifyHostKey,
             osc52Clipboard = osc52Clipboard,
             language = language,
@@ -137,16 +139,21 @@ fun SettingsScreen(
         Column(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
         ) {
-            SettingsGroup(s.settingsGroupAppearance) {
+            // 通用组（原外观 + 原通用合并）：应用主题 / 语言 / 触感反馈
+            SettingsGroup(s.settingsGroupGeneral) {
                 SettingsOptionItem(s.settingsAppTheme, themeModeLabel(theme, s)) { showThemeDialog = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsLanguage, languageLabel(language, s)) { showLanguageDialog = true }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
+            }
+
+            SettingsGroup(s.settingsGroupTerminal) {
                 SettingsOptionItem(
                     s.settingsTerminalPalette,
                     TerminalThemes.ALL.getOrElse(terminalThemeIndex) { TerminalThemes.ALL[0] }.name,
                 ) { showTerminalPage = true }
-            }
-
-            SettingsGroup(s.settingsGroupTerminal) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsTerminalType, terminalType) {
                     showTerminalTypeDialog = true
                 }
@@ -167,18 +174,22 @@ fun SettingsScreen(
                     valueRange = 6f..32f,
                     enabled = targetCols < 1f,
                 )
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsSwitchItem(s.settingsOsc52Clipboard, osc52Clipboard) { osc52Clipboard = it; persist() }
             }
 
-            SettingsGroup(s.settingsGroupGeneral) {
-                SettingsOptionItem(s.settingsLanguage, languageLabel(language, s)) { showLanguageDialog = true }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
+            SettingsGroup(s.settingsGroupSession) {
+                SettingsSliderItem(
+                    title = s.settingsKeepalive,
+                    valueText = if (keepalive < 1f) s.settingsKeepaliveOff else "${keepalive.toInt()}s",
+                    value = keepalive,
+                    onValueChange = { keepalive = it; persist() },
+                    valueRange = 0f..300f,
+                )
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsAutoReconnect, autoReconnect) { autoReconnect = it; persist() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsVerifyHostKey, verifyHostKey) { verifyHostKey = it; persist() }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem(s.settingsOsc52Clipboard, osc52Clipboard) { osc52Clipboard = it; persist() }
             }
 
             // 关于：设置页底部固定生态位（业界惯例：Termius/Blink 等均在底部放
