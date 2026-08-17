@@ -1,6 +1,7 @@
 package dev.termish.notify
 
 import dev.termish.data.AppSettings
+import dev.termish.util.TermLog
 
 /**
  * 通知事件清单。每个事件有独立开关（设置页「通知」二级页可关），
@@ -42,10 +43,11 @@ object NotificationCenter {
         /** 动作按钮：非空时平台通知带「重新连接」动作（点击按 hostId 重连）。 */
         hostId: String? = null,
     ) {
-        if (foreground) return
+        if (foreground) { TermLog.d("notify") { "skip ${event.id}: foreground" }; return }
         val s = settingsProvider?.invoke() ?: return
-        if (!s.notificationEnabled) return
-        if (event.id in s.notificationDisabledEvents) return
+        if (!s.notificationEnabled) { TermLog.d("notify") { "skip ${event.id}: disabled" }; return }
+        if (event.id in s.notificationDisabledEvents) { TermLog.d("notify") { "skip ${event.id}: event off" }; return }
+        TermLog.i("notify") { "post ${event.id}: $body" }
         runCatching { showPlatformNotification(id, title, body, hostId) }
     }
 }

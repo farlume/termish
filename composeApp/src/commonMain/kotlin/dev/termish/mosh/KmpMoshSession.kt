@@ -86,7 +86,7 @@ class KmpMoshSession(
             try {
                 sendSocket.send(data)
             } catch (e: Exception) {
-                println("mosh UDP 发送失败: ${e.message}")
+                dev.termish.util.TermLog.w("mosh") { "UDP 发送失败: ${e.message}" }
                 SendResult.FAILED
             }
         },
@@ -135,7 +135,7 @@ class KmpMoshSession(
             } catch (e: Exception) {
                 if (active) {
                     active = false
-                    println("KmpMoshSession 会话异常: ${e.stackTraceToString()}")
+                    dev.termish.util.TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
                     onExit("mosh 会话异常：${e.message}")
                 }
             }

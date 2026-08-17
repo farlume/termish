@@ -386,10 +386,10 @@ internal class MoshTransport(
             }
         }
         if (verbose) {
-            println(
-                "[mosh] sent old=${inst.oldNum} new=${inst.newNum} ack=${inst.ackNum} " +
-                    "throwaway=${inst.throwawayNum} len=${diff.size} srtt=${srtt.toInt()} rto=${timeout()}",
-            )
+            dev.termish.util.TermLog.d("mosh") {
+                "sent old=${inst.oldNum} new=${inst.newNum} ack=${inst.ackNum} " +
+                    "throwaway=${inst.throwawayNum} len=${diff.size} srtt=${srtt.toInt()} rto=${timeout()}"
+            }
         }
         pendingDataAck = false
     }

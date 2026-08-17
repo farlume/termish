@@ -22,6 +22,7 @@ import dev.termish.term.TerminalEmulator
 import dev.termish.term.TerminalSelection
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalThemes
+import dev.termish.util.TermLog
 import dev.termish.util.ioDispatcher
 import dev.termish.util.NetworkChangeKind
 import kotlin.concurrent.Volatile
@@ -231,6 +232,7 @@ class TerminalController(
     )
 
     private fun doConnect() {
+        TermLog.i("ssh") { "connect start ${host.name} ${host.hostname}:${host.port} mode=${host.connectionMode} attempt=${reconnectAttempts}" }
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
@@ -250,6 +252,7 @@ class TerminalController(
                 }
                 // TOFU：记录主机指纹
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
+                TermLog.i("ssh") { "connected ${host.name} kex=${info.kexAlgorithm}" }
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
                 reconnectCount = 0
@@ -280,6 +283,7 @@ class TerminalController(
                 throw e // 协程取消不是连接失败：不置 ERROR、不停保活
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
+                    TermLog.e("ssh") { "connect failed ${host.name}: ${e.message}" }
                     status = ConnStatus.ERROR
                     errorMessage = e.message
                     // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
@@ -322,6 +326,7 @@ class TerminalController(
             // 引导同时探测远端系统：探测输出跟在 MOSH CONNECT 之后，
             // 不影响 parseMoshConnect，自动识别系统（用户无需手填）。
             val bootstrap = "$baseBootstrap; $SYSTEM_PROBE_COMMAND"
+            TermLog.i("mosh") { "bootstrap ${host.name}: $baseBootstrap" }
             val result = ssh.connectAndRun(bootstrap)
             result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
             val (moshPort, moshKey) = parseMoshConnect(result.output)
@@ -332,6 +337,7 @@ class TerminalController(
                         "mosh-server 引导失败：${result.output.trim().take(200)}"
                     },
                 )
+            TermLog.i("mosh") { "mosh-server up port=$moshPort ${host.hostname}" }
             detectSystemFromOutput(result.output)?.takeIf { it.isNotBlank() }?.let { detected ->
                 if (host.system.isBlank()) {
                     val updated = host.copy(system = detected)
@@ -368,6 +374,7 @@ class TerminalController(
                 onLinkStatus = { secs -> linkLostSeconds = secs },
             )
             moshSession = client
+            TermLog.i("mosh") { "mosh client started ${host.name} cols=${lastCols}x$lastRows" }
             // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须拉起后立即销毁
             if (status == ConnStatus.CLOSED) {
                 moshSession = null
@@ -397,6 +404,7 @@ class TerminalController(
     /** mosh 客户端退出回调：已连接后异常退出走自动重连（上限 [RECONNECT_MOSH_MAX]），
      *  连接中退出报连接失败。用户主动 close 时状态为 CLOSED，直接忽略。 */
     private fun handleMoshExit(reason: String?) {
+        TermLog.w("mosh") { "mosh exit ${host.name} reason=$reason status=$status" }
         if (status == ConnStatus.CONNECTED) {
             moshSession = null
             // 已连接后异常退出（非用户关闭）：自动重连
@@ -514,6 +522,7 @@ class TerminalController(
 
         override fun onClosed(reason: String?) {
             if (status == ConnStatus.CLOSED) return // 用户主动断开
+            TermLog.w("ssh") { "onClosed ${host.name} reason=$reason status=$status attempts=$reconnectAttempts" }
             // 意外断线：指数退避自动重连，终端缓冲保留
             val wasConnected = status == ConnStatus.CONNECTED || status == ConnStatus.AUTH
             if (autoReconnect && wasConnected && reconnectAttempts < RECONNECT_SSH_MAX) {
@@ -528,6 +537,7 @@ class TerminalController(
                 }.also { reconnectJob = it }
                 return
             }
+            TermLog.e("ssh") { "reconnect exhausted ${host.name} -> CLOSED" }
             status = ConnStatus.CLOSED
             stopKeepAlive()
             if (reason != null) errorMessage = reason
@@ -688,6 +698,7 @@ class TerminalController(
      * - Mosh：UDP 客户端 IP 变化后无法恢复，直接重建（重新 SSH bootstrap）。
      */
     fun onNetworkChanged(kind: NetworkChangeKind) {
+        TermLog.i("net") { "network event $kind status=$status immune=${nowMs() < networkImmuneUntilMs}" }
         if (!autoReconnect) return
         // mosh：断网与跨网络切换都【不重建】——UDP 无连接 + 服务器从客户端新源
         // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
@@ -698,14 +709,15 @@ class TerminalController(
         // 退避重连（网络未恢复时失败 → 灰点 + 后台通知；恢复后回前台自动重连）
         if (kind == NetworkChangeKind.LOST) {
             if (status == ConnStatus.CONNECTED) {
+                TermLog.w("net") { "LOST: force close ${host.name}（TCP 悬挂时主动断开）" }
                 reconnectAttempts = 0
                 session?.close()
             }
             return
         }
         val now = nowMs()
-        if (now < networkImmuneUntilMs) return // 连接后免疫期：刚连上不折腾
-        if (now - lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) return // 防抖：窗口内只主动重连一次
+        if (now < networkImmuneUntilMs) { TermLog.d("net") { "TRANSPORT: 免疫期内跳过 ${host.name}" }; return }
+        if (now - lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) { TermLog.d("net") { "TRANSPORT: 防抖跳过 ${host.name}" }; return }
         lastNetworkReconnectAtMs = now
         when (status) {
             ConnStatus.CONNECTED -> {

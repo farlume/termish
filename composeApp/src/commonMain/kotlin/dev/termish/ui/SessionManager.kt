@@ -5,6 +5,7 @@ import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
 import dev.termish.ssh.SftpSession
+import dev.termish.util.TermLog
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -159,6 +160,7 @@ class SessionManager(private val repository: HostRepository) {
      * 旧 session 先 close 释放连接；重连失败由调用方负责提示。
      */
     fun reconnectSftp(entry: SftpSessionEntry, newSession: SftpSession) {
+        TermLog.i("sftp") { "reconnect ${entry.host.name}" }
         val idx = sftpSessions.indexOf(entry)
         if (idx >= 0) {
             try {
