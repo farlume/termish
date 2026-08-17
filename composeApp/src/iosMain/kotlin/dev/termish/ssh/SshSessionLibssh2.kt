@@ -471,10 +471,10 @@ class SshSessionLibssh2(
         }
     }
 
-    override fun probeSystem(): String? = runBlocking {
+    override fun runCommand(command: String, timeoutMs: Long): String? = runBlocking {
         // libssh2 会话非线程安全：读循环/keepalive 在串行线程运行，
-        // 探测必须编组到同一线程，避免并发触碰 LIBSSH2_SESSION。
-        withContext(serialDispatcher) { doProbeSystem() }
+        // 控制面命令必须编组到同一线程，避免并发触碰 LIBSSH2_SESSION。
+        withContext(serialDispatcher) { doRunCommand(command, timeoutMs) }
     }
 
     /** 在已认证连接上打开 SFTP 通道（阻塞模式；调用方负责 shutdown + close）。 */
@@ -484,21 +484,21 @@ class SshSessionLibssh2(
         return libssh2_sftp_init(s)
     }
 
-    /** 在已认证会话上开临时 exec 通道执行系统探测，不重新认证、不打断交互 shell。 */
-    private fun doProbeSystem(): String? {
+    /** 在已认证会话上开临时 exec 通道执行控制面命令，不重新认证、不打断交互 shell。 */
+    private fun doRunCommand(command: String, timeoutMs: Long): String? {
         val s = session ?: return null
         if (closed || channel == null) return null
         val ch = openChannel(s) ?: return null
         return try {
             if (retryUntilSuccess {
-                    libssh2_channel_process_startup(ch, "exec", 4u, SYSTEM_PROBE_COMMAND, SYSTEM_PROBE_COMMAND.length.toUInt())
+                    libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt())
                 } != 0
             ) {
                 return null
             }
             val chunks = ArrayList<ByteArray>()
             val buf = ByteArray(16 * 1024)
-            val deadline = Clock.System.now().toEpochMilliseconds() + 5_000
+            val deadline = Clock.System.now().toEpochMilliseconds() + timeoutMs
             while (Clock.System.now().toEpochMilliseconds() < deadline) {
                 val n = buf.usePinned { pinned ->
                     libssh2_channel_read_ex(ch, 0, pinned.addressOf(0), buf.size.toULong())

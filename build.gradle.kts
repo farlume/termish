@@ -32,11 +32,14 @@ abstract class ExecTask @Inject constructor() : DefaultTask() {
 abstract class StartTestSshdTask @Inject constructor() : ExecTask() {
     @TaskAction
     fun start() {
+        // 与 scripts/test-sshd.sh 及集成测试保持一致（Termish_TEST_PORT 默认 22222）；
+        // 不可写死 2222——本机/CI 可能有其他服务占用（gitlab 等）导致误判已在监听
+        val port = System.getenv("Termish_TEST_PORT")?.toIntOrNull() ?: 22222
         val up = runCatching {
-            java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", 2222), 500) }
+            java.net.Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 500) }
         }.isSuccess
         if (up) {
-            logger.lifecycle("sshd 已在 127.0.0.1:2222 监听，跳过")
+            logger.lifecycle("sshd 已在 127.0.0.1:$port 监听，跳过")
         } else {
             run("bash", "scripts/test-sshd.sh")
         }

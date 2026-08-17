@@ -121,16 +121,16 @@ class SshSessionSshj(
         }
     }
 
-    override fun probeSystem(): String? {
+    override fun runCommand(command: String, timeoutMs: Long): String? {
         if (closed.get() || !client.isConnected) return null
         var s: Session? = null
         return try {
             // 复用已认证连接：新开一个 exec 通道，不重新认证、不打断交互 shell
             s = client.startSession()
-            val cmd = s.exec(SYSTEM_PROBE_COMMAND)
+            val cmd = s.exec(command)
             val out = java.io.ByteArrayOutputStream()
             cmd.inputStream.copyTo(out)
-            cmd.join(5, java.util.concurrent.TimeUnit.SECONDS)
+            cmd.join(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             out.toString(Charsets.UTF_8)
         } catch (_: Exception) {
             null

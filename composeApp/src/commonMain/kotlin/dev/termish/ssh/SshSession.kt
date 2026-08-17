@@ -132,11 +132,19 @@ interface SshSession {
     fun connectAndRun(command: String, timeoutMs: Long = 15_000): CommandResult
 
     /**
-     * 探测远端系统（Termius 式自动识别）。在已认证的同一连接上开临时 exec
-     * 通道执行 [SYSTEM_PROBE_COMMAND]，返回原始输出；失败返回 null。
-     * 不重新认证、不影响交互通道。
+     * 在已认证的同一连接上开临时 exec 通道执行命令，返回 stdout；
+     * 失败/未连接/超时返回 null。不重新认证、不打断交互 shell。
+     * 供控制面查询使用（系统探测、herdr api 等）；执行一次性命令且
+     * 连接尚未建立时用 [connectAndRun]（连接+认证+执行+关闭）。
      */
-    fun probeSystem(): String?
+    fun runCommand(command: String, timeoutMs: Long = 15_000): String?
+
+    /**
+     * 探测远端系统（Termius 式自动识别）：在已认证连接上执行
+     * [SYSTEM_PROBE_COMMAND]，返回原始输出；失败返回 null。
+     * 默认实现委托 [runCommand]（引擎无需重复实现）。
+     */
+    fun probeSystem(): String? = runCommand(SYSTEM_PROBE_COMMAND, timeoutMs = 5_000)
 
     /** 主动关闭会话。 */
     fun close()
