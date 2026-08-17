@@ -83,6 +83,8 @@ data class AppSettings(
     val terminalTargetCols: Int = 0,
     /** PTY 终端类型（$TERM）：xterm-256color 默认；xterm/vt100/linux 兼容备选。 */
     val terminalType: String = "xterm-256color",
+    /** 终端字体 id（见 TerminalFont）：jetbrains 默认。 */
+    val terminalFontId: String = "jetbrains",
     /** 意外断线时自动重连（指数退避，最多 3 次）。 */
     val autoReconnect: Boolean = true,
     val keepaliveSeconds: Int = 30,

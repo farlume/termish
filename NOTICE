@@ -7,6 +7,10 @@ Termish 第三方组件声明
 |------|--------|------|----------|
 | JetBrains Mono | OFL-1.1 | 内置终端字体 | LICENSES/JetBrainsMono-OFL.txt |
 | Noto Sans SC | OFL-1.1 | 内置 CJK 字体（iOS 中文回退） | LICENSES/Noto-OFL.txt |
+| Fira Code | OFL-1.1 | 内置终端字体（可选） | LICENSES/FiraCode-OFL.txt |
+| Source Code Pro | OFL-1.1 | 内置终端字体（可选） | LICENSES/SourceCodePro-OFL.txt |
+| PT Mono | OFL-1.1 | 内置终端字体（可选） | LICENSES/PTMono-OFL.txt |
+| Ubuntu Mono | UFL-1.0 | 内置终端字体（可选） | LICENSES/UbuntuFontLicense-1.0.txt |
 | sshj | Apache-2.0 | JVM 端 SSH 引擎（Android/Desktop） | LICENSES/Apache-2.0.txt |
 | BouncyCastle | MIT-style | JVM 端加密 | LICENSES/BouncyCastle-MIT.txt |
 | libssh2 | BSD-3-Clause | iOS 端 SSH 引擎 | LICENSES/libssh2-BSD.txt |

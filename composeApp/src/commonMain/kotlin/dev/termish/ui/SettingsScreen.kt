@@ -106,7 +106,7 @@ fun SettingsScreen(
     var showSupportDialog by remember { mutableStateOf(false) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
-    var showTerminalThemeDialog by remember { mutableStateOf(false) }
+    var showTerminalPage by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showTerminalTypeDialog by remember { mutableStateOf(false) }
 
@@ -137,7 +137,7 @@ fun SettingsScreen(
                 SettingsOptionItem(
                     s.settingsTerminalPalette,
                     TerminalThemes.ALL.getOrElse(terminalThemeIndex) { TerminalThemes.ALL[0] }.name,
-                ) { showTerminalThemeDialog = true }
+                ) { showTerminalPage = true }
             }
 
             SettingsGroup(s.settingsGroupTerminal) {
@@ -200,13 +200,14 @@ fun SettingsScreen(
             onDismiss = { showThemeDialog = false },
         )
     }
-    if (showTerminalThemeDialog) {
-        SettingsChoiceDialog(
-            title = s.settingsTerminalPalette,
-            options = TerminalThemes.ALL.map { it.name },
-            selected = terminalThemeIndex,
-            onSelect = { terminalThemeIndex = it; persist() },
-            onDismiss = { showTerminalThemeDialog = false },
+    if (showTerminalPage) {
+        // 二级页面全屏覆盖（Termius 风格）：字体下拉 + 主题双列卡片预览
+        SettingsTerminalScreen(
+            currentThemeIndex = terminalThemeIndex,
+            currentFontId = settings.terminalFontId,
+            onChangeTheme = { terminalThemeIndex = it; persist() },
+            onChangeFont = { fontId -> onChange(settings.copy(terminalFontId = fontId)) },
+            onBack = { showTerminalPage = false },
         )
     }
     if (showSupportDialog) {

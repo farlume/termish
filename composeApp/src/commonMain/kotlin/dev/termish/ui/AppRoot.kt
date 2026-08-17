@@ -60,6 +60,8 @@ import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
 import dev.termish.util.SessionKeepAlive
+import dev.termish.util.TerminalFont
+import dev.termish.util.LocalTerminalFont
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -266,7 +268,10 @@ fun AppRoot(repository: HostRepository) {
 
     val terminalTheme = TerminalThemes.ALL.getOrElse(settings.terminalThemeIndex) { TerminalThemes.ALL[0] }
 
-    CompositionLocalProvider(LocalAppStrings provides appStrings) {
+    CompositionLocalProvider(
+        LocalAppStrings provides appStrings,
+        LocalTerminalFont provides TerminalFont.byId(settings.terminalFontId),
+    ) {
         TermishTheme(settings.theme) {
             // 状态栏图标颜色只看当前页面实际背景亮度：
             // - 终端 tab → 按终端主题背景亮度
