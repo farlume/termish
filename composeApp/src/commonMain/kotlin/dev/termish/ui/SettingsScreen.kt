@@ -43,10 +43,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
+import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
+
+// ---- 关于区外链（官网 / 文档 / 仓库） ----
+private const val WEBSITE_URL = "https://termish.dev"
+private const val WEBSITE_HOST = "termish.dev"
+private const val DOCS_URL = "https://github.com/ttermish/termish/tree/main/docs"
+private const val DOCS_HOST = "github.com/ttermish/termish/docs"
+private const val GITHUB_URL = "https://github.com/ttermish/termish"
+private const val GITHUB_REPO = "ttermish/termish"
 
 private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
     ThemeMode.DARK -> s.settingsThemeDark
@@ -70,6 +80,7 @@ fun SettingsScreen(
     onBack: (() -> Unit)? = null,
 ) {
     val s = LocalAppStrings.current
+    val uriHandler = LocalUriHandler.current
     var theme by remember { mutableStateOf(settings.theme) }
     var terminalThemeIndex by remember { mutableStateOf(settings.terminalThemeIndex) }
     var fontSize by remember { mutableStateOf(settings.terminalFontSize.toFloat()) }
@@ -146,6 +157,18 @@ fun SettingsScreen(
                 SettingsSwitchItem(s.settingsVerifyHostKey, verifyHostKey) { verifyHostKey = it; persist() }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsOsc52Clipboard, osc52Clipboard) { osc52Clipboard = it; persist() }
+            }
+
+            // 关于：设置页底部固定生态位（业界惯例：Termius/Blink 等均在底部放
+            // 版本 + 官网/文档/仓库入口）。点击跳浏览器，三平台统一走 LocalUriHandler。
+            SettingsGroup(s.settingsGroupAbout) {
+                SettingsOptionItem(s.settingsVersion, APP_VERSION) {}
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsDocs, DOCS_HOST) { uriHandler.openUri(DOCS_URL) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsGithub, GITHUB_REPO) { uriHandler.openUri(GITHUB_URL) }
             }
 
             Spacer(Modifier.height(24.dp))

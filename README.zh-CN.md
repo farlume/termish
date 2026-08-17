@@ -168,6 +168,7 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
   密码 / 私钥 / 加密私钥（PKCS#8 / 传统 PEM / OpenSSH，连接时询问一次口令、
   不持久化）与 keyboard-interactive 认证、TOFU 主机密钥校验
 - **双语界面**——中文 / 英文 / 跟随系统，设置页随时切换
+- **设置页「关于」区**——版本号、官网、文档与 GitHub 入口（Termius 式底部布局）
 - 密钥存平台安全存储：**Android Keystore（AES-GCM）/ iOS Keychain**
 - 设计系统：zinc 中性色 + emerald 点缀，JetBrains Mono 标题，
   深色与浅色主题；终端配色（Default / Solarized / Dracula / Light）

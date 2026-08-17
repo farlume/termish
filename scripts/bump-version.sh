@@ -49,6 +49,7 @@ else
 fi
 
 GRADLE="composeApp/build.gradle.kts"
+APP_INFO="composeApp/src/commonMain/kotlin/dev/termish/AppInfo.kt"
 PBXPROJ="iosApp/iosApp.xcodeproj/project.pbxproj"
 INFO_PLIST="iosApp/iosApp/Info.plist"
 CHANGELOG="CHANGELOG.md"
@@ -89,6 +90,7 @@ apply() {
 }
 
 apply "Android versionName -> $VERSION" "$GRADLE" "s/versionName = \"[^\"]*\"/versionName = \"$VERSION\"/"
+apply "设置页 APP_VERSION 常量 -> $VERSION" "$APP_INFO" "s/APP_VERSION = \"[^\"]*\"/APP_VERSION = \"$VERSION\"/"
 apply "Android versionCode -> $BUILD" "$GRADLE" "s/versionCode = [0-9][0-9]*/versionCode = $BUILD/"
 apply "桌面 packageVersion -> $DESKTOP_VERSION" "$GRADLE" "s/packageVersion = \"[^\"]*\"/packageVersion = \"$DESKTOP_VERSION\"/"
 apply "iOS MARKETING_VERSION -> $VERSION" "$PBXPROJ" "s/MARKETING_VERSION = [^;]*;/MARKETING_VERSION = $VERSION;/g"
