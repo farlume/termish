@@ -5,10 +5,22 @@
 > 场景通过 = 预期日志出现且 UI 行为正确；报告 PASS/FAIL + 失败原因。
 
 前置环境（所有场景）：
-- 模拟器运行中，debug 包已装（`make run`）
-- demo 服务器运行（`docker start termish-demo`）：termish@10.0.2.2:2223，密码 termish-demo
-- App 主机列表含 demo 主机且已连接过一次（凭据已存 SecretStore）
-- 断言基线：操作前 `adb logcat -c` 清空，避免旧日志干扰
+
+**AI 启动自检（每次执行场景前必跑，逐项确认，缺失自动修复或明确报错）：**
+
+| # | 检查 | 命令 | 缺失处理 |
+|---|------|------|----------|
+| 1 | 模拟器在线 | `adb devices` 有 device | 启动模拟器（`emulator -avd Medium_Phone_API_35`）并等 boot 完成 |
+| 2 | demo 容器运行 | `docker ps` 含 termish-demo | `docker start termish-demo` |
+| 3 | demo 端口可达 | `nc -z 127.0.0.1 2223` | 容器起来后仍不可达 → 报错退出（docker 日志排查） |
+| 4 | debug 包已装 | `adb shell pm list packages` 含 dev.termish.app | `./gradlew :composeApp:installDebug` |
+| 5 | App 主机列表含 demo（10.0.2.2） | `run-as dev.termish.app cat shared_prefs/dev.termish.app_preferences.xml` 的 hosts JSON | 提示用户手动添加（凭据需 SecretStore，无法注入）；添加后重跑自检 |
+| 6 | 凭据已存（连接过） | 尝试连一次（见 A1） | 首次连接弹认证框 → UI 输入密码 termish-demo，确认后继续 |
+| 7 | 网络基线 | `svc wifi` 状态，确保 WiFi 开 | `svc wifi enable` |
+| 8 | logcat 基线 | `adb logcat -c` | — |
+
+自检通过后按 A→E 顺序执行；场景内需要额外前置（如 A6 公钥配置）
+在场景描述中标注「一次性配置」，首次执行时完成，后续复用。
 
 ---
 
@@ -43,6 +55,32 @@
 - 步骤：连接
 - 预期：`W ssh: hostkey CHANGED` → 弹核对弹窗；拒绝则连接中止，接受则记录新指纹
 - 恢复：删除 App 内已存指纹或重启 demo 保持新 key
+
+### A6 公钥认证（ed25519）
+- 前置：一次性配置——宿主机生成测试密钥对
+  （`ssh-keygen -t ed25519 -f /tmp/termish-e2e-key -N ""`），
+  `docker exec termish-demo sh -c 'mkdir -p /home/termish/.ssh && \
+  cat > /home/termish/.ssh/authorized_keys' < /tmp/termish-e2e-key.pub`，
+  修正权限；App 内添加主机：认证方式=私钥，粘贴私钥内容（连接一次成功即
+  存入 SecretStore，后续场景复用）
+- 步骤：连接该主机
+- 预期：`I ssh: connected`（私钥认证成功，无密码弹框）；失败日志区分
+  「私钥加载失败」与「认证失败」
+
+### A7 加密私钥（口令保护）
+- 前置：用 A6 的密钥生成加密版：
+  `openssl pkgen -aes256 ...` 或 `ssh-keygen -p -f /tmp/termish-e2e-key`（设口令）；
+  App 添加主机：私钥 = 加密 PEM，先不填口令
+- 步骤：连接 → 弹「私钥口令」输入框 → 输口令
+- 预期：口令正确 → `I ssh: connected`；口令取消 → 失败并提示
+  「加密私钥需要口令，已取消输入」；口令错误 → 认证失败（可重试）
+- 覆盖三种格式：PKCS#8 / legacy PEM / OpenSSH（各连一次）
+
+### A8 keepalive 长空闲保活
+- 前置：已连接，keepalive 间隔默认 30s
+- 步骤：连接后保持 90s 无输入（退后台）
+- 预期：期间无 onClosed（连接保持）；网络层 keepalive 正常发送
+  （无「keepalive 失败」类日志）；90s 后回前台状态仍 CONNECTED
 
 ## B. 网络故障
 
@@ -106,6 +144,24 @@
 - 前置：pf DROP UDP 60000-60100
 - 步骤：连接
 - 预期：SSH 引导成功但 15s 后 `mosh 连接超时`（仍显示连接中 → 超时失败 + 原因提示）
+
+### D4 Mosh 漫游（网络切换不重建）
+- 前置：Mosh 已连接（`I mosh: client started`）
+- 步骤：`svc wifi disable`（切蜂窝）→ 等 20s → `svc wifi enable` → 等 20s
+- 预期：**无 mosh exit/onExit 日志**（UDP 漫游自愈，不重建）；回前台
+  会话仍 CONNECTED；期间可能短暂「失联」但自动恢复
+
+### D5 Mosh 链路失联（UDP 断）
+- 前置：Mosh 已连接；macOS pf DROP 出站 UDP 60100
+- 步骤：断 UDP → 等待
+- 预期：`W mosh: link lost ...`（linkLostSeconds 达阈值）；终端 banner
+  显示「失联中」；恢复 pf → 自动续传（无 onExit）
+
+### D6 Mosh 主题注入（moshThemeSync）
+- 前置：主机开启 moshThemeSync + 启动命令（如 tmux new -A -s main）
+- 步骤：连接 Mosh
+- 预期：连接后 ~1.2s 注入主题 OSC 应答（无乱码回显——注入时机正确）；
+  herdr 类 TUI 按手机主题渲染（目测）
 
 ## E. SFTP
 
