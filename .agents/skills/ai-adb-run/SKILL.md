@@ -7,7 +7,7 @@ description: "通过 adb 执行 .aiadb-test/cases/ 下的自然语言 Android UI
 
 > 通用技能：AI 通过 adb 对 Android 应用做黑盒 UI 自动化测试——**用例执行**。
 > 不绑定任何项目——用例由 `ai-adb-gen` 产出，存放在项目根 `.aiadb-test/`。
-> 双份部署：用户级 `~/.agents/skills/`（本机可用）+ 项目级 `.agents/skills/`（随仓库）。
+> 部署：项目级 `.agents/skills/`（跟随仓库、克隆即得；不再安装用户级副本）。
 
 ## 适用范围与拒绝规则（容错机制）
 
