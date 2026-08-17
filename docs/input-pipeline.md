@@ -69,7 +69,8 @@ DECSET 1004 开启时，输入框聚焦/失焦发 `CSI I` / `CSI O`（vim/tmux �
 - ↑ 与 ↓ 上下对齐，⌨ 与 ENT 同在右上/右下拇指区。
 - CTRL/ALT 粘性 + 系统键盘字母即 ⌃A/⌃E/⌃R 等组合，不设专用按钮；符号键由系统键盘提供；画布惯性滚动替代 PgUp/PgDn。
 - 方向键按 `applicationCursorKeys`（DECCKM）在 CSI A–D 与 SS3 A–D 间切换。
-- `SpecialKey` 枚举仍定义 F1–F12/HOM/END/PGUP/PGDN/DEL 等（`specialKeyBytes` 有映射），但当前 UI 无渲染入口，属预留定义。
+- 低频键（F1–F12 / HOM / END / PGUP / PGDN / DEL / ⌫）已随固定两行工具栏设计移除；
+  如需重新暴露，转义映射见 git 历史（commit 17d8db2 之前的展开层实现）。
 
 ## 触摸 → 终端鼠标事件（TUI 鼠标上报）
 
