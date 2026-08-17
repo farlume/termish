@@ -17,7 +17,12 @@ actual fun observeAppLifecycle(listener: (foreground: Boolean) -> Unit): () -> U
         null
     } ?: return {}
 
-    var started = 0
+    // 注册时 MainActivity 已在 STARTED 状态（AppRoot 组合发生在 Activity 启动后），
+    // 而 registerActivityLifecycleCallbacks 不会为已存在的 Activity 补发
+    // onActivityStarted——started 从 0 开始会让首次 onStopped 减成 -1，
+    // listener(false) 永不触发（退后台持久化/回前台重连全部失效）。
+    // 补偿初始计数为 1。
+    var started = 1
     val callback = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityStarted(activity: Activity) {
             if (started == 0) listener(true)

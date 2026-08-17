@@ -5,6 +5,8 @@ import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.ConnectionMode
+import dev.termish.ssh.SftpEntry
+import dev.termish.ssh.SftpSession
 import java.util.Properties
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
@@ -115,5 +117,45 @@ class SessionManagerTest {
         val m = SessionManager(repo())
         val h = host("a")
         assertEquals(m.signatureFor(h), m.signatureFor(h))
+    }
+
+    @Test
+    fun restoreRecentRestoresSftpPath() {
+        val r = repo()
+        val h = host("sftp-host")
+        r.upsertHost(h)
+        // 持久化带路径的 SFTP 条目（杀 App 前的浏览位置）
+        r.saveRecentSftpEntries(listOf(HostRepository.RecentSftpEntry(h.id, "/var/www")))
+
+        val m = SessionManager(r)
+        m.restoreRecent(listOf(h), autoReconnect = true)
+
+        assertEquals(1, m.sftpSessions.size)
+        assertEquals(h.id, m.sftpSessions[0].host.id)
+        assertEquals(null, m.sftpSessions[0].session) // 未连接条目
+        assertEquals("/var/www", m.sftpSessions[0].uiState.path) // 路径恢复
+    }
+
+    @Test
+    fun addSftpReplacesExistingEntryForSameHost() {
+        val r = repo()
+        val h = host("sftp-host")
+        val m = SessionManager(r)
+        // 先有恢复条目（session=null），再连接同一主机 → 替换而非重复
+        m.sftpSessions.add(SftpSessionEntry(h, null))
+
+        val fake = object : SftpSession {
+            override fun list(path: String) = emptyList<SftpEntry>()
+            override fun mkdir(path: String) {}
+            override fun home() = "/home/root"
+            override fun upload(remotePath: String, content: ByteArray) {}
+            override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {}
+            override fun close() {}
+        }
+        val entry = m.addSftp(h, fake)
+
+        assertEquals(1, m.sftpSessions.size)
+        assertEquals(fake, m.sftpSessions[0].session)
+        assertEquals(fake, entry.session)
     }
 }

@@ -134,9 +134,21 @@ class SessionManager(private val repository: HostRepository) {
         return credentialSignature(host, pw, key)
     }
 
-    /** 登记 SFTP 会话（连接成功后由调用方加入）。返回条目：调用方建 tab 时用同一 uiState。 */
+    /**
+     * 登记 SFTP 会话（连接成功后由调用方加入）。返回条目：调用方建 tab 时用同一 uiState。
+     * 每主机单会话：已有条目则替换（保留浏览状态，重连语义一致）——
+     * 否则进程恢复条目 + 新连接会并存两个同主机条目。
+     */
     fun addSftp(host: Host, session: SftpSession): SftpSessionEntry {
-        val entry = SftpSessionEntry(host, session)
+        val existing = sftpSessions.firstOrNull { it.host.id == host.id }
+        if (existing != null) {
+            try {
+                existing.session?.close()
+            } catch (_: Exception) {
+            }
+            sftpSessions.remove(existing)
+        }
+        val entry = SftpSessionEntry(host, session, existing?.uiState ?: SftpUiState())
         sftpSessions.add(entry)
         persist()
         return entry
