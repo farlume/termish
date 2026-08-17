@@ -59,7 +59,7 @@ class SshSessionSshj(
         connectTransport()
         val s = client.startSession()
         session = s
-        s.allocatePTY("xterm-256color", columns, rows, 0, 0, emptyMap())
+        s.allocatePTY(connection.terminalType, columns, rows, 0, 0, emptyMap())
         val sh = s.startShell()
         shell = sh
 

@@ -7,7 +7,6 @@ import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.ssh.AuthPrompt
 import dev.termish.ssh.HostKeyInfo
-import dev.termish.ssh.MOSH_SERVER_BOOTSTRAP
 import dev.termish.ssh.MoshSession
 import dev.termish.ssh.SYSTEM_PROBE_COMMAND
 import dev.termish.ssh.SshException
@@ -228,6 +227,7 @@ class TerminalController(
         password = password,
         privateKeyPem = privateKeyPem,
         keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
+        terminalType = repository.loadSettings().terminalType,
     )
 
     private fun doConnect() {
@@ -302,10 +302,13 @@ class TerminalController(
                 override fun onClosed(reason: String?) {}
             }
             val ssh = createSshSession(newConnection(), bootstrapCallbacks)
+            // mosh -c 只支持 8/256 两档：xterm-256color → 256（默认），
+            // 其余 TERM（vt100/linux 等）按 8 色保守协商
+            val moshColors = if (repository.loadSettings().terminalType == "xterm-256color") "256" else "8"
             val baseBootstrap = if (host.moshUdpPort in 1024..65535) {
-                "mosh-server new -c 256 -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
+                "mosh-server new -c $moshColors -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
             } else {
-                MOSH_SERVER_BOOTSTRAP
+                "mosh-server new -c $moshColors -l LANG=en_US.UTF-8"
             }
             // 引导同时探测远端系统：探测输出跟在 MOSH CONNECT 之后，
             // 不影响 parseMoshConnect，自动识别系统（用户无需手填）。

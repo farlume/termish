@@ -96,7 +96,7 @@ fun SettingsScreen(
     var terminalThemeIndex by remember { mutableStateOf(settings.terminalThemeIndex) }
     var fontSize by remember { mutableStateOf(settings.terminalFontSize.toFloat()) }
     var targetCols by remember { mutableStateOf(settings.terminalTargetCols.toFloat()) }
-    var keyboardToolbar by remember { mutableStateOf(settings.keyboardToolbarVisible) }
+    var terminalType by remember { mutableStateOf(settings.terminalType) }
     var haptics by remember { mutableStateOf(settings.hapticFeedback) }
     var autoReconnect by remember { mutableStateOf(settings.autoReconnect) }
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
@@ -108,6 +108,7 @@ fun SettingsScreen(
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTerminalThemeDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
+    var showTerminalTypeDialog by remember { mutableStateOf(false) }
 
     fun persist() = onChange(
         settings.copy(
@@ -115,7 +116,7 @@ fun SettingsScreen(
             terminalThemeIndex = terminalThemeIndex,
             terminalFontSize = fontSize.toInt(),
             terminalTargetCols = targetCols.toInt(),
-            keyboardToolbarVisible = keyboardToolbar,
+            terminalType = terminalType,
             hapticFeedback = haptics,
             autoReconnect = autoReconnect,
             verifyHostKeyOnFirstUse = verifyHostKey,
@@ -140,6 +141,10 @@ fun SettingsScreen(
             }
 
             SettingsGroup(s.settingsGroupTerminal) {
+                SettingsOptionItem(s.settingsTerminalType, terminalType) {
+                    showTerminalTypeDialog = true
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSliderItem(
                     title = s.settingsTerminalCols,
                     valueText = if (targetCols < 1f) s.settingsManualFontSize else targetCols.toInt().toString(),
@@ -156,8 +161,6 @@ fun SettingsScreen(
                     valueRange = 6f..32f,
                     enabled = targetCols < 1f,
                 )
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsSwitchItem(s.settingsShowToolbar, keyboardToolbar) { keyboardToolbar = it; persist() }
             }
 
             SettingsGroup(s.settingsGroupGeneral) {
@@ -222,6 +225,18 @@ fun SettingsScreen(
             selected = codes.indexOf(language),
             onSelect = { language = codes[it]; persist() },
             onDismiss = { showLanguageDialog = false },
+        )
+    }
+    if (showTerminalTypeDialog) {
+        // TERM 选项：xterm-256color 默认（匹配模拟器 256 色能力）；
+        // 其余为兼容备选（服务器按 terminfo 降级，不新增渲染能力需求）
+        val options = listOf("xterm-256color", "xterm", "vt100", "linux")
+        SettingsChoiceDialog(
+            title = s.settingsTerminalType,
+            options = options,
+            selected = options.indexOf(terminalType).coerceAtLeast(0),
+            onSelect = { terminalType = options[it]; persist() },
+            onDismiss = { showTerminalTypeDialog = false },
         )
     }
 }
@@ -427,6 +442,7 @@ private fun SettingsChoiceDialog(
                             onDismiss()
                         }.padding(vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         RadioButton(selected = i == selected, onClick = null)
                         Text(label, style = MaterialTheme.typography.bodyLarge)

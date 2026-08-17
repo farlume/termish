@@ -88,14 +88,12 @@ class HostRepositoryTest {
             AppSettings(
                 theme = ThemeMode.LIGHT,
                 terminalFontSize = 16,
-                keyboardToolbarVisible = false,
                 autoReconnect = false,
             ),
         )
         val loaded = r.loadSettings()
         assertEquals(ThemeMode.LIGHT, loaded.theme)
         assertEquals(16, loaded.terminalFontSize)
-        assertTrue(!loaded.keyboardToolbarVisible)
         assertTrue(!loaded.autoReconnect)
     }
 

@@ -301,7 +301,7 @@ private fun TerminalBody(
         }
 
         // 快速命令
-        if (settings.keyboardToolbarVisible && controller.isConnected()) {
+        if (controller.isConnected()) {
             QuickCommandsBar(controller)
         }
 
@@ -353,8 +353,8 @@ private fun TerminalBody(
                 Column(Modifier.onSizeChanged { toolbarHeightPx = it.height.toFloat() }) {
                     HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
                     Spacer(Modifier.height(6.dp))
-                if (settings.keyboardToolbarVisible) {
-                    KeyToolbar(
+                // 键盘工具栏常驻：手机系统键盘无 CTRL/ESC/方向键，关掉终端不可用
+                KeyToolbar(
                         ctrlActive = ctrlActive,
                         altActive = altActive,
                         onToggleCtrl = { ctrlActive = !ctrlActive },
@@ -388,7 +388,6 @@ private fun TerminalBody(
                         theme = theme,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
-                }
                 // 隐藏输入字段：仅作为输入法接入口，不渲染可见 UI。
                 // 打字内容以终端回显为准（远端 echo 才是真实状态，本地显示反而重复干扰）。
                 BasicTextField(

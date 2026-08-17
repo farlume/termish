@@ -84,6 +84,9 @@ data class SshConnection(
     val connectTimeoutMillis: Long = 15_000,
     /** 空闲保活间隔（秒）；<=0 表示不发送应用层 keepalive。 */
     val keepAliveSeconds: Int = 30,
+    /** PTY 终端类型（$TERM）：默认 xterm-256color（与本机渲染能力一致）；
+     *  xterm / vt100 / linux 为兼容备选（服务器按 terminfo 降级能力）。 */
+    val terminalType: String = "xterm-256color",
 )
 
 /**

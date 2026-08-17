@@ -22,10 +22,6 @@ fun parseMoshConnect(output: String): Pair<Int, String>? {
     return m.groupValues[1].toIntOrNull()?.let { it to m.groupValues[2] }
 }
 
-/** mosh-server 引导命令（-c 256：远端 TERM=xterm-256color，与本机渲染能力一致；
- *  -c 8 会让 mosh-server 置 TERM=xterm，远端程序降级到 8 色）。 */
-const val MOSH_SERVER_BOOTSTRAP = "mosh-server new -c 256 -l LANG=en_US.UTF-8"
-
 /**
  * 系统探测命令（Termius 同款思路：连接后用 exec 通道读取 /etc/os-release 与
  * uname，自动识别远端系统，用户无需手动填写）。

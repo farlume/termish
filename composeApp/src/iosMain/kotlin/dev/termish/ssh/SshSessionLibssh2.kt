@@ -185,7 +185,7 @@ class SshSessionLibssh2(
         val ch = openChannel(s)
             ?: run { cleanup(); throw SshException("打开会话通道失败") }
         channel = ch
-        val term = "xterm-256color"
+        val term = connection.terminalType
         if (retryUntilSuccess {
                 libssh2_channel_request_pty_ex(ch, term, term.length.toUInt(), null, 0u, columns, rows, 0, 0)
             } != 0
