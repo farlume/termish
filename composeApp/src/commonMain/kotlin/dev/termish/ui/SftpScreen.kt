@@ -1,5 +1,7 @@
 package dev.termish.ui
 
+import dev.termish.util.TermLog
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -206,7 +208,7 @@ fun SftpContent(
         try {
             entries = withContext(ioDispatcher()) { s.list(path) }
         } catch (e: Exception) {
-            dev.termish.util.TermLog.w("sftp") { "list failed $path: ${e.message}" }
+            TermLog.w("sftp") { "list failed $path: ${e.message}" }
             loadError = e.message
             entries = emptyList()
         }

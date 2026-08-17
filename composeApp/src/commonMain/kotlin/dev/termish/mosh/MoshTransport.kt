@@ -1,5 +1,7 @@
 package dev.termish.mosh
 
+import dev.termish.util.TermLog
+
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -386,7 +388,7 @@ internal class MoshTransport(
             }
         }
         if (verbose) {
-            dev.termish.util.TermLog.d("mosh") {
+            TermLog.d("mosh") {
                 "sent old=${inst.oldNum} new=${inst.newNum} ack=${inst.ackNum} " +
                     "throwaway=${inst.throwawayNum} len=${diff.size} srtt=${srtt.toInt()} rto=${timeout()}"
             }

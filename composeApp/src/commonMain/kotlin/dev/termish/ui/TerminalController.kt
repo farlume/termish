@@ -22,7 +22,10 @@ import dev.termish.term.TerminalEmulator
 import dev.termish.term.TerminalSelection
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalThemes
+import dev.termish.notify.NotificationCenter
+import dev.termish.notify.NotificationEvent
 import dev.termish.util.TermLog
+import dev.termish.util.TermTrace
 import dev.termish.util.ioDispatcher
 import dev.termish.util.NetworkChangeKind
 import kotlin.concurrent.Volatile
@@ -238,7 +241,7 @@ class TerminalController(
         val t0 = nowMs()
         TermLog.i("ssh") { "connect start ${host.name} ${host.hostname}:${host.port} mode=${host.connectionMode} attempt=${reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms" }
         // 连接 span：引擎经 onTraceStep 填充阶段耗时（tcp+kex/auth/shell）
-        val trace = dev.termish.util.TermTrace.begin(
+        val trace = TermTrace.begin(
             "ssh.connect", "ssh",
             "host" to host.name, "attempt" to reconnectAttempts.toString(),
             "mode" to host.connectionMode.name,
@@ -310,8 +313,8 @@ class TerminalController(
                     stopKeepAlive()
                     // 重连上下文（非首次连接）失败：后台通知，提示需人工干预
                     if (reconnectAttempts > 0) {
-                        dev.termish.notify.NotificationCenter.post(
-                            dev.termish.notify.NotificationEvent.RECONNECT_FAILED,
+                        NotificationCenter.post(
+                            NotificationEvent.RECONNECT_FAILED,
                             "Termish",
                             "${host.name}：重连失败（${e.message ?: "连接失败"}）",
                             hostId = host.id,
@@ -531,7 +534,7 @@ class TerminalController(
         }
     }
 
-    private fun callbacks(trace: dev.termish.util.TermTrace.Span? = null) = object : SshCallbacks {
+    private fun callbacks(trace: TermTrace.Span? = null) = object : SshCallbacks {
         override fun onTraceStep(step: String) {
             trace?.step(step)
         }
@@ -571,11 +574,11 @@ class TerminalController(
             // 后台事件通知：意外断开（未重连）报 CONNECTION_LOST；
             // 自动重连耗尽仍失败报 RECONNECT_FAILED（用户需人工干预）；
             // 均带「重新连接」动作（通知点击按 hostId 重连）
-            dev.termish.notify.NotificationCenter.post(
+            NotificationCenter.post(
                 if (reconnectAttempts > 0) {
-                    dev.termish.notify.NotificationEvent.RECONNECT_FAILED
+                    NotificationEvent.RECONNECT_FAILED
                 } else {
-                    dev.termish.notify.NotificationEvent.CONNECTION_LOST
+                    NotificationEvent.CONNECTION_LOST
                 },
                 "Termish",
                 "${host.name}：${reason ?: "连接已断开"}",

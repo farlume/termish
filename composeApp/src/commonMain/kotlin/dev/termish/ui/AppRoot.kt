@@ -48,6 +48,8 @@ import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.ThemeMode
 import dev.termish.data.secretAccountFor
+import dev.termish.notify.NotificationCenter
+import dev.termish.notify.NotificationEvent
 import dev.termish.ssh.AuthPrompt
 import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SshCallbacks
@@ -238,9 +240,9 @@ fun AppRoot(repository: HostRepository) {
     DisposableEffect(Unit) {
         // 通知中心：注入设置读取器；前后台状态供后台事件通知过滤；
         // 「重新连接」动作 → 找到该主机会话重连（无活跃会话则打开主机页）
-        dev.termish.notify.NotificationCenter.settingsProvider = { repository.loadSettings() }
-        dev.termish.notify.NotificationCenter.foreground = true
-        dev.termish.notify.NotificationCenter.onReconnectRequest = { hostId ->
+        NotificationCenter.settingsProvider = { repository.loadSettings() }
+        NotificationCenter.foreground = true
+        NotificationCenter.onReconnectRequest = { hostId ->
             TermLog.i("notify") { "reconnect action hostId=$hostId" }
             scope.launch {
                 sessionManager.sessions
@@ -256,7 +258,7 @@ fun AppRoot(repository: HostRepository) {
         }
         val dispose = observeAppLifecycle { foreground ->
             TermLog.d("life") { "foreground=$foreground" }
-            dev.termish.notify.NotificationCenter.foreground = foreground
+            NotificationCenter.foreground = foreground
             if (foreground) {
                 sessionManager.reconnectDroppedSessions()
                 // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，

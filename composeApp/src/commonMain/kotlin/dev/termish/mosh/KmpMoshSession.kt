@@ -1,5 +1,7 @@
 package dev.termish.mosh
 
+import dev.termish.util.TermLog
+
 import dev.termish.util.ioDispatcher
 import kotlin.concurrent.Volatile
 import kotlin.time.TimeSource
@@ -86,7 +88,7 @@ class KmpMoshSession(
             try {
                 sendSocket.send(data)
             } catch (e: Exception) {
-                dev.termish.util.TermLog.w("mosh") { "UDP 发送失败: ${e.message}" }
+                TermLog.w("mosh") { "UDP 发送失败: ${e.message}" }
                 SendResult.FAILED
             }
         },
@@ -135,7 +137,7 @@ class KmpMoshSession(
             } catch (e: Exception) {
                 if (active) {
                     active = false
-                    dev.termish.util.TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
+                    TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
                     onExit("mosh 会话异常：${e.message}")
                 }
             }
