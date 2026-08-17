@@ -257,6 +257,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - 主机密钥：TOFU（首次使用信任）+ 指纹确认；已知主机严格校验
 - 无遥测、无分析，除你的 SSH 连接外没有任何网络请求
 
+安全披露与上报：见 [SECURITY.md](SECURITY.md)。
+
 ## 已知限制
 
 - **Android 15 前台服务超时**：`dataSync` 6 小时上限结束后台保活；
@@ -319,3 +321,5 @@ Termish 免费、开源（MIT）、无广告。如果它帮你省了时间——
 
 Termish 以 [MIT License](LICENSE) 发布。
 内置 JetBrains Mono 字体单独以 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt) 授权。
+
+第三方组件许可：见 [NOTICE](NOTICE) 与 [LICENSES/](LICENSES/) 目录。

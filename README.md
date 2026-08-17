@@ -288,6 +288,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   verification for known hosts
 - No telemetry, no analytics, no network calls except your SSH connections
 
+Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
+
 ## Known Limitations
 
 - **Android 15 foreground-service timeout**: the 6-hour `dataSync` limit ends
@@ -354,3 +356,6 @@ full guide. A few pointers:
 Termish is released under the [MIT License](LICENSE).
 Bundled JetBrains Mono is licensed separately under
 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt).
+
+Third-party component licenses: see [NOTICE](NOTICE) and the
+[LICENSES/](LICENSES/) directory.
