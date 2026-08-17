@@ -229,10 +229,14 @@ class TerminalController(
         privateKeyPem = privateKeyPem,
         keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
         terminalType = repository.loadSettings().terminalType,
+        // 重连场景网络多半已断：TCP 超时从 15s 缩短到 5s——
+        // 否则 3 次重连 × 15s ≈ 1 分钟「连接中」（用户感知卡死）
+        connectTimeoutMillis = if (reconnectAttempts > 0) 5_000 else 15_000,
     )
 
     private fun doConnect() {
-        TermLog.i("ssh") { "connect start ${host.name} ${host.hostname}:${host.port} mode=${host.connectionMode} attempt=${reconnectAttempts}" }
+        val t0 = nowMs()
+        TermLog.i("ssh") { "connect start ${host.name} ${host.hostname}:${host.port} mode=${host.connectionMode} attempt=${reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms" }
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
@@ -252,7 +256,7 @@ class TerminalController(
                 }
                 // TOFU：记录主机指纹
                 info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
-                TermLog.i("ssh") { "connected ${host.name} kex=${info.kexAlgorithm}" }
+                TermLog.i("ssh") { "connected ${host.name} kex=${info.kexAlgorithm} in ${nowMs() - t0}ms" }
                 status = ConnStatus.CONNECTED
                 reconnectAttempts = 0
                 reconnectCount = 0
@@ -284,7 +288,12 @@ class TerminalController(
                 throw e // 协程取消不是连接失败：不置 ERROR、不停保活
             } catch (e: Exception) {
                 if (status != ConnStatus.CLOSED) {
-                    TermLog.e("ssh") { "connect failed ${host.name}: ${e.message}" }
+                    val elapsed = nowMs() - t0
+                    if (elapsed > 10_000) {
+                        TermLog.w("ssh") { "connect SLOW/FAIL after ${elapsed}ms ${host.name}: ${e.message}（TCP 超时特征：网络黑洞/防火墙丢包）" }
+                    } else {
+                        TermLog.e("ssh") { "connect failed after ${elapsed}ms ${host.name}: ${e.message}" }
+                    }
                     status = ConnStatus.ERROR
                     errorMessage = e.message
                     // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
