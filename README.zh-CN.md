@@ -13,14 +13,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
-  <img src="docs/screenshots/hosts-dark-zh.png" width="230" alt="主机列表" />
-  <img src="docs/screenshots/terminal-dark-zh.png" width="230" alt="终端" />
-  <img src="docs/screenshots/settings-dark-zh.png" width="230" alt="设置" />
+  <img src="docs/screenshots/hosts-zh.png" width="230" alt="主机列表" />
+  <img src="docs/screenshots/settings-zh.png" width="230" alt="设置" />
+  <img src="docs/screenshots/theme-zh.png" width="230" alt="终端主题" />
 </p>
 <p>
-  <img src="docs/screenshots/sftp-dark-zh.png" width="230" alt="SFTP" />
-  <img src="docs/screenshots/agent-dark-zh.png" width="230" alt="TUI agent（herdr + pi）" />
-  <img src="docs/screenshots/ios-terminal-dark-zh.png" width="230" alt="iOS 终端" />
+  <img src="docs/screenshots/terminal-ssh-zh.png" width="230" alt="SSH 终端" />
+  <img src="docs/screenshots/terminal-herdr-zh.png" width="230" alt="herdr TUI agent" />
+  <img src="docs/screenshots/sftp-zh.png" width="230" alt="SFTP" />
 </p>
 
 <p>

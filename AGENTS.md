@@ -52,10 +52,11 @@ network) at `127.0.0.1:2223` — never `10.0.2.2` on iOS.
 - User-facing strings go through `AppStrings` (Chinese + English), never hardcoded
 - **Code style**: Kotlin official style, `import` 短名（禁止全限定名调用）、
   import 按字母序（`.editorconfig` 已设基线；仓库公开前接入 ktlint 统一格式化）
-- Screenshots in `docs/screenshots/` follow `topic-dark-zh` naming
-  (topic = hosts/terminal/settings/sftp/agent/ios-…, dark/light, zh only for
-  Chinese UI); README shows 6 per language (3×2), English README uses English
-  screenshots, Chinese README uses Chinese ones
+- Screenshots in `docs/screenshots/` follow `<topic>-{en,zh}.png` naming
+  (topic = hosts/settings/theme/sftp/terminal-ssh/terminal-herdr/…;
+  en = English UI, zh = Chinese UI, every topic has a matching pair);
+  README shows 6 per language (3×2: hosts/settings/theme on top,
+  terminal×2 + sftp below)
 
 ## Development workflow（开发工作流）
 

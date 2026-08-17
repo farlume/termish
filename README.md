@@ -13,14 +13,14 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
-  <img src="docs/screenshots/hosts-dark.png" width="230" alt="Hosts" />
-  <img src="docs/screenshots/terminal-dark.png" width="230" alt="Terminal" />
-  <img src="docs/screenshots/settings-dark.png" width="230" alt="Settings" />
+  <img src="docs/screenshots/hosts-en.png" width="230" alt="Hosts" />
+  <img src="docs/screenshots/settings-en.png" width="230" alt="Settings" />
+  <img src="docs/screenshots/theme-en.png" width="230" alt="Terminal theme" />
 </p>
 <p>
-  <img src="docs/screenshots/sftp-dark.png" width="230" alt="SFTP" />
-  <img src="docs/screenshots/agent-dark.png" width="230" alt="TUI agents (herdr + pi)" />
-  <img src="docs/screenshots/ios-hosts-dark.png" width="230" alt="iOS" />
+  <img src="docs/screenshots/terminal-ssh-en.png" width="230" alt="SSH terminal" />
+  <img src="docs/screenshots/terminal-herdr-en.png" width="230" alt="herdr TUI agent" />
+  <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
 
 <p>
