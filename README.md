@@ -298,6 +298,7 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 ## Roadmap
 
 - [x] SFTP file browser & transfers
+- [ ] herdr session switcher — jump straight into a running agent
 - [ ] More IME languages — kana (Japanese) / hangul (Korean) composition
   (the pipeline is already composition-safe, see [CJK input](#cjk-input-done-right))
 - [ ] Port forwarding (-L / -R)
