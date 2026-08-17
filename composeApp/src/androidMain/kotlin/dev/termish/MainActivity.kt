@@ -1,5 +1,6 @@
 package dev.termish
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -16,8 +17,21 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        AppContext.currentActivity = this
+        // 通知「重新连接」动作（singleTop：App 存活时走 onNewIntent）
+        dev.termish.notify.handleNotificationIntent(intent)
         setContent {
             App()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        dev.termish.notify.handleNotificationIntent(intent)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (AppContext.currentActivity === this) AppContext.currentActivity = null
     }
 }

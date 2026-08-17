@@ -116,6 +116,9 @@ fun SettingsScreen(
     var showTerminalPage by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showTerminalTypeDialog by remember { mutableStateOf(false) }
+    var showNotificationPage by remember { mutableStateOf(false) }
+    var notificationEnabled by remember { mutableStateOf(settings.notificationEnabled) }
+    var notificationDisabledEvents by remember { mutableStateOf(settings.notificationDisabledEvents) }
 
     fun persist() = onChange(
         settings.copy(
@@ -129,6 +132,8 @@ fun SettingsScreen(
             keepaliveSeconds = keepalive.toInt(),
             verifyHostKeyOnFirstUse = verifyHostKey,
             osc52Clipboard = osc52Clipboard,
+            notificationEnabled = notificationEnabled,
+            notificationDisabledEvents = notificationDisabledEvents,
             language = language,
         )
     )
@@ -144,6 +149,11 @@ fun SettingsScreen(
                 SettingsOptionItem(s.settingsAppTheme, themeModeLabel(theme, s)) { showThemeDialog = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsLanguage, languageLabel(language, s)) { showLanguageDialog = true }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(
+                    s.settingsNotifications,
+                    if (notificationEnabled) s.settingsOn else s.settingsOff,
+                ) { showNotificationPage = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
             }
@@ -229,6 +239,27 @@ fun SettingsScreen(
             onChangeTheme = { terminalThemeIndex = it; persist() },
             onChangeFont = { fontId -> onChange(settings.copy(terminalFontId = fontId)) },
             onBack = { showTerminalPage = false },
+        )
+    }
+    // 通知设置二级页（动画同终端主题页：右滑进入/退出）
+    AnimatedVisibility(
+        visible = showNotificationPage,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SettingsNotificationScreen(
+            enabled = notificationEnabled,
+            disabledEvents = notificationDisabledEvents,
+            onChangeEnabled = {
+                notificationEnabled = it
+                persist()
+            },
+            onChangeEvent = { id, disable ->
+                notificationDisabledEvents =
+                    if (disable) notificationDisabledEvents + id else notificationDisabledEvents - id
+                persist()
+            },
+            onBack = { showNotificationPage = false },
         )
     }
     if (showSupportDialog) {

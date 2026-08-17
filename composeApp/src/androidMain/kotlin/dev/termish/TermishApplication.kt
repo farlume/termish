@@ -1,5 +1,6 @@
 package dev.termish
 
+import android.app.Activity
 import android.app.Application
 import android.content.Context
 import org.bouncycastle.jce.provider.BouncyCastleProvider
@@ -8,6 +9,10 @@ import java.security.Security
 /** 进程级 Application Context（用于无参 expect 存储）。 */
 object AppContext {
     @Volatile private var context: Context? = null
+
+    /** 当前前台 Activity（haptic/权限请求等需要 Activity 上下文时使用；null = 无）。 */
+    @Volatile
+    var currentActivity: Activity? = null
 
     fun init(c: Context) {
         context = c.applicationContext

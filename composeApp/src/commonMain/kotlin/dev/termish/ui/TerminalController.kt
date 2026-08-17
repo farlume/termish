@@ -285,6 +285,15 @@ class TerminalController(
                     // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
                     //（首连失败时 keepAliveActive=false，stopKeepAlive 有 guard，安全）
                     stopKeepAlive()
+                    // 重连上下文（非首次连接）失败：后台通知，提示需人工干预
+                    if (reconnectAttempts > 0) {
+                        dev.termish.notify.NotificationCenter.post(
+                            dev.termish.notify.NotificationEvent.RECONNECT_FAILED,
+                            "Termish",
+                            "${host.name}：重连失败（${e.message ?: "连接失败"}）",
+                            hostId = host.id,
+                        )
+                    }
                 }
             }
         }
@@ -522,6 +531,19 @@ class TerminalController(
             status = ConnStatus.CLOSED
             stopKeepAlive()
             if (reason != null) errorMessage = reason
+            // 后台事件通知：意外断开（未重连）报 CONNECTION_LOST；
+            // 自动重连耗尽仍失败报 RECONNECT_FAILED（用户需人工干预）；
+            // 均带「重新连接」动作（通知点击按 hostId 重连）
+            dev.termish.notify.NotificationCenter.post(
+                if (reconnectAttempts > 0) {
+                    dev.termish.notify.NotificationEvent.RECONNECT_FAILED
+                } else {
+                    dev.termish.notify.NotificationEvent.CONNECTION_LOST
+                },
+                "Termish",
+                "${host.name}：${reason ?: "连接已断开"}",
+                hostId = host.id,
+            )
         }
 
         override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
@@ -671,10 +693,16 @@ class TerminalController(
         // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
         // 的漫游能力）。只有客户端异常退出（onExit）才走自动重连。
         if (moshSession != null) return
-        // SSH：只在「新网络已就绪」（传输切换）时主动断开快速重连；
-        // onLost 时新网络未必就绪（尤其流量→Wi-Fi），纯断网交给 TCP 自然断开 +
-        // onClosed 退避重连。
-        if (kind == NetworkChangeKind.LOST) return
+        // 网络完全丢失（飞行模式等）：TCP 悬挂时 keepalive 写缓冲吸收、读不到
+        // EOF，连接会长期显示绿色——主动断开让状态正确，并触发 onClosed 的
+        // 退避重连（网络未恢复时失败 → 灰点 + 后台通知；恢复后回前台自动重连）
+        if (kind == NetworkChangeKind.LOST) {
+            if (status == ConnStatus.CONNECTED) {
+                reconnectAttempts = 0
+                session?.close()
+            }
+            return
+        }
         val now = nowMs()
         if (now < networkImmuneUntilMs) return // 连接后免疫期：刚连上不折腾
         if (now - lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) return // 防抖：窗口内只主动重连一次

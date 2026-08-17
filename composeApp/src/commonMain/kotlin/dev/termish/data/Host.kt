@@ -94,6 +94,10 @@ data class AppSettings(
     val verifyHostKeyOnFirstUse: Boolean = true,
     /** OSC 52：允许远端程序写系统剪贴板（nvim/tmux 复制会同步到本机）。 */
     val osc52Clipboard: Boolean = true,
+    /** 通知总开关（后台事件通知，如连接断开/重连失败）。 */
+    val notificationEnabled: Boolean = true,
+    /** 被关闭的通知事件 id（见 NotificationEvent）；空 = 全部开启。 */
+    val notificationDisabledEvents: Set<String> = emptySet(),
 )
 
 /** 生成一个随机 ID（UUID v4 风格）。 */

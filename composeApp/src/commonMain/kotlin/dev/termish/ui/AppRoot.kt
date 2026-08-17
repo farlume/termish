@@ -234,7 +234,25 @@ fun AppRoot(repository: HostRepository) {
         sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
     }
     DisposableEffect(Unit) {
+        // 通知中心：注入设置读取器；前后台状态供后台事件通知过滤；
+        // 「重新连接」动作 → 找到该主机会话重连（无活跃会话则打开主机页）
+        dev.termish.notify.NotificationCenter.settingsProvider = { repository.loadSettings() }
+        dev.termish.notify.NotificationCenter.foreground = true
+        dev.termish.notify.NotificationCenter.onReconnectRequest = { hostId ->
+            scope.launch {
+                sessionManager.sessions
+                    .firstOrNull { it.host.id == hostId }
+                    ?.let { controller ->
+                        if (controller.status == dev.termish.ui.ConnStatus.CLOSED ||
+                            controller.status == dev.termish.ui.ConnStatus.ERROR
+                        ) {
+                            controller.reconnect()
+                        }
+                    }
+            }
+        }
         val dispose = observeAppLifecycle { foreground ->
+            dev.termish.notify.NotificationCenter.foreground = foreground
             if (foreground) {
                 sessionManager.reconnectDroppedSessions()
                 // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
