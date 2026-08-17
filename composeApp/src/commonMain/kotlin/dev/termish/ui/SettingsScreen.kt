@@ -1,5 +1,11 @@
 package dev.termish.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -200,8 +206,12 @@ fun SettingsScreen(
             onDismiss = { showThemeDialog = false },
         )
     }
-    if (showTerminalPage) {
-        // 二级页面全屏覆盖（Termius 风格）：字体下拉 + 主题双列卡片预览
+    // 二级页面覆盖层：iOS 风格右滑进入/退出（Termius 二级页面同款动效）
+    AnimatedVisibility(
+        visible = showTerminalPage,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
         SettingsTerminalScreen(
             currentThemeIndex = terminalThemeIndex,
             currentFontId = settings.terminalFontId,
