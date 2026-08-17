@@ -243,24 +243,40 @@ jobs:
           shasum -a 256 * > SHA256SUMS
           ls -l
 
-      - name: Create GitHub Release (with retry)
+      - name: Create GitHub Release (idempotent, per-asset retry)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
+          TAG="$GITHUB_REF_NAME"
           # 上次失败可能留下同名 release（资产不完整）：删掉重建
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release delete "$GITHUB_REF_NAME" --yes
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
           fi
-          for i in 1 2 3 4 5; do
-            if gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
-                --title "$GITHUB_REF_NAME" --generate-notes 2>/tmp/gh-rel.err; then
-              echo "✅ Release $GITHUB_REF_NAME 创建成功（尝试 $i）"
-              exit 0
-            fi
-            echo "⚠️ 第 $i 次创建失败（ECONNRESET 类网络抖动常见），$((i*15))s 后重试…"
-            cat /tmp/gh-rel.err | tail -3
-            sleep $((i*15))
+          # 先建空 release：gh release create 带资产上传不支持覆盖同名资产
+          # （delete 后立即重建同名资产会遇 uploads 服务去重延迟 → 422
+          #  ReleaseAsset.name already exists），所以资产单独逐个上传。
+          gh release create "$TAG" --title "$TAG" --generate-notes
+          # 逐个上传 + --clobber（幂等覆盖）+ 指数退避重试（NAS 出口网络
+          # 大文件上传偶发 ECONNRESET）
+          failed=0
+          for f in dist/*; do
+            name=$(basename "$f")
+            ok=0
+            for i in 1 2 3 4 5; do
+              if gh release upload "$TAG" "$f" --clobber 2>/tmp/gh-up.err; then
+                echo "✅ $name 上传成功（尝试 $i）"
+                ok=1
+                break
+              fi
+              echo "⚠️ $name 第 $i 次失败：$(tail -1 /tmp/gh-up.err | cut -c1-120)，$((i*10))s 后重试…"
+              sleep $((i*10))
+            done
+            [ "$ok" = 1 ] || { failed=1; echo "::error::$name 上传 5 次均失败（产物在 NAS 本地 dist/）"; }
           done
-          echo "::error::Release 创建 5 次均失败；产物在 NAS 本地 dist/ 目录，可手动 gh release create"
-          exit 1
+          if [ "$failed" = 1 ]; then
+            echo "::error::部分资产上传失败；可用 gh release upload --clobber 手动补传"
+            exit 1
+          fi
+          echo "✅ Release $TAG 完成"
+          ls -l dist
