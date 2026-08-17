@@ -27,7 +27,8 @@ jobs:
   # ---------------------------------------------------------------------------
   android:
     name: Android (APK + AAB)
-    runs-on: ubuntu-latest
+    # Android 构建跑自托管 runner（NAS）：GitHub hosted 分钟数额度已耗尽
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -114,17 +115,21 @@ jobs:
         include:
           - platform: macOS
             os: macos-14
+            runner: macos-14
             task: packageDmg
             artifact_path: composeApp/build/compose/binaries/main/dmg/*.dmg
           - platform: Linux
             os: ubuntu-latest
+            # Linux 桌面包跑自托管 runner（NAS）：hosted 额度已耗尽
+            runner: [self-hosted, Linux, X64]
             task: packageDeb
             artifact_path: composeApp/build/compose/binaries/main/deb/*.deb
           - platform: Windows
             os: windows-latest
+            runner: windows-latest
             task: packageMsi
             artifact_path: composeApp/build/compose/binaries/main/msi/*.msi
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
