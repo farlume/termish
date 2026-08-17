@@ -110,7 +110,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - 技能：`ai-adb-gen`（生成用例）+ `ai-adb-run`（执行用例）
   （项目级 `.agents/skills/` 跟随仓库、克隆即得；不再安装用户级副本）
-- 资产：`.aiadb-test/cases/`（自然语言用例，ai-adb-gen 产出）
+- 资产：`.aiadb/cases/`（自然语言用例，ai-adb-gen 产出）
 - 连接/会话/通知/网络相关改动后：触发 ai-adb-run（A+B 全量，C/D/E 按影响面）；
   新增页面/功能后：ai-adb-gen 补用例
 - 每场景独立报告 PASS/FAIL/SKIP；失败先区分应用 bug 与操作问题

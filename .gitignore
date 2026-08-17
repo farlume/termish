@@ -43,4 +43,4 @@ iosApp/Podfile.lock
 iosApp/iosApp.xcworkspace/
 
 # AI adb 测试产物（截图/日志/报告，不入库）
-.aiadb-test/results/
+.aiadb/results/

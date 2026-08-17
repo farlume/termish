@@ -1,12 +1,12 @@
 ---
 name: ai-adb-run
-description: "通过 adb 执行 .aiadb-test/cases/ 下的自然语言 Android UI 测试用例（模拟器 + uiautomator dump + logcat 断言）。当用户说 ai-adb-run、'跑测试'、'执行用例'、'跑 A 组/某编号'、'回归测试' 时使用。支持 run 全部 / run <组字母> / run <编号>；执行前环境自检（模拟器/包/网络/日志基线），不可修复项缺失报错停止；FAIL 存证截图+日志到 .aiadb-test/results/ 并写 summary。反触发：仅适用于 Android 项目；无 cases/ 目录时报错提示先跑 ai-adb-gen。"
+description: "通过 adb 执行 .aiadb/cases/ 下的自然语言 Android UI 测试用例（模拟器 + uiautomator dump + logcat 断言）。当用户说 ai-adb-run、'跑测试'、'执行用例'、'跑 A 组/某编号'、'回归测试' 时使用。支持 run 全部 / run <组字母> / run <编号>；执行前环境自检（模拟器/包/网络/日志基线），不可修复项缺失报错停止；FAIL 存证截图+日志到 .aiadb/results/ 并写 summary。反触发：仅适用于 Android 项目；无 cases/ 目录时报错提示先跑 ai-adb-gen。"
 ---
 
 # ai-adb-run（AI 执行 Android UI 测试用例）
 
 > 通用技能：AI 通过 adb 对 Android 应用做黑盒 UI 自动化测试——**用例执行**。
-> 不绑定任何项目——用例由 `ai-adb-gen` 产出，存放在项目根 `.aiadb-test/`。
+> 不绑定任何项目——用例由 `ai-adb-gen` 产出，存放在项目根 `.aiadb/`。
 > 部署：项目级 `.agents/skills/`（跟随仓库、克隆即得；不再安装用户级副本）。
 
 ## 适用范围与拒绝规则（容错机制）
@@ -32,7 +32,7 @@ description: "通过 adb 执行 .aiadb-test/cases/ 下的自然语言 Android UI
 
 ## 用例输入
 
-- 目录：`.aiadb-test/cases/*.md`（ai-adb-gen 产出）
+- 目录：`.aiadb/cases/*.md`（ai-adb-gen 产出）
 - 格式：每个用例 `### <组字母><序号> <场景名>`，字段：前置/步骤/预期/恢复/依赖
   （模板见 ai-adb-gen）
 - **无 cases/ 目录或为空 → 报错停止，提示先跑 ai-adb-gen**，不硬跑
@@ -58,10 +58,10 @@ description: "通过 adb 执行 .aiadb-test/cases/ 下的自然语言 Android UI
 3. 逐用例执行；**依赖未满足（前置用例 SKIP/FAIL）→ 本用例 SKIP**（注明原因）
 4. **偶发失败重试**：非环境类失败自动重试 1 次；重试仍失败才算 FAIL
 5. **FAIL 存证**（必做）：
-   - `screencap` 截图 → `.aiadb-test/results/<时间戳>/<编号>.png`
+   - `screencap` 截图 → `.aiadb/results/<时间戳>/<编号>.png`
    - `logcat -d` 相关 tag 段 → 同目录 `<编号>.log`
    - 报告附存证路径
-6. **结果持久化**：写 `.aiadb-test/results/<时间戳>/summary.md`
+6. **结果持久化**：写 `.aiadb/results/<时间戳>/summary.md`
    （PASS/FAIL/SKIP 清单 + 存证索引 + 发现的 bug）
 7. 发现 bug：记录最小复现 + 日志，修复后重跑该用例
 8. 报告格式：
