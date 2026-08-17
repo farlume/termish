@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider 路径：诊断日志导出用（files/logs） -->
+<paths>
+    <files-path name="logs" path="logs/" />
+</paths>

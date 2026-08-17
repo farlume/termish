@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
+import dev.termish.util.TermLog
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.alipay_qr
 import dev.termish.generated.resources.wechat_qr
@@ -117,6 +118,7 @@ fun SettingsScreen(
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showTerminalTypeDialog by remember { mutableStateOf(false) }
     var showNotificationPage by remember { mutableStateOf(false) }
+    var showDiagnosticsPage by remember { mutableStateOf(false) }
     var notificationEnabled by remember { mutableStateOf(settings.notificationEnabled) }
     var notificationDisabledEvents by remember { mutableStateOf(settings.notificationDisabledEvents) }
 
@@ -154,6 +156,11 @@ fun SettingsScreen(
                     s.settingsNotifications,
                     if (notificationEnabled) s.settingsOn else s.settingsOff,
                 ) { showNotificationPage = true }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(
+                    s.settingsDiagnostics,
+                    if (TermLog.diagnosticsEnabled) s.settingsOn else s.settingsOff,
+                ) { showDiagnosticsPage = true }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
             }
@@ -260,6 +267,17 @@ fun SettingsScreen(
                 persist()
             },
             onBack = { showNotificationPage = false },
+        )
+    }
+    AnimatedVisibility(
+        visible = showDiagnosticsPage,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SettingsDiagnosticsScreen(
+            enabled = TermLog.diagnosticsEnabled,
+            onChangeEnabled = { TermLog.diagnosticsEnabled = it },
+            onBack = { showDiagnosticsPage = false },
         )
     }
     if (showSupportDialog) {
