@@ -106,6 +106,14 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 - **破坏性环境操作先说明影响**：`pm clear`（清模拟器数据）、停 demo 服务器
   等操作会丢状态，执行前告知用户
 
+## E2E 场景测试（AI 执行）
+
+- 用例清单：`docs/e2e-scenarios.md`（自然语言，AI 按清单执行 + logcat 断言）
+- 连接/会话/通知/网络相关改动后：跑清单 A+B 全量，C/D/E 按影响面
+- 每个场景独立报告 PASS/FAIL/SKIP；失败先区分应用 bug 与操作问题
+- 快速回归可用 `scripts/e2e/e2e-run.sh`（bash 固化 case，001-006），
+  与自然语言清单互补（脚本=快速回归，清单=全量场景）
+
 ## Traps
 
 - After editing `.env` / signing secrets run `make gradle-stop` (the Gradle daemon
