@@ -198,6 +198,12 @@ jobs:
           done
           ls -l
 
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist
+          shasum -a 256 Termish-* > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
