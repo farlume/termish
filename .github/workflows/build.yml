@@ -140,11 +140,14 @@ jobs:
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
       # 失败则本平台不打包。集成测试需要本地 sshd：
       # 先安装并启动测试 sshd，desktopTest 会按 22222 端口可用性自动跑或 SKIP
-      - name: Install sshd for integration tests
+      - name: Install sshd + binutils for tests/package
         if: matrix.platform == 'Linux'
+        # openssh-server/netcat-openbsd：desktopTest 集成测试自启动 sshd(22222)
+        # binutils(objcopy)：jlink 生成运行时镜像时剥离原生库调试符号，
+        #   最小化 Debian 不自带，缺失会报 "Cannot run program objcopy" 导致 createRuntimeImage 失败
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd
+          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd binutils
 
       - name: Start test sshd
         if: matrix.platform == 'Linux'
