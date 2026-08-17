@@ -96,6 +96,16 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 - Integration tests **self-detect** 127.0.0.1:22222 and SKIP gracefully when sshd
   is absent — skipping is not a failure, don't try to "fix" it
 
+## Debug & edit discipline
+
+- **调试用 `TermLog`，禁止临时 `println`**；临时打点调试完必须移除——
+  打点体系已覆盖全链路，需要新打点走 `TermLog`/`TermTrace` 而非临时代码
+- **批量脚本（sed/python）改代码后必须编译 + 抽查 diff 替换点**——
+  历史教训：变量遮蔽（`s` 顶掉 AppStrings）、缩进错乱、全限定名漂移
+  全出在批量替换；批量改完逐处确认替换点语义
+- **破坏性环境操作先说明影响**：`pm clear`（清模拟器数据）、停 demo 服务器
+  等操作会丢状态，执行前告知用户
+
 ## Traps
 
 - After editing `.env` / signing secrets run `make gradle-stop` (the Gradle daemon
@@ -126,5 +136,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - Commit messages are written in **Chinese**, short summary + body explaining
   **why** (see `git log` for the house style)
+- Commit message 含 `$` 等 shell 敏感字符时用 `-F <file>` 方式提交，
+  避免 shell 展开乱码（历史教训：`$TERM` 被展开）
 - Before a PR: `make test` and `make lint`; transport-layer changes also run
   `make test-integration`
