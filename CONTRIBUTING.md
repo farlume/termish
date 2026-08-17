@@ -7,7 +7,7 @@
 | 平台 | 需要 |
 |---|---|
 | Android / Desktop | JDK 17+、Android SDK（`local.properties` 或 `ANDROID_HOME`）；模拟器或真机 |
-| iOS | Xcode + 一次性原生依赖：`make ios-native` + `make ios-mosh`（见 `scripts/` 头部注释） |
+| iOS | Xcode + 一次性原生依赖：`make ios-native` + `make ios-framework`（见 `scripts/` 头部注释） |
 
 常用入口（`make help` 查看全部，或直接 `./gradlew <task>`）：
 
@@ -27,11 +27,28 @@ make release          # 已签名 release（需要 .env，见 .env.example）
   临时 dp/alpha 字面量
 - 字符串走 `AppStrings`（中英双语），不要硬编码文案
 
+## 文档同步
+
+**语言策略（刻意为之，不是遗漏）**：README 是用户面，双语文档化（`README.md`
+英文权威 + `README.zh-CN.md` 中文全文镜像）；`docs/` 深水文档是贡献者面，
+单份中文 + 开头英文摘要——与代码注释、提交语言一致，不为 docs/ 维护英文副本，
+除非出现真实的国际贡献需求（英文 issue/PR 出现后再按需翻译）。
+
+- `README.md`（英文权威）与 `README.zh-CN.md`（中文全文镜像）必须**同步修改**——
+  改任一结构（标题层级、章节增删、事实性内容）时两份一起改
+- 深水文档在 `docs/`：`architecture.md` / `terminal-emulator.md` / `mosh.md` /
+  `input-pipeline.md`。它们面向贡献者，正文中文、开头英文摘要
+- `term/` 行为改动（转义序列、buffer、宽字符）→ 同步 `docs/terminal-emulator.md`
+  的支持矩阵或模型描述，并补 `commonTest/` 单测
+- `mosh/` 行为改动（传输/加密/预测/漫游）→ 同步 `docs/mosh.md` 的对应小节
+- UI 交互改动（输入管线、工具栏、手势）→ 同步 `docs/input-pipeline.md`
+
 ## 提交与 PR
 
 - Commit message：中文简述 + 必要时正文说明**为什么**（参考 git log 风格）
 - PR 前请跑过 `make test` 和 `make lint`
-- 改动传输层（sshj/libssh2/Mosh）请跑 `make test-integration`
+- 改动传输层（sshj/libssh2/SFTP）请跑 `make test-integration`；mosh 无 mosh-server
+  集成测试，改动收发逻辑建议本地连真实 mosh-server 手动验证（见 docs/mosh.md）
 - 涉及签名/发版：不要提交任何真实机密；`.env`、`*.jks` 已在 `.gitignore`
 
 ## 版本与发版
