@@ -207,6 +207,10 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 - [docs/terminal-emulator.md](docs/terminal-emulator.md) —— 缓冲模型（COW/行级同步）、
   支持的转义序列矩阵、渲染笔记
 - [docs/mosh.md](docs/mosh.md) —— SSP 实现、加密、预测引擎、漫游
+- [docs/ssh-transport.md](docs/ssh-transport.md) —— SshSession 契约、sshj 与
+  libssh2 双引擎、认证链、mosh 引导、系统探测
+- [docs/sftp.md](docs/sftp.md) —— SftpSession 契约、双平台实现、longentry
+  兑底、递归下载
 - [docs/input-pipeline.md](docs/input-pipeline.md) —— IME 组合态管线、退格语义、
   触摸 → 鼠标事件映射
 - [crypto/README.md](composeApp/src/commonMain/kotlin/dev/termish/crypto/README.md) ——

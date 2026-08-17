@@ -236,6 +236,10 @@ Deep dives for contributors (English summary at the top of each file):
   (COW / line-level sync), supported escape-sequence matrix, renderer notes
 - [docs/mosh.md](docs/mosh.md) — SSP implementation, crypto, prediction engine,
   roaming
+- [docs/ssh-transport.md](docs/ssh-transport.md) — SshSession contract, sshj
+  and libssh2 engines, auth chain, mosh bootstrap, system probing
+- [docs/sftp.md](docs/sftp.md) — SftpSession contract, both engine
+  implementations, longentry fallback, recursive download
 - [docs/input-pipeline.md](docs/input-pipeline.md) — IME composition pipeline,
   backspace semantics, touch → mouse-event mapping
 - [crypto/README.md](composeApp/src/commonMain/kotlin/dev/termish/crypto/README.md) —
