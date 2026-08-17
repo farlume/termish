@@ -132,10 +132,11 @@ data class AppStrings(
     val settingsLanguageSystem: String,
     val languageZh: String,
     val languageEn: String,
-    // 设置页「关于」区（版本/官网入口）
+    // 设置页「关于」区（版本/官网/联系入口）
     val settingsGroupAbout: String,
     val settingsVersion: String,
     val settingsWebsite: String,
+    val settingsContact: String,
     // 终端页
     val terminalCancel: String,
     val terminalCopied: String,
@@ -282,6 +283,7 @@ private val EnStrings = AppStrings(
     settingsGroupAbout = "About",
     settingsVersion = "Version",
     settingsWebsite = "Website",
+    settingsContact = "Contact",
     terminalCancel = "Cancel",
     terminalCopied = "Copied",
     terminalPasted = "Pasted",
@@ -417,6 +419,7 @@ private val ZhStrings = AppStrings(
     settingsGroupAbout = "关于",
     settingsVersion = "版本",
     settingsWebsite = "官网",
+    settingsContact = "联系",
     terminalCancel = "取消",
     terminalCopied = "已复制",
     terminalPasted = "已粘贴",

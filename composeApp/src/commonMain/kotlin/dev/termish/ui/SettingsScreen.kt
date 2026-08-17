@@ -50,9 +50,10 @@ import dev.termish.data.AppSettings
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
-// ---- 关于区外链（官网；文档/GitHub 待仓库公开后再加回） ----
+// ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 待仓库公开后再加回） ----
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
+private const val CONTACT_EMAIL = "ttermish@gmail.com"
 
 private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
     ThemeMode.DARK -> s.settingsThemeDark
@@ -161,6 +162,8 @@ fun SettingsScreen(
                 SettingsOptionItem(s.settingsVersion, APP_VERSION) {}
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
             }
 
             Spacer(Modifier.height(24.dp))
