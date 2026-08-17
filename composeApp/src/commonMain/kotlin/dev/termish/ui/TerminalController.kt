@@ -67,6 +67,8 @@ class TerminalController(
     private val repository: HostRepository,
     /** 意外断线时自动重连（指数退避，最多 3 次）。 */
     private val autoReconnect: Boolean = true,
+    /** SSH 会话工厂（测试注入 fake；生产默认走平台引擎）。 */
+    internal val sessionFactory: (SshConnection, SshCallbacks) -> SshSession = ::createSshSession,
 ) {
     val buffer = TerminalBuffer(80, 24, maxScrollbackLines = 10_000)
     val emulator = TerminalEmulator(buffer)
@@ -236,7 +238,7 @@ class TerminalController(
                     doConnectMosh()
                     return@launch
                 }
-                val s = createSshSession(newConnection(), callbacks())
+                val s = sessionFactory(newConnection(), callbacks())
                 session = s
                 val info = s.connectAndStart(lastCols, lastRows)
                 // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须释放刚建好的连接

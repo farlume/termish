@@ -119,6 +119,31 @@ class SftpUiState {
     val history = mutableStateListOf<String>()
 }
 
+/** 远端路径拼接：根目录下不产生双斜杠。 */
+internal fun joinPath(base: String, name: String): String =
+    if (base == "/") "/$name" else "$base/$name"
+
+/**
+ * 递归下载目录：按相对路径写入本地 [DirectorySink]。跳过 `.`/`..`；
+ * 单文件下载失败会沿调用栈抛异常（由调用方提示），已写完的文件关闭。
+ */
+internal fun downloadDir(session: SftpSession, remotePath: String, sink: DirectorySink, rel: String = "") {
+    for (e in session.list(remotePath)) {
+        if (e.name == "." || e.name == "..") continue
+        val childRel = if (rel.isEmpty()) e.name else "$rel/${e.name}"
+        if (e.isDirectory) {
+            downloadDir(session, joinPath(remotePath, e.name), sink, childRel)
+        } else {
+            val file = sink.openFile(childRel)
+            try {
+                session.download(joinPath(remotePath, e.name)) { chunk -> file.write(chunk) }
+            } finally {
+                file.close()
+            }
+        }
+    }
+}
+
 @Composable
 fun SftpContent(
     host: Host,
@@ -164,9 +189,6 @@ fun SftpContent(
             else -> onBack()
         }
     }
-
-    fun joinPath(base: String, name: String): String =
-        if (base == "/") "/$name" else "$base/$name"
 
     suspend fun reload() {
         entries = null
@@ -217,24 +239,6 @@ fun SftpContent(
     fun startDownload(entry: SftpEntry) {
         pendingDownload = entry
         savePicker(entry.name)
-    }
-
-    /** 递归下载目录：按相对路径写入本地 [DirectorySink]。 */
-    fun downloadDir(session: SftpSession, remotePath: String, sink: DirectorySink, rel: String = "") {
-        for (e in session.list(remotePath)) {
-            if (e.name == "." || e.name == "..") continue
-            val childRel = if (rel.isEmpty()) e.name else "$rel/${e.name}"
-            if (e.isDirectory) {
-                downloadDir(session, joinPath(remotePath, e.name), sink, childRel)
-            } else {
-                val file = sink.openFile(childRel)
-                try {
-                    session.download(joinPath(remotePath, e.name)) { chunk -> file.write(chunk) }
-                } finally {
-                    file.close()
-                }
-            }
-        }
     }
 
     // 选择保存目录后递归下载当前目录；取消保存则不回调
@@ -733,7 +737,7 @@ private fun NewFolderDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) 
     )
 }
 
-private fun formatTime(millis: Long): String {
+internal fun formatTime(millis: Long): String {
     if (millis <= 0L) return ""
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
     fun p(n: Int) = n.toString().padStart(2, '0')
@@ -744,7 +748,7 @@ private fun formatTime(millis: Long): String {
  * SFTP 文件名匹配：空格分隔多关键词（AND 关系）；含 `*`/`?` 的关键词按通配符匹配，
  * 其余按忽略大小写的包含匹配。例：`*.log`、`conf nginx`、`readme?`。
  */
-private fun matchesQuery(name: String, query: String): Boolean {
+internal fun matchesQuery(name: String, query: String): Boolean {
     val q = query.trim()
     if (q.isEmpty()) return true
     return q.split(Regex("\\s+")).all { part ->
@@ -753,7 +757,7 @@ private fun matchesQuery(name: String, query: String): Boolean {
     }
 }
 
-private fun globMatch(name: String, pattern: String): Boolean {
+internal fun globMatch(name: String, pattern: String): Boolean {
     val regex = buildString {
         append('^')
         for (ch in pattern) {

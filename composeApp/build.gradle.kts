@@ -66,6 +66,7 @@ kotlin {
     sourceSets {
         val desktopMain by getting
         val androidMain by getting
+        val desktopTest by getting
 
         // Android 与 desktop 共享的 JVM SSH 引擎（sshj）
         val jvmSharedMain by creating {
@@ -115,6 +116,12 @@ kotlin {
         desktopMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.slf4j.nop)
+        }
+
+        desktopTest.dependencies {
+            // Dispatchers.setMain + StandardTestDispatcher：TerminalController 的
+            // 输出消费循环固定在 Dispatchers.Main，测试需要可控的主调度器
+            implementation(libs.kotlinx.coroutines.test)
         }
     }
 }
