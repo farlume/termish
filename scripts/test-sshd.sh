@@ -1,10 +1,10 @@
 #!/bin/bash
-# 启动一个本地非 root 测试 sshd（端口 2222），用于传输层集成测试。
+# 启动一个本地非 root 测试 sshd（端口 22222），用于传输层集成测试。
 # 生成 host/client ed25519 密钥，用 client 公钥做 pubkey 认证。
 set -e
 
 DIR="${Termish_TEST_DIR:-/tmp/termish_test}"
-PORT="${Termish_TEST_PORT:-2222}"
+PORT="${Termish_TEST_PORT:-22222}"
 mkdir -p "$DIR"
 cd "$DIR"
 
@@ -46,6 +46,20 @@ if [ ! -d /run/sshd ] && [ -w / ]; then
 fi
 
 echo "启动 sshd 于 127.0.0.1:$PORT（日志: $DIR/sshd.log）"
+# 清理上次 run 残留的旧实例（同一 runner 上重复执行时端口可能被占）
+if [ -f "$DIR/sshd.pid" ] && kill -0 "$(cat "$DIR/sshd.pid")" 2>/dev/null; then
+  echo "停止残留旧 sshd pid=$(cat "$DIR/sshd.pid")"
+  kill "$(cat "$DIR/sshd.pid")" && sleep 0.5
+fi
 /usr/sbin/sshd -f "$DIR/sshd_config" -E "$DIR/sshd.log"
 sleep 0.5
-nc -z -w2 127.0.0.1 "$PORT" && echo "OK: 端口 $PORT 已监听"
+# sshd 守护进程 fork 后父进程立即返回 0（set -e 抓不到 bind 失败），
+# 且 nc 探测可能命中别的服务误报 OK（如 gitlab 的 2222）——
+# 必须以 sshd 日志中的监听确认行作为唯一成功判据。
+if grep -q "Server listening on" "$DIR/sshd.log" 2>/dev/null; then
+  echo "OK: 端口 $PORT 已监听"
+else
+  echo "FAIL: sshd 未监听 $PORT，日志如下："
+  tail -20 "$DIR/sshd.log" 2>/dev/null || true
+  exit 1
+fi

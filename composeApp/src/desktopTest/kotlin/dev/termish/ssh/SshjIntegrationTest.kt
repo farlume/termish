@@ -11,7 +11,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
- * sshj 引擎集成测试：连接本地测试 sshd（127.0.0.1:2222）并运行命令。
+ * sshj 引擎集成测试：连接本地测试 sshd（127.0.0.1:22222）并运行命令。
  *
  * sshd 未运行时自动跳过（scripts/test-sshd.sh 或 ./gradlew startTestSshd 启动）。
  */
@@ -20,7 +20,7 @@ class SshjIntegrationTest {
     private fun env(key: String, default: String): String = System.getenv(key) ?: default
 
     private fun sshdReachable(): Boolean = runCatching {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "2222").toInt()), 500) }
+        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
     }.isSuccess
 
     private fun skipUnlessSshd(): Boolean {
@@ -107,7 +107,7 @@ class SshjIntegrationTest {
         runSession(
             SshConnection(
                 host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "2222").toInt(),
+                port = env("Termish_TEST_PORT", "22222").toInt(),
                 username = System.getProperty("user.name"),
                 privateKeyPem = pemFile.readText(),
             )
@@ -125,7 +125,7 @@ class SshjIntegrationTest {
         runSession(
             SshConnection(
                 host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "2222").toInt(),
+                port = env("Termish_TEST_PORT", "22222").toInt(),
                 username = System.getProperty("user.name"),
                 privateKeyPem = pemFile.readText(),
             ),
@@ -145,7 +145,7 @@ class SshjIntegrationTest {
         val session = createSshSession(
             SshConnection(
                 host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "2222").toInt(),
+                port = env("Termish_TEST_PORT", "22222").toInt(),
                 username = System.getProperty("user.name"),
                 privateKeyPem = pemFile.readText(),
             ),

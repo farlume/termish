@@ -217,7 +217,7 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 # 单元测试（crypto RFC 向量 + 终端模拟器 + mosh）
 ./gradlew :composeApp:desktopTest
 
-# 传输层集成测试（自动起本地测试 sshd；测试探测 127.0.0.1:2222，
+# 传输层集成测试（自动起本地测试 sshd；测试探测 127.0.0.1:22222，
 # sshd 缺席时优雅 SKIP，跳过不算失败）
 ./gradlew testIntegration
 
@@ -232,7 +232,7 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 ./gradlew :composeApp:linkDebugFrameworkIosArm64
 open iosApp/iosApp.xcodeproj
 
-# 本地测试 sshd（2222 端口，自动生成 ed25519 密钥）
+# 本地测试 sshd（22222 端口，自动生成 ed25519 密钥）
 ./scripts/test-sshd.sh
 ```
 

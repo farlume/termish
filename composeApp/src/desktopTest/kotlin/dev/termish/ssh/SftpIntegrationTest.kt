@@ -14,7 +14,7 @@ class SftpIntegrationTest {
     private fun env(key: String, default: String): String = System.getenv(key) ?: default
 
     private fun sshdReachable(): Boolean = runCatching {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "2222").toInt()), 500) }
+        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
     }.isSuccess
 
     private fun newSession(): SftpSession {
@@ -23,7 +23,7 @@ class SftpIntegrationTest {
         return createSftpSession(
             SshConnection(
                 host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "2222").toInt(),
+                port = env("Termish_TEST_PORT", "22222").toInt(),
                 username = System.getProperty("user.name"),
                 privateKeyPem = pemFile.readText(),
             ),

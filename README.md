@@ -247,7 +247,7 @@ Deep dives for contributors (English summary at the top of each file):
 ./gradlew :composeApp:desktopTest
 
 # Transport integration tests (auto-starts the local test sshd; tests self-detect
-# sshd on 127.0.0.1:2222 and SKIP gracefully when absent)
+# sshd on 127.0.0.1:22222 and SKIP gracefully when absent)
 ./gradlew testIntegration
 
 # Android APK
@@ -261,7 +261,7 @@ Deep dives for contributors (English summary at the top of each file):
 ./gradlew :composeApp:linkDebugFrameworkIosArm64
 open iosApp/iosApp.xcodeproj
 
-# Local test sshd (port 2222, generates ed25519 keys)
+# Local test sshd (port 22222, generates ed25519 keys)
 ./scripts/test-sshd.sh
 ```
 

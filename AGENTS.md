@@ -23,7 +23,7 @@ make ios-native          # one-time cross-compile OpenSSL + libssh2 → iosApp/n
 make ios-framework       # Kotlin framework (simulator + device debug)
 ```
 
-Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:2222, generates ephemeral ed25519 keys).
+Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:22222, generates ephemeral ed25519 keys).
 Demo server (screenshots / herdr+pi): Docker container `termish-demo`,
 `termish@127.0.0.1:2223` (password `termish-demo`, fixed UDP 60100 for mosh).
 Android emulator reaches it at `10.0.2.2:2223`; iOS simulator (shares host
@@ -61,7 +61,7 @@ network) at `127.0.0.1:2223` — never `10.0.2.2` on iOS.
   matching unit test in `commonTest/`
 - Any change to the transport layer (sshj / libssh2 / mosh / SFTP) → run
   `make test-integration`
-- Integration tests **self-detect** 127.0.0.1:2222 and SKIP gracefully when sshd
+- Integration tests **self-detect** 127.0.0.1:22222 and SKIP gracefully when sshd
   is absent — skipping is not a failure, don't try to "fix" it
 
 ## Traps

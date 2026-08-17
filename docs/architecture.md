@@ -29,7 +29,7 @@ composeApp/
 ├── desktopMain/               # JVM 桌面开发/测试 harness + 打包（DMG/DEB/MSI）
 ├── iosMain/                   # MainViewController + libssh2 引擎 + Keychain + POSIX UDP
 ├── commonTest/                # crypto RFC 向量 + 终端模拟器 + mosh 单元测试
-└── desktopTest/               # sshj / SFTP 集成测试（打真实 sshd，127.0.0.1:2222）
+└── desktopTest/               # sshj / SFTP 集成测试（打真实 sshd，127.0.0.1:22222）
 ```
 
 ## 平台分工

@@ -139,7 +139,7 @@ jobs:
 
       # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
       # 失败则本平台不打包。集成测试需要本地 sshd：
-      # 先安装并启动测试 sshd，desktopTest 会按 2222 端口可用性自动跑或 SKIP
+      # 先安装并启动测试 sshd，desktopTest 会按 22222 端口可用性自动跑或 SKIP
       - name: Install sshd for integration tests
         if: matrix.platform == 'Linux'
         run: |
@@ -158,7 +158,7 @@ jobs:
 
       - name: Run desktop tests
         if: matrix.platform == 'Linux'
-        # 集成测试按 sshd(2222) 可用性自我探测，无需 TERMISH_TEST_RUN
+        # 集成测试按 sshd(22222) 可用性自我探测，无需 TERMISH_TEST_RUN
         run: ./gradlew :composeApp:desktopTest
 
       - name: Package (${{ matrix.platform }})
