@@ -202,6 +202,9 @@ jobs:
     permissions:
       contents: write
     steps:
+      # gh release create --generate-notes 需要 git 上下文，必须 checkout
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
