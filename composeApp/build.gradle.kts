@@ -54,6 +54,13 @@ kotlin {
         target.compilations.getByName("main").cinterops.create("zlib") {
             defFile(zlibDef)
         }
+        target.compilations.getByName("main").cinterops.create("sftpWrite") {
+            defFile(project.file("src/nativeInterop/cinterop/sftp_write.def"))
+            compilerOpts(
+                "-I${nativeRoot.resolve("include")}",
+                "-I${project.file("src/nativeInterop/cinterop")}",
+            )
+        }
     }
 
     sourceSets {
@@ -95,6 +102,7 @@ kotlin {
         androidMain.dependencies {
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.documentfile)
             implementation(libs.bouncycastle.prov)
             implementation(libs.bouncycastle.pkix)
         }

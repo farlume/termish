@@ -143,6 +143,8 @@ fun SftpContent(
     var fileMenu by state::fileMenu
     var pendingDownload by state::pendingDownload
     var showParents by state::showParents
+    /** 等待用户选择保存目录后开始递归下载的远端目录。 */
+    var pendingDownloadDir by remember { mutableStateOf<String?>(null) }
 
     /** 统一目录跳转入口：压入当前路径到浏览历史，再切换目录。 */
     fun navigateTo(newPath: String) {
@@ -215,6 +217,55 @@ fun SftpContent(
     fun startDownload(entry: SftpEntry) {
         pendingDownload = entry
         savePicker(entry.name)
+    }
+
+    /** 递归下载目录：按相对路径写入本地 [DirectorySink]。 */
+    fun downloadDir(session: SftpSession, remotePath: String, sink: DirectorySink, rel: String = "") {
+        for (e in session.list(remotePath)) {
+            if (e.name == "." || e.name == "..") continue
+            val childRel = if (rel.isEmpty()) e.name else "$rel/${e.name}"
+            if (e.isDirectory) {
+                downloadDir(session, joinPath(remotePath, e.name), sink, childRel)
+            } else {
+                val file = sink.openFile(childRel)
+                try {
+                    session.download(joinPath(remotePath, e.name)) { chunk -> file.write(chunk) }
+                } finally {
+                    file.close()
+                }
+            }
+        }
+    }
+
+    // 选择保存目录后递归下载当前目录；取消保存则不回调
+    val saveDir = rememberDirectorySaver { _, sink ->
+        val target = pendingDownloadDir
+        if (target == null) {
+            sink.close()
+            return@rememberDirectorySaver
+        }
+        scope.launch {
+            try {
+                withContext(ioDispatcher()) {
+                    downloadDir(session, target, sink)
+                }
+                sink.close()
+                snackbar.showSnackbar(s.sftpDownloaded)
+            } catch (e: Exception) {
+                try {
+                    sink.close()
+                } catch (_: Exception) {
+                }
+                snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
+            }
+        }
+    }
+
+    fun startDownloadDir() {
+        val remotePath = path
+        val name = remotePath.substringAfterLast('/').ifBlank { "root" }
+        pendingDownloadDir = remotePath
+        saveDir(name)
     }
 
     // 首次进入（path 尚未初始化）：realpath 解析真实用户主目录（~），
@@ -419,7 +470,7 @@ fun SftpContent(
                                 scope.launch { snackbar.showSnackbar(s.sftpCopied) }
                             },
                             onChangeDownload = {
-                                scope.launch { snackbar.showSnackbar("TODO: ${s.sftpChangeDownload}") }
+                                startDownloadDir()
                             },
                         )
                         IconButton(onClick = { searching = true }) {

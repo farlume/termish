@@ -10,6 +10,7 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.readBytes
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.toKString
 import libssh2.LIBSSH2_ERROR_EAGAIN
@@ -33,6 +34,7 @@ import libssh2.libssh2_sftp_symlink_ex
 import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_write
 import platform.posix.usleep
+import sftp_write.termish_sftp_write
 
 actual fun createSftpSession(connection: SshConnection, callbacks: SshCallbacks): SftpSession =
     SftpSessionLibssh2(connection, callbacks)
@@ -144,11 +146,33 @@ private class SftpSessionLibssh2(
         val h = libssh2_sftp_open_ex(s, remotePath, remotePath.length.toUInt(), flags, 0x1A4L, 0)
             ?: throw SshException("SFTP 打开文件失败: $remotePath")
         try {
-            // libssh2_sftp_write 的 buffer 是 const char*（cinterop 映射为 String）：
-            // iOS 上传走文本通道（二进制文件建议用 Android/desktop 端）
-            val text = content.decodeToString()
-            val n = libssh2_sftp_write(h, text, text.length.toULong())
-            if (n < 0) throw SshException("SFTP 写入失败: $remotePath")
+            // 字节分块写入：避免把二进制解码成文本导致内容损坏
+            val chunk = 32 * 1024
+            var off = 0
+            while (off < content.size) {
+                val len = minOf(chunk, content.size - off)
+                content.usePinned { pinned ->
+                    var written = 0
+                    while (written < len) {
+                        var guard = 0
+                        while (true) {
+                            val n = termish_sftp_write(
+                                h, pinned.addressOf(off + written).reinterpret(), (len - written).toULong(),
+                            )
+                            if (n > 0) {
+                                written += n.toInt()
+                                break
+                            }
+                            if (n.toInt() == LIBSSH2_ERROR_EAGAIN && guard++ < 200) {
+                                usleep(30_000u)
+                                continue
+                            }
+                            throw SshException("SFTP 写入失败: $remotePath")
+                        }
+                    }
+                }
+                off += len
+            }
         } finally {
             libssh2_sftp_close_handle(h)
         }
