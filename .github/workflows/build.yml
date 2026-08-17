@@ -96,10 +96,6 @@ jobs:
 
       - name: Upload release APK and AAB
         if: github.event_name != 'pull_request'
-        # NAS 出口网络对大文件上传不稳（ECONNRESET）：构建照跑验证签名配置，
-        # 上传失败不阻塞 workflow（产物仍在 NAS 本地 build/ 目录，可手动取）。
-        # 网络修复后删掉 continue-on-error 恢复严格上传。
-        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: android-release
@@ -111,14 +107,9 @@ jobs:
   # ---------------------------------------------------------------------------
   # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包；
   # PR 只跑 Linux 单测，不打包
-  #
-  # 暂时禁用（if: false）：NAS 自托管 runner 上传大产物（.deb/release APK）
-  # 时 ECONNRESET（出口网络对长连接不稳），Android 小产物 debug 可传。
-  # NAS 网络修复后恢复；恢复时把 if: false 删掉即可（matrix 配置保留）。
   # ---------------------------------------------------------------------------
   desktop:
     name: Desktop (${{ matrix.platform }})
-    if: false
     # 注意：job 级 if 不可用 matrix context（GitHub 限制）
     # macOS/Windows 暂从 matrix 移除：hosted 额度被暂停（账单问题），
     # NAS 只能打 Linux 包；账单恢复后加回（见 git 历史中的原配置）
