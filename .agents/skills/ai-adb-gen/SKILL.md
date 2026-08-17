@@ -1,3 +1,8 @@
+---
+name: ai-adb-gen
+description: "为 Android 应用生成黑盒 UI 自动化测试用例（自然语言，adb + logcat 断言）。当用户说 ai-adb-gen、'生成测试用例'、'补用例'，或要求为某个场景（连接/网络/会话/Mosh/SFTP/主机管理/终端键盘/设置页）生成 Android UI 测试用例时使用。支持 'ai-adb-gen <中文场景>' 按需增量生成指定场景（推荐用法），裸调用为全量生成；产物写入项目根 .aiadb-test/cases/，供 ai-adb-run 执行。反触发：仅适用于 Android 项目（含 KMP android target）；纯 iOS/桌面/服务端项目拒绝执行。"
+---
+
 # ai-adb-gen（AI 生成 Android UI 测试用例）
 
 > 通用技能：AI 通过 adb 对 Android 应用做黑盒 UI 自动化测试——**用例生成**。

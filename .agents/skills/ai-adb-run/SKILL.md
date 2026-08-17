@@ -1,3 +1,8 @@
+---
+name: ai-adb-run
+description: "通过 adb 执行 .aiadb-test/cases/ 下的自然语言 Android UI 测试用例（模拟器 + uiautomator dump + logcat 断言）。当用户说 ai-adb-run、'跑测试'、'执行用例'、'跑 A 组/某编号'、'回归测试' 时使用。支持 run 全部 / run <组字母> / run <编号>；执行前环境自检（模拟器/包/网络/日志基线），不可修复项缺失报错停止；FAIL 存证截图+日志到 .aiadb-test/results/ 并写 summary。反触发：仅适用于 Android 项目；无 cases/ 目录时报错提示先跑 ai-adb-gen。"
+---
+
 # ai-adb-run（AI 执行 Android UI 测试用例）
 
 > 通用技能：AI 通过 adb 对 Android 应用做黑盒 UI 自动化测试——**用例执行**。
