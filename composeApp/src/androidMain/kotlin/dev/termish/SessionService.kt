@@ -8,6 +8,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Handler
+import android.os.Looper
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -20,6 +22,17 @@ import android.util.Log
 class SessionService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
+    private val handler = Handler(Looper.getMainLooper())
+    /** wakelock 兜底超时续期：有活跃会话时每 8 小时刷新一次 12h 超时。 */
+    private val renewWakeLock = object : Runnable {
+        override fun run() {
+            if (activeSessions > 0) {
+                releaseWakeLock()
+                acquireWakeLock()
+                handler.postDelayed(this, RENEW_INTERVAL_MS)
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -29,6 +42,7 @@ class SessionService : Service() {
             Log.i(TAG, "stop: activeSessions=$activeSessions")
             if (activeSessions == 0) {
                 releaseWakeLock()
+                handler.removeCallbacks(renewWakeLock)
                 stopSelf()
             }
             return START_NOT_STICKY
@@ -48,6 +62,8 @@ class SessionService : Service() {
         }
         startForegroundCompat()
         acquireWakeLock()
+        handler.removeCallbacks(renewWakeLock)
+        handler.postDelayed(renewWakeLock, RENEW_INTERVAL_MS)
         return START_STICKY
     }
 
@@ -56,10 +72,12 @@ class SessionService : Service() {
         // 保活到此为止，释放锁并退出；用户回前台时由生命周期钩子自动重连。
         Log.w(TAG, "foreground service timed out (Android 15 dataSync 6h limit)")
         releaseWakeLock()
+        handler.removeCallbacks(renewWakeLock)
         stopSelf()
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(renewWakeLock)
         releaseWakeLock()
         activeSessions = 0
         Log.i(TAG, "destroyed")
@@ -114,6 +132,7 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session"
         private const val NOTIF_ID = 1
         private const val ACTION_STOP = "dev.termish.SESSION_STOP"
+        private const val RENEW_INTERVAL_MS = 8 * 60 * 60 * 1000L
 
         @Volatile
         private var activeSessions = 0

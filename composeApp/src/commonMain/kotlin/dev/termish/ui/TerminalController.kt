@@ -24,6 +24,7 @@ import dev.termish.term.TerminalSelection
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalThemes
 import dev.termish.util.ioDispatcher
+import dev.termish.util.NetworkChangeKind
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -114,6 +115,8 @@ class TerminalController(
     /** Mosh 主题注入：非空表示本会话开启（见 [prepareThemeSync]）。 */
     private var moshThemePayload: ByteArray? = null
     private var moshThemeInjected = false
+    /** 网络切换触发的主动重连时间戳：15 秒防抖，避免网络抖动引发连续重连。 */
+    private var lastNetworkReconnectAt = 0L
     init {
         // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
         // 必须在创建时按当前主题设置，不能等 TerminalScreen 组合——后台自动重连、
@@ -187,6 +190,8 @@ class TerminalController(
                 reconnectCount = 0
                 errorMessage = null
                 startKeepAlive()
+                // 网络切换免疫期：刚连上 30 秒内的网络事件不再触发主动重连
+                lastNetworkReconnectAt = kotlinx.datetime.Clock.System.now().toEpochMilliseconds() + 30_000
                 // 自动探测远端系统（Termius 式）：system 未知时在已认证连接上
                 // 后台 exec 一次，不重新认证、不阻塞交互；成功即保存并刷新列表。
                 if (host.system.isBlank()) {
@@ -238,7 +243,13 @@ class TerminalController(
             val result = ssh.connectAndRun(bootstrap)
             result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
             val (moshPort, moshKey) = parseMoshConnect(result.output)
-                ?: throw SshException("mosh-server 引导失败：${result.output.trim().take(200)}")
+                ?: throw SshException(
+                    if (host.moshUdpPort in 1024..65535 && result.output.contains("Address already in use")) {
+                        "固定 UDP 端口 ${host.moshUdpPort} 仍被旧会话占用（刚切换网络，稍等几秒重试即可）"
+                    } else {
+                        "mosh-server 引导失败：${result.output.trim().take(200)}"
+                    },
+                )
             detectSystemFromOutput(result.output)?.takeIf { it.isNotBlank() }?.let { detected ->
                 if (host.system.isBlank()) {
                     val updated = host.copy(system = detected)
@@ -264,11 +275,24 @@ class TerminalController(
                 },
                 onExit = { reason ->
                     if (status == ConnStatus.CONNECTED) {
-                        status = ConnStatus.CLOSED
-                        // 会话异常/超时等原因必须浮现（此前被静默丢弃，
-                        // 用户只能看到「已断开」且不知为何）
-                        if (reason != null) errorMessage = reason
-                        stopKeepAlive()
+                        moshSession = null
+                        // 已连接后异常退出（非用户关闭）：自动重连，上限 2 次
+                        if (autoReconnect && reconnectAttempts < 2) {
+                            reconnectAttempts++
+                            status = ConnStatus.CONNECTING
+                            reconnectCount = reconnectAttempts
+                            errorMessage = null
+                            scope.launch {
+                                kotlinx.coroutines.delay(2000L * reconnectAttempts)
+                                if (status != ConnStatus.CLOSED) doConnect()
+                            }
+                        } else {
+                            status = ConnStatus.CLOSED
+                            // 会话异常/超时等原因必须浮现（此前被静默丢弃，
+                            // 用户只能看到「已断开」且不知为何）
+                            if (reason != null) errorMessage = reason
+                            stopKeepAlive()
+                        }
                     } else if (status == ConnStatus.CONNECTING) {
                         status = ConnStatus.ERROR
                         errorMessage = reason ?: "mosh 连接失败：客户端已退出"
@@ -321,11 +345,18 @@ class TerminalController(
             }
         }
         status = ConnStatus.CONNECTED
-        reconnectAttempts = 0
         reconnectCount = 0
         errorMessage = null
         linkLostSeconds = 0
         startKeepAlive()
+        // 网络切换免疫期 + 稳定期重置：
+        // 刚连上 30 秒内网络事件不再触发主动重连；连接保持 30 秒后重连计数归零，
+        // 避免「连上即退」场景下 onExit 自动重连无限循环
+        lastNetworkReconnectAt = kotlinx.datetime.Clock.System.now().toEpochMilliseconds() + 30_000
+        scope.launch {
+            kotlinx.coroutines.delay(30_000)
+            if (status == ConnStatus.CONNECTED) reconnectAttempts = 0
+        }
         // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
         if (host.startupCommand.isNotBlank()) {
             client.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
@@ -501,4 +532,33 @@ class TerminalController(
     }
 
     fun isConnected(): Boolean = status == ConnStatus.CONNECTED || status == ConnStatus.AUTH
+
+    /**
+     * 网络切换（Wi-Fi ↔ 流量等）时由平台层调用：
+     * - SSH：主动断开旧连接，走 onClosed 的自动重连路径（重置计数，避免等 TCP 超时）；
+     * - Mosh：UDP 客户端 IP 变化后无法恢复，直接重建（重新 SSH bootstrap）。
+     */
+    fun onNetworkChanged(kind: NetworkChangeKind) {
+        if (!autoReconnect) return
+        // mosh：断网与跨网络切换都【不重建】——UDP 无连接 + 服务器从客户端新源
+        // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
+        // 的漫游能力）。只有客户端异常退出（onExit）才走自动重连。
+        if (moshSession != null) return
+        // SSH：只在「新网络已就绪」（传输切换）时主动断开快速重连；
+        // onLost 时新网络未必就绪（尤其流量→Wi-Fi），纯断网交给 TCP 自然断开 +
+        // onClosed 退避重连。
+        if (kind == NetworkChangeKind.LOST) return
+        val now = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+        if (now - lastNetworkReconnectAt < 15_000) return // 防抖：15 秒内只主动重连一次
+        lastNetworkReconnectAt = now
+        when (status) {
+            ConnStatus.CONNECTED -> {
+                reconnectAttempts = 0
+                session?.close()
+            }
+            // 连接/重连已在途中：网络刚切换，等当前流程完成即可（不重置计数）
+            ConnStatus.CONNECTING, ConnStatus.AUTH -> {}
+            else -> {}
+        }
+    }
 }

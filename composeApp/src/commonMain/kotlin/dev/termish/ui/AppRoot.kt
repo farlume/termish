@@ -58,6 +58,7 @@ import dev.termish.ui.theme.TermishTheme
 import dev.termish.ui.theme.TerminalThemes
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
+import dev.termish.util.observeNetworkChange
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -208,6 +209,10 @@ fun AppRoot(repository: HostRepository) {
 
     // iOS：退到桌面后系统挂起进程、掐断 socket；回前台时自动重连活跃会话（缓冲保留）。
     // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
+    val disposeNetwork = observeNetworkChange { kind ->
+        // 网络事件：SSH 断开/切换都重连；mosh 仅传输切换时重建（断网靠 UDP 自动续传）
+        sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
+    }
     DisposableEffect(Unit) {
         val dispose = observeAppLifecycle { foreground ->
             if (foreground) {
@@ -216,7 +221,10 @@ fun AppRoot(repository: HostRepository) {
                 sessionManager.noteBackgrounded()
             }
         }
-        onDispose { dispose() }
+        onDispose {
+            dispose()
+            disposeNetwork()
+        }
     }
 
     // 全局返回栈：非主页 → 回主页；主页非主机 tab → 回主机 tab；否则交给系统退出
