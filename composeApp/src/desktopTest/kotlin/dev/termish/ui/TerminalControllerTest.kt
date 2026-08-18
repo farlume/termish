@@ -17,6 +17,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -63,10 +64,12 @@ class TerminalControllerTest {
 
     private class FakeExec(
         val onWrite: (ByteArray) -> Unit = {},
+        /** true = read 立即返回 null（模拟脚本/程序已退出 EOF）；默认返回空块保持通道活跃。 */
+        val eof: Boolean = false,
     ) : SshExecChannel {
         var closed = false
 
-        override fun read(): ByteArray? = if (closed) null else ByteArray(0)
+        override fun read(): ByteArray? = if (closed || eof) null else ByteArray(0)
 
         override fun write(data: ByteArray) = onWrite(data)
 
@@ -278,14 +281,59 @@ class TerminalControllerTest {
     // ---------- HERDR 连接状态机 ----------
 
     @Test
-    fun herdrProbeFailureSetsErrorNotDegrade() {
-        // 全部候选 runCommand 返回 null → 远端无 herdr：明确报错，不降级、不重连
-        val (c, _) = herdrController(FakeSsh())
+    fun herdrProbeFailureGuidesInstall() {
+        // 全部候选 runCommand 返回 null → 远端无 herdr：保留 SSH 连接进入「待安装」
+        // （banner 引导安装），不报错、不降级、不重连
+        val (c, f) = herdrController(FakeSsh())
         c.connect(80, 24)
-        awaitStatus(c, ConnStatus.ERROR)
+        awaitStatus(c, ConnStatus.CONNECTED)
 
-        assertTrue(c.errorMessage!!.contains("herdr"), "错误应说明需要 herdr，实际: ${c.errorMessage}")
+        assertTrue(c.herdrNeedsInstall, "应进入引导安装状态")
+        assertTrue(!f.closed, "SSH 引导通道应保留（安装脚本在它上面执行）")
         c.destroy()
+    }
+
+    @Test
+    fun installHerdrReProbesAndContinues() {
+        // 首次探测无 herdr → 引导安装；安装脚本执行后重新探测成功 → 继续 HERDR
+        // 连接（mosh 引导失败 → 降级 exec+pty 跑 herdr）
+        var installed = false
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("api snapshot") -> if (installed) snapshotJson else null
+                    else -> "no mosh-server here"
+                }
+            },
+            execFactory = { cmd ->
+                // 安装脚本经 startExec 流式执行（不经过 commandHandler）：这里模拟安装成功
+                if (cmd.contains("install.sh")) installed = true
+                FakeExec(eof = true)
+            },
+        )
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(c.herdrNeedsInstall)
+
+        c.installHerdr()
+        // 安装成功后继续连接：降级 exec 跑 herdr（execCommands 末尾为 "herdr"）
+        runBlocking { withTimeout(5_000) { while (f.execCommands.none { it == "herdr" }) delay(10) } }
+
+        assertTrue(!c.herdrNeedsInstall, "安装成功应退出待安装状态")
+        assertTrue(!c.herdrInstalling)
+        assertTrue(f.execCommands.any { it.contains("install.sh") }, "应执行安装脚本")
+        assertEquals("herdr", f.execCommands.last())
+        c.destroy()
+    }
+
+    @Test
+    fun parseInstallPathExtractsFromLog() {
+        // install.sh 打印 "installed herdr to /path/herdr"（含颜色码前缀与多行日志）
+        assertEquals("/home/user/.local/bin/herdr", parseInstallPath("  > installed herdr to /home/user/.local/bin/herdr\n"))
+        assertEquals("/opt/herdr", parseInstallPath("downloading...\ninstalled herdr to /opt/herdr\n  > ready"))
+        assertNull(parseInstallPath("download failed"))
+        assertNull(parseInstallPath(""))
     }
 
     @Test

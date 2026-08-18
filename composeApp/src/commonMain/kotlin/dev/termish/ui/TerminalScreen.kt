@@ -30,9 +30,12 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,9 +80,11 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.termish.data.AppSettings
@@ -88,6 +93,7 @@ import dev.termish.ssh.SftpSession
 import dev.termish.ssh.AuthPrompt
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalTheme
+import dev.termish.util.monospaceFontFamily
 import dev.termish.util.hapticTick
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -340,6 +346,9 @@ private fun TerminalBody(
             WindowInsets.ime.getBottom(density).toFloat() + with(density) { 12.dp.toPx() }
         // 画布四周留出小间距，文字不贴屏幕边缘；行列按内缩后宽度自动重算
         Box(Modifier.weight(1f).clipToBounds().background(theme.background())) {
+            if (controller.herdrNeedsInstall || controller.herdrInstalling) {
+                HerdrInstallGuide(controller)
+            } else {
             TerminalView(
                 controller = controller,
                 theme = theme,
@@ -363,6 +372,7 @@ private fun TerminalBody(
                     .padding(horizontal = 6.dp, vertical = 4.dp)
                     .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
             )
+            }
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
 
@@ -698,6 +708,81 @@ private fun QuickCommandsBar(controller: TerminalController) {
                 onClick = { controller.sendText(cmd.command + "\n") },
                 label = { Text(cmd.label) },
             )
+        }
+    }
+}
+
+/** HERDR 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。 */
+@Composable
+private fun HerdrInstallGuide(controller: TerminalController) {
+    val s = LocalAppStrings.current
+    Box(
+        Modifier.fillMaxSize().padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = null,
+                    modifier = Modifier.size(44.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    s.herdrMissing,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    s.herdrInstallHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                if (controller.herdrInstalling) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            s.herdrInstalling,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // 安装实时日志：显示最后 8 行，挂住时可见无新进展
+                    val log = controller.herdrInstallLog
+                    if (log.isNotBlank()) {
+                        Text(
+                            log.lines().takeLast(8).joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = monospaceFontFamily(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 8,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(10.dp),
+                        )
+                    }
+                } else {
+                    Button(onClick = { controller.installHerdr() }) {
+                        Text(s.herdrInstall)
+                    }
+                }
+            }
         }
     }
 }

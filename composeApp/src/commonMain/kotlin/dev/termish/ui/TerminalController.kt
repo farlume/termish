@@ -120,6 +120,18 @@ class TerminalController(
     var herdrAvailable by mutableStateOf(false)
         internal set
 
+    /** HERDR 模式：远端未安装 herdr（banner 显示安装引导）。 */
+    var herdrNeedsInstall by mutableStateOf(false)
+        internal set
+
+    /** HERDR 安装进行中（banner 显示进度，避免重复触发）。 */
+    var herdrInstalling by mutableStateOf(false)
+        internal set
+
+    /** HERDR 安装脚本的实时输出（引导卡片里展示；挂住时可见无新进展）。 */
+    var herdrInstallLog by mutableStateOf("")
+        internal set
+
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
@@ -217,6 +229,9 @@ class TerminalController(
 
     /** 按最近一次窗口尺寸重连（保留屏幕缓冲）；用于退到后台后回前台恢复会话。 */
     fun reconnect() = connector.reconnect()
+
+    /** HERDR 模式：远端未安装时，在已认证连接上执行官网安装脚本并继续连接。 */
+    fun installHerdr() = connector.installHerdr()
 
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect

@@ -2,6 +2,7 @@ package dev.termish.ui
 
 import dev.termish.data.ConnectionMode
 import dev.termish.herdr.HerdrProbe
+import dev.termish.herdr.parseHerdrSnapshot
 import dev.termish.mosh.MoshExitReason
 import dev.termish.notify.NotificationCenter
 import dev.termish.notify.NotificationEvent
@@ -54,6 +55,10 @@ internal class SessionConnector(
         private const val MOSH_STABLE_RESET_MS = 30_000L
         /** mosh 主题注入延迟：太早会被 shell readline 当输入回显成乱码，太晚 herdr 显示灰蒙层。 */
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
+        /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
+        private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
+        /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
+        private const val HERDR_INSTALL_TIMEOUT_MS = 180_000L
     }
 
     // ------------------------------------------------------------------
@@ -343,12 +348,12 @@ internal class SessionConnector(
             // 2. 探测 herdr：失败明确报错（不降级——选 HERDR = herdr 工作台）
             val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
             if (probed == null) {
-                TermLog.e("herdr") { "HERDR probe failed ${c.host.name}: 远端无 herdr" }
-                c.session = null
-                try { s.close() } catch (_: Exception) { }
-                c.status = ConnStatus.ERROR
-                c.errorMessage = strings().herdrProbeFailed
-                c.stopKeepAlive()
+                // 远端无 herdr：保留 SSH 连接作为引导通道，进入「待安装」状态
+                //（banner 显示安装按钮，点击后自动装并继续 HERDR 连接）
+                TermLog.w("herdr") { "HERDR not found ${c.host.name}: 引导安装" }
+                c.herdrSuppressShellOutput = false
+                finishConnected(s, sendStartup = false)
+                c.herdrNeedsInstall = true
                 return
             }
             val herdrBin = probed.bin
@@ -373,6 +378,77 @@ internal class SessionConnector(
                 c.status = ConnStatus.ERROR
                 c.errorMessage = e.message
                 c.stopKeepAlive()
+            }
+        }
+    }
+
+    /**
+     * HERDR 引导安装：远端无 herdr 时，在已认证连接上执行官网安装脚本
+     * （curl https://herdr.dev/install.sh | sh），成功后重新探测并继续 HERDR
+     * 连接（Mosh 优先）。失败则 banner 显示原因，可再次点击重试。
+     * 安装过程流式读脚本输出进 [TerminalController.herdrInstallLog]（引导卡片
+     * 实时展示），卡住时用户能看到日志不再更新。
+     */
+    fun installHerdr() {
+        val s = c.session ?: return
+        if (c.herdrInstalling) return
+        c.herdrInstalling = true
+        c.errorMessage = null
+        c.herdrInstallLog = ""
+        c.scope.launch {
+            try {
+                val log = StringBuilder()
+                withContext(Dispatchers.IO) {
+                    // 流式 exec（JVM）：逐块读脚本输出进日志；iOS 无 startExec 回退 runCommand
+                    val exec = s.startExec(HERDR_INSTALL_CMD, c.lastCols, c.lastRows)
+                    if (exec != null) {
+                        try {
+                            while (true) {
+                                val chunk = exec.read() ?: break
+                                log.append(chunk.decodeToString().replace("\r", ""))
+                                c.herdrInstallLog = log.toString()
+                            }
+                        } finally {
+                            exec.close()
+                        }
+                    } else {
+                        log.append(s.runCommand(HERDR_INSTALL_CMD, HERDR_INSTALL_TIMEOUT_MS) ?: "")
+                        c.herdrInstallLog = log.toString()
+                    }
+                }
+                // 从安装日志解析实际安装路径（不写死 ~/.local/bin、不依赖 $HOME），
+                // 优先探测该路径，回退 HerdrProbe 候选
+                val installPath = parseInstallPath(log.toString())
+                val probed = withContext(Dispatchers.IO) {
+                    val explicit = installPath?.let { path ->
+                        val raw = s.runCommand("$path api snapshot", 5_000)
+                        raw?.let { snap ->
+                            parseHerdrSnapshot(snap)?.let { HerdrProbe.Result(path, it) }
+                        }
+                    }
+                    explicit ?: HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
+                }
+                if (probed == null) {
+                    TermLog.e("herdr") { "install then probe failed ${c.host.name}: ${log.take(120)}" }
+                    c.herdrInstalling = false
+                    c.errorMessage = strings().herdrInstallFailed(log.toString().trim().take(200).ifBlank { null })
+                    return@launch
+                }
+                TermLog.i("herdr") { "herdr installed ${c.host.name} bin=${probed.bin}" }
+                c.herdrInstalling = false
+                c.herdrNeedsInstall = false
+                c.herdrSuppressShellOutput = true
+                doConnectMosh(
+                    existingSession = s,
+                    bootstrapExtra = " -- ${probed.bin}",
+                    onDegraded = { ssh -> startHerdrExec(ssh, probed.bin) },
+                )
+                c.herdrSuppressShellOutput = false
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                c.herdrInstalling = false
+                c.errorMessage = strings().herdrInstallFailed(e.message)
             }
         }
     }
@@ -627,4 +703,19 @@ internal class SessionConnector(
             else -> {}
         }
     }
+}
+
+/**
+ * 从 install.sh 输出解析实际安装路径（install.sh 打印
+ * `installed herdr to /path/herdr`）。不写死 `~/.local/bin`、不依赖 $HOME：
+ * 无论脚本装到哪个目录，都以它报告的真实路径为准。
+ */
+internal fun parseInstallPath(log: String): String? {
+    val marker = "installed herdr to "
+    val idx = log.indexOf(marker)
+    if (idx < 0) return null
+    return log.substring(idx + marker.length)
+        .substringBefore('\n')
+        .trim()
+        .takeIf { it.startsWith("/") }
 }
