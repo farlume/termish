@@ -34,9 +34,14 @@ interface SftpSession {
 
     /**
      * 下载远端文件到本地：以 64KB 左右的分块回调 [onChunk]（阻塞调用）。
+     * [onProgress] 回调已下载/总字节数（total 未知时为 0，如某些服务器不报大小）。
      * 由 UI 层负责把分块写入本地文件并 close 保存通道。
      */
-    fun download(remotePath: String, onChunk: (ByteArray) -> Unit)
+    fun download(
+        remotePath: String,
+        onProgress: (loaded: Long, total: Long) -> Unit = { _, _ -> },
+        onChunk: (ByteArray) -> Unit,
+    )
 
     fun close()
 }

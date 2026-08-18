@@ -30,6 +30,7 @@ import libssh2.LIBSSH2_SFTP_OPENDIR
 import libssh2.LIBSSH2_SFTP_REALPATH
 import libssh2.libssh2_sftp_init
 import libssh2.libssh2_sftp_close_handle
+import libssh2.libssh2_sftp_fstat_ex
 import libssh2.libssh2_sftp_mkdir_ex
 import libssh2.libssh2_sftp_open_ex
 import libssh2.libssh2_sftp_read
@@ -233,17 +234,27 @@ private class SftpSessionLibssh2(
         }
     }
 
-    override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {
+    override fun download(
+        remotePath: String,
+        onProgress: (loaded: Long, total: Long) -> Unit,
+        onChunk: (ByteArray) -> Unit,
+    ) {
         val s = sftpOrThrow()
         val h = libssh2_sftp_open_ex(s, remotePath, remotePath.length.toUInt(), LIBSSH2_FXF_READ.toULong(), 0L, 0)
             ?: throw SshException("SFTP 打开文件失败: $remotePath")
         try {
+            val total = fileSize(h)
             memScoped {
                 val buf = allocArray<ByteVar>(64 * 1024)
+                var loaded = 0L
                 while (true) {
                     val n = libssh2_sftp_read(h, buf, (64 * 1024).toULong())
                     when {
-                        n > 0 -> onChunk(buf.readBytes(n.toInt()))
+                        n > 0 -> {
+                            onChunk(buf.readBytes(n.toInt()))
+                            loaded += n
+                            onProgress(loaded, total)
+                        }
                         n == 0L -> return
                         n.toInt() == LIBSSH2_ERROR_EAGAIN -> usleep(30_000u)
                         else -> throw SshException("SFTP 读取失败: $remotePath")
@@ -253,6 +264,21 @@ private class SftpSessionLibssh2(
         } finally {
             libssh2_sftp_close_handle(h)
         }
+    }
+
+    /** 已打开文件句柄的大小（fstat）；失败/未知返回 0（进度 total 不可用）。 */
+    private fun fileSize(h: CPointer<LIBSSH2_SFTP_HANDLE>): Long {
+        memScoped {
+            val attrs = alloc<LIBSSH2_SFTP_ATTRIBUTES>()
+            var guard = 0
+            while (guard++ < 200) {
+                val rc = libssh2_sftp_fstat_ex(h, attrs.ptr)
+                if (rc == 0) return attrs.filesize.toLong()
+                if (rc != LIBSSH2_ERROR_EAGAIN) break
+                usleep(30_000u)
+            }
+        }
+        return 0L
     }
 
     override fun close() {

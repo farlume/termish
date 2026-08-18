@@ -149,7 +149,12 @@ class SessionManagerTest {
             override fun mkdir(path: String) {}
             override fun home() = "/home/root"
             override fun upload(remotePath: String, content: ByteArray) {}
-            override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {}
+            override fun download(
+                remotePath: String,
+                onProgress: (loaded: Long, total: Long) -> Unit,
+                onChunk: (ByteArray) -> Unit,
+            ) {
+            }
             override fun close() {}
         }
         val entry = m.addSftp(h, fake)

@@ -2,6 +2,7 @@ package dev.termish.ui
 
 import dev.termish.ssh.SftpEntry
 import dev.termish.ssh.SftpSession
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -113,10 +114,15 @@ class SftpLogicTest {
         override fun mkdir(path: String) {}
         override fun home(): String = "/"
         override fun upload(remotePath: String, content: ByteArray) {}
-        override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {
+        override fun download(
+            remotePath: String,
+            onProgress: (loaded: Long, total: Long) -> Unit,
+            onChunk: (ByteArray) -> Unit,
+        ) {
             downloaded += remotePath
             if (remotePath == failPath) throw IllegalStateException("download failed: $remotePath")
             onChunk(remotePath.encodeToByteArray())
+            onProgress(1, 1)
         }
 
         override fun close() {}
@@ -172,5 +178,56 @@ class SftpLogicTest {
         // 失败文件已 close；异常沿调用栈传播，后续目录不再下载
         assertTrue(sink.files["a.txt"]!!.closed)
         assertFalse("sub/b.log" in sink.files)
+    }
+
+    // ---------- searchRecursive 递归 ----------
+
+    @Test
+    fun searchRecursiveFindsMatchesAcrossDirectories() = runBlocking {
+        val sftp = FakeSftp(
+            mapOf(
+                "/root" to listOf(entry("app-release.apk", false), entry("sub", true)),
+                "/root/sub" to listOf(entry("app-debug.apk", false), entry("readme.txt", false)),
+            ),
+        )
+        val hits = searchRecursive(sftp, "/root", "apk")
+        assertEquals(setOf("app-release.apk", "sub/app-debug.apk"), hits.map { it.relPath }.toSet())
+        assertEquals(2, hits.size)
+    }
+
+    @Test
+    fun searchRecursiveTraversesHiddenDirs() = runBlocking {
+        val sftp = FakeSftp(
+            mapOf(
+                "/root" to listOf(entry(".hidden", true), entry("note.txt", false)),
+                "/root/.hidden" to listOf(entry("secret.apk", false)),
+            ),
+        )
+        // 递归搜索不看 UI 的 showHidden：隐藏目录也遍历（与递归下载目录语义一致）
+        val hits = searchRecursive(sftp, "/root", "apk")
+        assertEquals(listOf("secret.apk"), hits.map { it.name })
+    }
+
+    @Test
+    fun searchRecursiveRespectsMaxResults() = runBlocking {
+        val sftp = FakeSftp(
+            mapOf(
+                "/root" to listOf(entry("a.apk", false), entry("b.apk", false), entry("c.apk", false)),
+            ),
+        )
+        val hits = searchRecursive(sftp, "/root", "apk", maxResults = 2)
+        assertEquals(2, hits.size)
+    }
+
+    @Test
+    fun searchRecursiveToleratesUnlistableDir() = runBlocking {
+        // FakeSftp 对未知路径返回 emptyList（模拟权限不足目录）：不抛异常、不中断遍历
+        val sftp = FakeSftp(
+            mapOf(
+                "/root" to listOf(entry("ok.apk", false), entry("broken", true)),
+            ),
+        )
+        val hits = searchRecursive(sftp, "/root", "apk")
+        assertEquals(listOf("ok.apk"), hits.map { it.name })
     }
 }

@@ -63,10 +63,15 @@ class SftpSessionSshj(
         c.put(source, remotePath)
     }
 
-    override fun download(remotePath: String, onChunk: (ByteArray) -> Unit) {
+    override fun download(
+        remotePath: String,
+        onProgress: (loaded: Long, total: Long) -> Unit,
+        onChunk: (ByteArray) -> Unit,
+    ) {
         val c = clientOrThrow()
         val remote = c.open(remotePath)
         try {
+            val total = remote.length()
             val buf = ByteArray(64 * 1024)
             var offset = 0L
             while (true) {
@@ -74,6 +79,7 @@ class SftpSessionSshj(
                 if (n <= 0) break
                 onChunk(buf.copyOf(n))
                 offset += n
+                onProgress(offset, total)
             }
         } finally {
             remote.close()

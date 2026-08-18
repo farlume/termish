@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,11 +43,13 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -83,7 +86,10 @@ import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.ioDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
@@ -177,6 +183,8 @@ fun SftpContent(
     var showParents by state::showParents
     /** 等待用户选择保存目录后开始递归下载的远端目录。 */
     var pendingDownloadDir by remember { mutableStateOf<String?>(null) }
+    /** 单文件下载进度（null = 无下载中）；顶部进度条横幅数据源。 */
+    var downloadProgress by remember { mutableStateOf<DownloadProgress?>(null) }
     /** header 搜索框焦点：展开后自动聚焦弹键盘。 */
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(searching) {
@@ -184,6 +192,30 @@ fun SftpContent(
             delay(150)
             searchFocusRequester.requestFocus()
         }
+    }
+    // 递归搜索：输入关键词时遍历当前目录子树，扁平展示结果（文件名 + 相对路径）。
+    // 空关键词恢复普通浏览；query/path/session 变化即取消上一次遍历（LaunchedEffect 自动取消 + debounce）。
+    var searchLoading by remember { mutableStateOf(false) }
+    var searchResults by remember { mutableStateOf<List<SftpSearchHit>?>(null) }
+    LaunchedEffect(query, path, session) {
+        if (query.isBlank()) {
+            searchResults = null
+            searchLoading = false
+            return@LaunchedEffect
+        }
+        val sc = session
+        if (sc == null) {
+            searchResults = emptyList()
+            searchLoading = false
+            return@LaunchedEffect
+        }
+        searchLoading = true
+        delay(300) // 输入防抖
+        val results = withContext(ioDispatcher()) {
+            runCatching { searchRecursive(sc, path, query) }.getOrElse { emptyList() }
+        }
+        searchResults = results
+        searchLoading = false
     }
 
     /** 统一目录跳转入口：压入当前路径到浏览历史，再切换目录。 */
@@ -262,11 +294,26 @@ fun SftpContent(
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    sc.download(remotePath) { chunk -> sink.write(chunk) }
+                    var lastEmitted = 0L
+                    sc.download(
+                        remotePath,
+                        onProgress = { loaded, total ->
+                            // 节流：每 1%（或 64KB，total 未知时）才更新一次，避免高频重组
+                            val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
+                            if (loaded - lastEmitted >= step || (total > 0 && loaded >= total)) {
+                                lastEmitted = loaded
+                                scope.launch(Dispatchers.Main) {
+                                    downloadProgress = DownloadProgress(target.name, loaded, total)
+                                }
+                            }
+                        },
+                    ) { chunk -> sink.write(chunk) }
                     sink.close()
                 }
+                downloadProgress = null
                 snackbar.showSnackbar(s.sftpDownloaded)
             } catch (e: Exception) {
+                downloadProgress = null
                 try {
                     sink.close()
                 } catch (_: Exception) {
@@ -544,6 +591,38 @@ fun SftpContent(
                     shape = RoundedCornerShape(14.dp),
                 )
             }
+            // 单文件下载进度横幅（跨平台：iOS/Desktop 也显示）
+            downloadProgress?.let { dp ->
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            dp.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (dp.total > 0) {
+                            Text(
+                                "${(dp.loaded * 100 / dp.total)}%",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.size(4.dp))
+                    LinearProgressIndicator(
+                        progress = { if (dp.total > 0) dp.loaded.toFloat() / dp.total else 0f },
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                    )
+                }
+            }
             when {
                 entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(s.sftpConnecting, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -552,6 +631,42 @@ fun SftpContent(
                 // 内容区只留中性副提示，不重复红色错误文字
                 loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(s.sftpDisconnected, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // 递归搜索：输入关键词时展示跨目录结果（文件名 + 相对路径）
+                query.isNotBlank() -> Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                ) {
+                    when {
+                        searchLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.size(8.dp))
+                                Text(s.sftpSearching, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        searchResults.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(s.sftpNoMatch, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        else -> LazyColumn(Modifier.fillMaxSize()) {
+                            items(searchResults.orEmpty(), key = { it.fullPath }) { hit ->
+                                SftpSearchRow(
+                                    hit = hit,
+                                    onClick = {
+                                        val target = if (hit.isDirectory) hit.fullPath
+                                        else hit.fullPath.substringBeforeLast('/', "/").ifBlank { "/" }
+                                        query = ""
+                                        searching = false
+                                        navigateTo(target)
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
                 else -> Column(
                     Modifier
@@ -838,4 +953,101 @@ internal fun globMatch(name: String, pattern: String): Boolean {
         append('$')
     }
     return Regex(regex, RegexOption.IGNORE_CASE).containsMatchIn(name)
+}
+
+/** 递归搜索结果：文件名 + 完整远端路径 + 相对当前目录的路径。 */
+data class SftpSearchHit(
+    val name: String,
+    val fullPath: String,
+    val relPath: String,
+    val isDirectory: Boolean,
+    val size: Long,
+    val modifiedAt: Long,
+)
+
+/** 单文件下载进度（顶部进度条横幅数据源）；total=0 表示服务器未报大小。 */
+data class DownloadProgress(val name: String, val loaded: Long, val total: Long)
+
+/**
+ * 递归搜索：从 [root] 起遍历目录树，返回文件名匹配 [query] 的条目
+ * （匹配沿用 [matchesQuery]：多关键词 AND + glob）。深度优先栈迭代；
+ * [maxDepth] 限深、[maxResults] 限结果数，防超深目录/海量结果拖垮会话。
+ * 单目录 list 失败（权限/断开）跳过该子树继续；每层目录间响应协程取消。
+ */
+suspend fun searchRecursive(
+    session: SftpSession,
+    root: String,
+    query: String,
+    maxDepth: Int = 8,
+    maxResults: Int = 500,
+): List<SftpSearchHit> {
+    val results = ArrayList<SftpSearchHit>()
+    val stack = ArrayDeque<Triple<String, String, Int>>()
+    stack.addLast(Triple(root, "", 0))
+    while (stack.isNotEmpty() && results.size < maxResults) {
+        currentCoroutineContext().ensureActive()
+        val (dir, rel, depth) = stack.removeLast()
+        val entries = runCatching { session.list(dir) }.getOrNull() ?: continue
+        for (e in entries) {
+            if (results.size >= maxResults) break
+            if (e.name == "." || e.name == "..") continue
+            val childRel = if (rel.isEmpty()) e.name else "$rel/${e.name}"
+            val childPath = joinPath(dir, e.name)
+            if (matchesQuery(e.name, query)) {
+                results.add(SftpSearchHit(e.name, childPath, childRel, e.isDirectory, e.size, e.modifiedAt))
+            }
+            if (e.isDirectory && depth < maxDepth) {
+                stack.addLast(Triple(childPath, childRel, depth + 1))
+            }
+        }
+    }
+    return results
+}
+
+/** 递归搜索结果行：文件/目录图标 + 名称 + 相对路径（主色标注），右下角时间。 */
+@Composable
+private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            if (hit.isDirectory) painterResource(Res.drawable.folder)
+            else rememberVectorPainter(Icons.AutoMirrored.Filled.InsertDriveFile),
+            contentDescription = null,
+            tint = if (hit.isDirectory) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                hit.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                hit.relPath,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = monospaceFontFamily(),
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (hit.modifiedAt > 0) {
+            Text(
+                formatTime(hit.modifiedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 11.sp,
+            )
+        }
+    }
 }
