@@ -28,6 +28,8 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
                 onReady(queryName(context, uri) ?: "file", object : FileSink {
                     override fun write(bytes: ByteArray) = out.write(bytes)
 
+                    override val openUri: String? = uri.toString()
+
                     override fun close() {
                         try {
                             out.close()
@@ -48,6 +50,8 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
                     val actualName = queryName(context, uri) ?: name
                     onReady(actualName, object : FileSink {
                         override fun write(bytes: ByteArray) = out.write(bytes)
+
+                        override val openUri: String? = uri.toString()
 
                         override fun close() {
                             try {

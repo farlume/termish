@@ -67,6 +67,7 @@ data class AppStrings(
     val sftpCopied: String,
     val sftpDownload: String,
     val sftpDownloaded: String,
+    val sftpDownloadComplete: String,
     val sftpDownloadFailed: (String) -> String,
     val sftpLoadFailed: (String) -> String,
     /** 卡片第二行：有活跃会话时显示（Termius 风格）。 */
@@ -298,6 +299,7 @@ private val EnStrings = AppStrings(
     sftpCopied = "Path copied",
     sftpDownload = "Download to…",
     sftpDownloaded = "Downloaded",
+    sftpDownloadComplete = "Download complete",
     sftpDownloadFailed = { "Download failed: $it" },
     sftpLoadFailed = { "Failed to load: $it" },
     hostsActive = "Active",
@@ -496,6 +498,7 @@ private val ZhStrings = AppStrings(
     sftpCopied = "路径已复制",
     sftpDownload = "下载到…",
     sftpDownloaded = "已下载",
+    sftpDownloadComplete = "下载完成",
     sftpDownloadFailed = { "下载失败：$it" },
     sftpLoadFailed = { "加载失败：$it" },
     hostsActive = "Active",

@@ -84,6 +84,7 @@ import dev.termish.ssh.SftpEntry
 import dev.termish.ssh.SftpSession
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
+import dev.termish.notify.showDownloadDoneNotification
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -312,6 +313,7 @@ fun SftpContent(
                 }
                 downloadProgress = null
                 snackbar.showSnackbar(s.sftpDownloaded)
+                showDownloadDoneNotification(s.sftpDownloadComplete, target.name, sink.openUri)
             } catch (e: Exception) {
                 downloadProgress = null
                 try {

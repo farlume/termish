@@ -7,6 +7,9 @@ interface FileSink {
     fun write(bytes: ByteArray)
 
     fun close()
+
+    /** 下载完成后的打开入口（Android 为 MediaStore content:// uri；其他平台 null）。 */
+    val openUri: String? get() = null
 }
 
 /**
