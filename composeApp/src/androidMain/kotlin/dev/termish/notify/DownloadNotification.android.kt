@@ -5,9 +5,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
+import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
+import androidx.core.net.toUri
 import dev.termish.AppContext
 import dev.termish.app.R
 
@@ -20,11 +21,9 @@ private const val CHANNEL_ID = "termish_download"
 actual fun showDownloadDoneNotification(title: String, body: String, openUri: String?) {
     val context = AppContext.get()
     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    if (Build.VERSION.SDK_INT >= 26) {
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "下载", NotificationManager.IMPORTANCE_DEFAULT)
-        )
-    }
+    nm.createNotificationChannel(
+        NotificationChannel(CHANNEL_ID, "下载", NotificationManager.IMPORTANCE_DEFAULT)
+    )
     if (Build.VERSION.SDK_INT >= 33 &&
         context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
         android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -41,7 +40,7 @@ actual fun showDownloadDoneNotification(title: String, body: String, openUri: St
 
     if (openUri != null) {
         val open = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(Uri.parse(openUri), "application/octet-stream")
+            setDataAndType(openUri.toUri(), guessMimeType(body))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         val contentIntent = PendingIntent.getActivity(
@@ -52,4 +51,13 @@ actual fun showDownloadDoneNotification(title: String, body: String, openUri: St
     }
 
     nm.notify(openUri?.hashCode() ?: body.hashCode(), builder.build())
+}
+
+/** 按文件扩展名推断 MIME（body 为文件名）；未知回退 application/octet-stream。 */
+private fun guessMimeType(name: String): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    if (ext.isNotEmpty()) {
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
+    }
+    return "application/octet-stream"
 }

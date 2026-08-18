@@ -8,6 +8,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.RequiresApi
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
@@ -72,6 +73,7 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
 }
 
 /** MediaStore.Downloads 插入（IS_PENDING=1 占位）；同名由 MediaStore 自动去重。 */
+@RequiresApi(29)
 private fun insertDownload(context: Context, name: String): Uri? {
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, name)
