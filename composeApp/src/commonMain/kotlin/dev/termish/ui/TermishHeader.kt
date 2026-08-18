@@ -82,16 +82,25 @@ fun TermishLargeHeader(
     title: String,
     modifier: Modifier = Modifier,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    actions: @Composable RowScope.() -> Unit = {},
 ) {
-    Text(
-        title,
-        style = MaterialTheme.typography.headlineSmall,
-        fontWeight = FontWeight.Bold,
-        fontFamily = monospaceFontFamily(),
-        color = contentColor,
+    Row(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 8.dp),
-    )
+            .padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            fontFamily = monospaceFontFamily(),
+            color = contentColor,
+            modifier = Modifier.weight(1f),
+        )
+        CompositionLocalProvider(LocalContentColor provides contentColor) {
+            actions()
+        }
+    }
 }

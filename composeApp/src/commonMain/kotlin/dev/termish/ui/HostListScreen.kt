@@ -1,5 +1,10 @@
 package dev.termish.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -35,6 +40,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +57,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +66,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.AnnotatedString
@@ -78,6 +87,7 @@ import dev.termish.generated.resources.host_mac
 import dev.termish.generated.resources.host_ubuntu
 import dev.termish.generated.resources.host_windows
 import dev.termish.util.monospaceFontFamily
+import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
@@ -127,6 +137,15 @@ fun HostListScreen(
 ) {
     val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
+    var searchExpanded by remember { mutableStateOf(false) }
+    val searchFocusRequester = remember { FocusRequester() }
+    // 搜索展开后等入场动画开始再聚焦，键盘随之弹出
+    LaunchedEffect(searchExpanded) {
+        if (searchExpanded) {
+            delay(150)
+            searchFocusRequester.requestFocus()
+        }
+    }
     val filtered = hosts
         .filter { h ->
             query.isBlank() ||
@@ -183,7 +202,26 @@ fun HostListScreen(
                     },
                 )
             } else {
-                TermishLargeHeader(title = s.appTabHosts)
+                TermishLargeHeader(
+                    title = s.appTabHosts,
+                    actions = {
+                        IconButton(
+                            onClick = {
+                                if (searchExpanded) {
+                                    searchExpanded = false
+                                    query = ""
+                                } else {
+                                    searchExpanded = true
+                                }
+                            },
+                        ) {
+                            Icon(
+                                if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                                contentDescription = if (searchExpanded) s.navBack else s.hostsSearch,
+                            )
+                        }
+                    },
+                )
             }
         },
         floatingActionButton = {
@@ -198,13 +236,31 @@ fun HostListScreen(
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                placeholder = { Text(s.hostsSearch) },
-                singleLine = true,
-            )
+            AnimatedVisibility(
+                visible = searchExpanded,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .focusRequester(searchFocusRequester),
+                    placeholder = { Text(s.hostsSearch) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = s.navBack)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                )
+            }
             // 分组标题（与设置页 SettingsGroup 同款样式；左距对齐下方卡片的 8dp）
             Text(
                 s.hostsSectionTitle,
