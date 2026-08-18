@@ -61,6 +61,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
+import dev.termish.data.HostRepository
 import dev.termish.util.TermLog
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.alipay_qr
@@ -93,6 +94,12 @@ fun SettingsScreen(
     settings: AppSettings,
     /** 任何修改立即回调（即改即存，无保存按钮）。 */
     onChange: (AppSettings) -> Unit,
+    /** 片段/标签管理页读写仓库。 */
+    repository: HostRepository = HostRepository(),
+    /** 当前打开的二级页（AppRoot 统一管理：返回链 + 全屏隐藏 tab）。 */
+    subPage: SettingsSubPage? = null,
+    /** 打开/关闭二级页（null = 关闭）。 */
+    onOpenSub: (SettingsSubPage?) -> Unit = {},
     /** tab 内嵌模式下不显示返回箭头。 */
     showBack: Boolean = false,
     onBack: (() -> Unit)? = null,
@@ -114,11 +121,8 @@ fun SettingsScreen(
     var showSupportDialog by remember { mutableStateOf(false) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
-    var showTerminalPage by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showTerminalTypeDialog by remember { mutableStateOf(false) }
-    var showNotificationPage by remember { mutableStateOf(false) }
-    var showDiagnosticsPage by remember { mutableStateOf(false) }
     var notificationEnabled by remember { mutableStateOf(settings.notificationEnabled) }
     var notificationDisabledEvents by remember { mutableStateOf(settings.notificationDisabledEvents) }
 
@@ -155,12 +159,17 @@ fun SettingsScreen(
                 SettingsOptionItem(
                     s.settingsNotifications,
                     if (notificationEnabled) s.settingsOn else s.settingsOff,
-                ) { showNotificationPage = true }
+                ) { onOpenSub(SettingsSubPage.NOTIFICATION) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(
                     s.settingsDiagnostics,
                     if (TermLog.diagnosticsEnabled) s.settingsOn else s.settingsOff,
-                ) { showDiagnosticsPage = true }
+                ) { onOpenSub(SettingsSubPage.DIAGNOSTICS) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(
+                    s.settingsSnippets,
+                    "",
+                ) { onOpenSub(SettingsSubPage.SNIPPETS) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
             }
@@ -169,7 +178,7 @@ fun SettingsScreen(
                 SettingsOptionItem(
                     s.settingsTerminalPalette,
                     TerminalThemes.ALL.getOrElse(terminalThemeIndex) { TerminalThemes.ALL[0] }.name,
-                ) { showTerminalPage = true }
+                ) { onOpenSub(SettingsSubPage.TERMINAL) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsTerminalType, terminalType) {
                     showTerminalTypeDialog = true
@@ -234,9 +243,10 @@ fun SettingsScreen(
             onDismiss = { showThemeDialog = false },
         )
     }
-    // 二级页面覆盖层：iOS 风格右滑进入/退出（Termius 二级页面同款动效）
+    // 二级页面覆盖层：iOS 风格右滑进入/退出（Termius 二级页面同款动效）；
+    // 开关状态由 AppRoot 统一管理（返回链 + 全屏隐藏 tab）
     AnimatedVisibility(
-        visible = showTerminalPage,
+        visible = subPage == SettingsSubPage.TERMINAL,
         enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
         exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
     ) {
@@ -245,12 +255,12 @@ fun SettingsScreen(
             currentFontId = settings.terminalFontId,
             onChangeTheme = { terminalThemeIndex = it; persist() },
             onChangeFont = { fontId -> onChange(settings.copy(terminalFontId = fontId)) },
-            onBack = { showTerminalPage = false },
+            onBack = { onOpenSub(null) },
         )
     }
     // 通知设置二级页（动画同终端主题页：右滑进入/退出）
     AnimatedVisibility(
-        visible = showNotificationPage,
+        visible = subPage == SettingsSubPage.NOTIFICATION,
         enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
         exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
     ) {
@@ -266,18 +276,29 @@ fun SettingsScreen(
                     if (disable) notificationDisabledEvents + id else notificationDisabledEvents - id
                 persist()
             },
-            onBack = { showNotificationPage = false },
+            onBack = { onOpenSub(null) },
         )
     }
     AnimatedVisibility(
-        visible = showDiagnosticsPage,
+        visible = subPage == SettingsSubPage.DIAGNOSTICS,
         enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
         exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
     ) {
         SettingsDiagnosticsScreen(
             enabled = TermLog.diagnosticsEnabled,
             onChangeEnabled = { TermLog.diagnosticsEnabled = it },
-            onBack = { showDiagnosticsPage = false },
+            onBack = { onOpenSub(null) },
+        )
+    }
+    // 命令片段管理二级页（全局库 + 标签组管理入口）
+    AnimatedVisibility(
+        visible = subPage == SettingsSubPage.SNIPPETS,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SnippetManageScreen(
+            repository = repository,
+            onBack = { onOpenSub(null) },
         )
     }
     if (showSupportDialog) {

@@ -111,7 +111,12 @@ private sealed interface Screen {
     data class Edit(val hostId: String?) : Screen
 
     /** 直接持有 controller 引用：会话由 SessionManager 管理，跨页面存活。 */
-    data class Terminal(val hostId: String) : Screen
+    data object Terminal : Screen
+}
+
+/** 设置页二级页（统一由 AppRoot 管理开关：返回链 + 全屏 + 底部 tab 隐藏）。 */
+enum class SettingsSubPage {
+    TERMINAL, NOTIFICATION, DIAGNOSTICS, SNIPPETS,
 }
 
 @Composable
@@ -200,7 +205,7 @@ fun AppRoot(repository: HostRepository) {
                     val entry = sessionManager.addSftp(host, session)
                     // 与 entry 共用同一 uiState：浏览路径变化能反映到持久化（退后台保存）
                     currentTab = SessionTab.Sftp(host, session, entry.uiState)
-                    screen = Screen.Terminal(host.id)
+                    screen = Screen.Terminal
                 }
             } catch (e: Exception) {
                 snackbarHostState.showSnackbar(appStrings.sftpConnectFailed(e.message ?: ""))
@@ -213,7 +218,7 @@ fun AppRoot(repository: HostRepository) {
         // 必须等 TerminalView 就绪拿到实际画布尺寸再建连（终端页显示连接中）
         if (target.host.connectionMode == ConnectionMode.HERDR) {
             currentTab = SessionTab.Terminal(target)
-            screen = Screen.Terminal(target.host.id)
+            screen = Screen.Terminal
             pendingNavigate = null
             return@LaunchedEffect
         }
@@ -230,7 +235,7 @@ fun AppRoot(repository: HostRepository) {
         if (target.status == ConnStatus.CONNECTED) {
             // HERDR 模式终端页 = herdr TUI（连接时自动发 startupCommand "herdr"）
             currentTab = SessionTab.Terminal(target)
-            screen = Screen.Terminal(target.host.id)
+            screen = Screen.Terminal
         } else if (target.status == ConnStatus.ERROR) {
             // 连接失败（IP 不可达 / 认证失败等）：留在列表并提示原因
             snackbarHostState.showSnackbar(target.errorMessage ?: appStrings.hostsConnectFailed)
@@ -295,10 +300,17 @@ fun AppRoot(repository: HostRepository) {
         }
     }
 
-    // 全局返回栈：非主页 → 回主页；主页非主机 tab → 回主机 tab；否则交给系统退出
+    // 全局返回栈：非主页 → 回主页；设置二级页 → 关二级页回设置；主页非主机 tab → 回主机 tab
+    //（二级页状态必须提升到这里：此前藏在 SettingsScreen 内部，系统返回键/手势
+    // 直接跳回主机 tab——二级页开着却无处返回）
     var homeTab by remember { mutableStateOf(HomeTab.HOSTS) }
-    PlatformBackHandler(enabled = screen != Screen.Home || homeTab != HomeTab.HOSTS) {
-        if (screen != Screen.Home) screen = Screen.Home else homeTab = HomeTab.HOSTS
+    var settingsSubPage by remember { mutableStateOf<SettingsSubPage?>(null) }
+    PlatformBackHandler(enabled = screen != Screen.Home || settingsSubPage != null || homeTab != HomeTab.HOSTS) {
+        when {
+            screen != Screen.Home -> screen = Screen.Home
+            settingsSubPage != null -> settingsSubPage = null
+            else -> homeTab = HomeTab.HOSTS
+        }
     }
 
     fun refreshHosts() {
@@ -347,23 +359,26 @@ fun AppRoot(repository: HostRepository) {
                         // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
                         contentWindowInsets = WindowInsets(0, 0, 0, 0),
                         bottomBar = {
-                            // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
-                            val mono = monospaceFontFamily()
-                            Column {
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                Row(
-                                    Modifier.fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.surface)
-                                        .navigationBarsPadding(),
-                                ) {
-                                    HomeTabItem(appStrings.appTabHosts, Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
-                                        homeTab = HomeTab.HOSTS
-                                    }
-                                    HomeTabItem(appStrings.appTabConnections, Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
-                                        homeTab = HomeTab.CONNECTIONS
-                                    }
-                                    HomeTabItem(appStrings.appTabSettings, Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
-                                        homeTab = HomeTab.SETTINGS
+                            // 设置二级页打开时全屏：隐藏底部 tab（二级页由返回链统一关闭）
+                            if (settingsSubPage == null) {
+                                // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
+                                val mono = monospaceFontFamily()
+                                Column {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    Row(
+                                        Modifier.fillMaxWidth()
+                                            .background(MaterialTheme.colorScheme.surface)
+                                            .navigationBarsPadding(),
+                                    ) {
+                                        HomeTabItem(appStrings.appTabHosts, Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
+                                            homeTab = HomeTab.HOSTS
+                                        }
+                                        HomeTabItem(appStrings.appTabConnections, Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
+                                            homeTab = HomeTab.CONNECTIONS
+                                        }
+                                        HomeTabItem(appStrings.appTabSettings, Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
+                                            homeTab = HomeTab.SETTINGS
+                                        }
                                     }
                                 }
                             }
@@ -389,7 +404,7 @@ fun AppRoot(repository: HostRepository) {
                                         }
                                         if (connecting != null) {
                                             currentTab = SessionTab.Terminal(connecting)
-                                            screen = Screen.Terminal(host.id)
+                                            screen = Screen.Terminal
                                         } else {
                                             val controller = sessionManager.open(host, settings.autoReconnect) {
                                                 hosts = repository.listHosts()
@@ -420,14 +435,14 @@ fun AppRoot(repository: HostRepository) {
                                             pendingNavigate = fresh
                                         } else {
                                             currentTab = SessionTab.Terminal(controller)
-                                            screen = Screen.Terminal(controller.host.id)
+                                            screen = Screen.Terminal
                                         }
                                     },
                                     onOpenSftp = { host, session ->
                                         // 用 entry 的 uiState（若已存在）：重新进入不重置浏览状态/路径
                                         val entry = sessionManager.sftpSessions.firstOrNull { it.host.id == host.id }
                                         currentTab = SessionTab.Sftp(host, session, entry?.uiState ?: SftpUiState())
-                                        screen = Screen.Terminal(host.id)
+                                        screen = Screen.Terminal
                                     },
                                     onCloseAllSessions = { host ->
                                         // 关闭该主机全部会话：终端断开保留 + SFTP 释放
@@ -449,7 +464,7 @@ fun AppRoot(repository: HostRepository) {
                                         when (item) {
                                             is HostSessionItem.Terminal -> {
                                                 currentTab = SessionTab.Terminal(item.controller)
-                                                screen = Screen.Terminal(item.controller.host.id)
+                                                screen = Screen.Terminal
                                             }
                                             is HostSessionItem.Sftp -> {
                                                 // 连接页重入：用 entry 的 uiState（浏览状态/路径保留）
@@ -457,7 +472,7 @@ fun AppRoot(repository: HostRepository) {
                                                     it.host.id == item.host.id && it.session === item.session
                                                 }
                                                 currentTab = SessionTab.Sftp(item.host, item.session, entry?.uiState ?: SftpUiState())
-                                                screen = Screen.Terminal(item.host.id)
+                                                screen = Screen.Terminal
                                             }
                                         }
                                     },
@@ -483,6 +498,9 @@ fun AppRoot(repository: HostRepository) {
                                         repository.saveSettings(new)
                                         settings = new
                                     },
+                                    repository = repository,
+                                    subPage = settingsSubPage,
+                                    onOpenSub = { settingsSubPage = it },
                                 )
                             }
                         }
@@ -506,25 +524,30 @@ fun AppRoot(repository: HostRepository) {
 
                 // 返回主页不断开：默认后台运行，会话保留在 SessionManager，
                 // 由前台服务保活，从「连接」页可重新进入（终端缓冲原样保留）
+                // 终端页 tabs = 全部会话（跨主机）：连任何主机都进同一个终端页，
+                // tab 栏以「user@host + 状态点」区分（Termius 式全局会话）
                 is Screen.Terminal -> {
-                    val host = hosts.firstOrNull { it.id == s.hostId }
-                    val all = sessionManager.sessions.filter { it.host.id == s.hostId }
-                    val sftpTabs = sessionManager.sftpSessions
-                        .filter { it.host.id == s.hostId }
-                        .map { SessionTab.Sftp(it.host, it.session, it.uiState) }
                     // 终端会话 tab 不过滤状态：断开/失败也保留（tab 内状态点体现），
                     // 关闭 tab 时才从列表移除；否则创建 SFTP 后重组会把非活跃终端 tab 丢掉
-                    val terminalTabs = all.map { SessionTab.Terminal(it) }
+                    val terminalTabs = sessionManager.sessions.map { SessionTab.Terminal(it) }
+                    val sftpTabs = sessionManager.sftpSessions
+                        .map { SessionTab.Sftp(it.host, it.session, it.uiState) }
                     val current = currentTab?.takeIf { tab ->
                         tab.id in (terminalTabs.map { it.id } + sftpTabs.map { it.id })
                     } ?: (terminalTabs + sftpTabs).firstOrNull()
-                    if (host != null && current != null) {
+                    if (current != null) {
                         val tabs = terminalTabs + sftpTabs
+                        // 「+」新增会话归属：当前选中会话的主机（SFTP tab 用其主机）
+                        val currentHost = when (current) {
+                            is SessionTab.Terminal -> current.controller.host
+                            is SessionTab.Sftp -> current.host
+                        }
                         TerminalScreen(
                             tabs = tabs,
                             current = current,
                             theme = terminalTheme,
                             settings = settings,
+                            repository = repository,
                             onBack = {
                                 currentTab = null
                                 refreshHosts()
@@ -532,7 +555,7 @@ fun AppRoot(repository: HostRepository) {
                             },
                             onSwitchTab = { currentTab = it },
                             onAddSession = {
-                                val c = sessionManager.open(host, settings.autoReconnect) {
+                                val c = sessionManager.open(currentHost, settings.autoReconnect) {
                                     hosts = repository.listHosts()
                                 }
                                 pendingNavigate = c
@@ -547,10 +570,8 @@ fun AppRoot(repository: HostRepository) {
                                     }
                                 }
                                 val remaining = (sessionManager.sessions
-                                    .filter { c: TerminalController -> c.host.id == s.hostId }
-                                    .map { c: TerminalController -> SessionTab.Terminal(c) } +
+                                    .map { SessionTab.Terminal(it) } +
                                     sessionManager.sftpSessions
-                                        .filter { it.host.id == s.hostId }
                                         .map { SessionTab.Sftp(it.host, it.session, it.uiState) })
                                     .firstOrNull { it.id != tab.id }
                                 currentTab = remaining

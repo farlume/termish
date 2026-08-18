@@ -59,6 +59,8 @@ internal class SessionConnector(
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
         private const val HERDR_INSTALL_TIMEOUT_MS = 180_000L
+        /** mosh 安装超时：包管理器下载 + 依赖，给足时间。 */
+        private const val MOSH_INSTALL_TIMEOUT_MS = 180_000L
     }
 
     // ------------------------------------------------------------------
@@ -227,14 +229,24 @@ internal class SessionConnector(
             if (parsed == null) {
                 // 3a. 引导失败 = 远端未装 mosh-server（或固定端口被占）→ 降级路径之一
                 val rawTrimmed = raw?.trim()?.take(120)
+                // 2>&1 后 command not found 进 stdout：精确识别「未安装 mosh-server」
+                val missing = raw?.contains("not found") == true ||
+                    raw?.contains("No such file") == true ||
+                    rawTrimmed.isNullOrEmpty()
                 val reason = when {
                     c.host.moshUdpPort in 1024..65535 && raw?.contains("Address already in use") == true ->
                         strings().moshPortBusy(c.host.moshUdpPort)
-                    // 2>&1 后 command not found 进 stdout：精确识别「未安装 mosh-server」
-                    raw?.contains("not found") == true || raw?.contains("No such file") == true ->
-                        strings().moshServerMissing
-                    rawTrimmed.isNullOrEmpty() -> strings().moshServerMissing
+                    missing -> strings().moshServerMissing
                     else -> strings().moshBootstrapFailed(rawTrimmed)
+                }
+                // Mosh 模式（非 HERDR 复用）：远端未装 mosh-server → 引导安装
+                //（SSH 显示通道保留，卡片可选「安装」或「降级 SSH」；HERDR 复用
+                // 路径保持原样：直接降级到 herdr exec）
+                if (missing && onDegraded == null) {
+                    TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
+                    finishConnected(s, sendStartup = false)
+                    c.moshNeedsInstall = true
+                    return
                 }
                 TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——降级" }
                 if (onDegraded != null) {
@@ -248,6 +260,8 @@ internal class SessionConnector(
             }
             val (moshPort, moshKey) = parsed
             TermLog.i("mosh") { "mosh-server up port=$moshPort ${c.host.hostname}" }
+            // 引导成功：待安装状态立即清除（残留可能来自上一次会话）
+            c.moshNeedsInstall = false
 
             // 3b. 引导成功：建 mosh client，等 UDP 首包确认（连接成功判定）
             withContext(Dispatchers.Main) { prepareThemeSync() }
@@ -451,6 +465,144 @@ internal class SessionConnector(
                 c.errorMessage = strings().herdrInstallFailed(e.message)
             }
         }
+    }
+
+    /**
+     * Mosh 引导安装：Mosh 模式远端未装 mosh-server 时，在已认证连接上按
+     * 系统包管理器安装。权限三态：root 直装 / 非 root 免密 sudo（`sudo -n`）/ 非
+     * root 需密码（引导卡片输入，`sudo -S` 从 stdin 喂密码——JVM 经 exec 通道
+     * 写入不进命令行，iOS 回退 printf 管道；密码不经 Compose 状态、不进日志）。
+     * 成功后重新引导 mosh（失败自然回流引导卡片或降级）。
+     * 安装过程流式读输出进 [TerminalController.moshInstallLog]（引导卡片实时展示）。
+     *
+     * @param password sudo 密码（首次点击后探测发现 sudo 需要密码时，卡片会
+     * 显示输入框，用户输入后再点安装传入）。
+     */
+    fun installMosh(password: String? = null) {
+        val s = c.session ?: return
+        if (c.moshInstalling) return
+        c.moshInstalling = true
+        c.errorMessage = null
+        c.moshInstallLog = ""
+        c.scope.launch {
+            try {
+                // 系统探测（失败按未知处理：提示手动安装）
+                val system = detectSystemFromOutput(s.probeSystem() ?: "")
+                val isRoot = s.runCommand("id -u", 3_000)?.trim() == "0"
+                val installCmd = moshInstallCommand(system)
+                if (installCmd == null) {
+                    TermLog.w("mosh") { "mosh install unsupported ${c.host.name}: system=$system" }
+                    c.moshInstalling = false
+                    c.errorMessage = strings().moshInstallUnsupported(system ?: "?")
+                    return@launch
+                }
+                // sudo 需求探测：非 root 时看 `sudo -n true` 是否免密
+                val sudoNeedsPassword = if (isRoot) {
+                    false
+                } else {
+                    val hasSudo = s.runCommand("command -v sudo", 3_000)?.isNotBlank() == true
+                    if (!hasSudo) {
+                        // 非 root 且无 sudo：无法自动安装，提示手动（避免让用户白输密码）
+                        TermLog.w("mosh") { "mosh install ${c.host.name}: sudo not found（非 root）" }
+                        c.moshInstalling = false
+                        c.errorMessage = strings().moshInstallFailed("sudo not found on remote (non-root user)")
+                        return@launch
+                    }
+                    val sudoNaked = s.runCommand("sudo -n true 2>&1 && echo SUDO_OK", 3_000)
+                    sudoNaked?.contains("SUDO_OK") != true
+                }
+                if (sudoNeedsPassword && password.isNullOrBlank()) {
+                    // 需要密码但用户还没输：卡片显示密码输入框，等用户输入后重试
+                    TermLog.w("mosh") { "mosh install ${c.host.name}: sudo needs password——等待用户输入" }
+                    c.moshInstalling = false
+                    c.moshNeedsSudoPassword = true
+                    return@launch
+                }
+                val fullCmd = when {
+                    isRoot -> installCmd
+                    sudoNeedsPassword -> "sudo -S -p '' sh -c '$installCmd'"
+                    else -> "sudo -n $installCmd"
+                }
+                TermLog.i("mosh") { "mosh install ${c.host.name}: $installCmd${if (sudoNeedsPassword) "（sudo -S）" else ""}" }
+                val log = StringBuilder()
+                withContext(Dispatchers.IO) {
+                    // 流式 exec（JVM）：逐块读安装输出进日志；iOS 无 startExec 回退 runCommand
+                    val exec = s.startExec(fullCmd, c.lastCols, c.lastRows)
+                    if (exec != null) {
+                        try {
+                            // sudo -S 从 stdin 读密码：PTY 上 sudo 会关回显，密码不出现在
+                            // 命令行（ps 不可见）；写晚于 exec 启动也没事，PTY 输入缓冲兜底
+                            if (sudoNeedsPassword) exec.write((password + "\n").encodeToByteArray())
+                            while (true) {
+                                val chunk = exec.read() ?: break
+                                log.append(chunk.decodeToString().replace("\r", ""))
+                                c.moshInstallLog = log.toString()
+                            }
+                        } finally {
+                            exec.close()
+                        }
+                    } else {
+                        // iOS 无 exec 通道：POSIX printf 管道喂密码（单引号转义，跨平台无
+                        // base64 -d 参数差异问题）；密码错时 sudo 输出 Sorry, try again
+                        val piped = if (sudoNeedsPassword) {
+                            "printf '%s' ${shSingleQuote(password!!)} | $fullCmd"
+                        } else {
+                            fullCmd
+                        }
+                        log.append(s.runCommand(piped, MOSH_INSTALL_TIMEOUT_MS) ?: "")
+                        c.moshInstallLog = log.toString()
+                    }
+                }
+                // 防御性清洗：万一 PTY 回显了密码，日志不落明文（短密码不洗，避免误伤）
+                if (sudoNeedsPassword && (password?.length ?: 0) >= 4) {
+                    c.moshInstallLog = c.moshInstallLog.replace(password!!, "***")
+                }
+                // 安装后验证 mosh-server 就位（PATH 探测）；失败 → 明确报错，
+                // 卡片保留可重试/降级（日志尾部进 banner 提示原因）
+                val verified = s.runCommand("command -v mosh-server", 5_000)?.isNotBlank() == true
+                if (!verified) {
+                    TermLog.e("mosh") { "mosh install then verify failed ${c.host.name}: ${log.take(120)}" }
+                    c.moshInstalling = false
+                    c.errorMessage = strings().moshInstallFailed(log.toString().trim().take(200).ifBlank { null })
+                    return@launch
+                }
+                // 安装完成：直接重新引导（bootstrap 即最终验证：成功 → mosh；
+                // 仍缺 → 卡片重现可重试/降级；其他错误 → 普通降级）
+                TermLog.i("mosh") { "mosh install finished ${c.host.name}: ${log.take(120)}" }
+                c.moshInstalling = false
+                c.moshNeedsSudoPassword = false
+                c.moshNeedsInstall = false
+                doConnectMosh(existingSession = s)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                c.moshInstalling = false
+                c.errorMessage = strings().moshInstallFailed(e.message)
+            }
+        }
+    }
+
+    /** 引导卡片上的「降级 SSH」：放弃安装，当前 SSH 显示通道转正（补发启动命令）。 */
+    fun degradeMoshToSsh() {
+        if (!c.moshNeedsInstall) return
+        TermLog.i("mosh") { "mosh install skipped ${c.host.name}——降级 SSH" }
+        c.moshNeedsInstall = false
+        c.moshNeedsSudoPassword = false
+        if (c.host.startupCommand.isNotBlank()) {
+            c.session?.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
+        }
+        c.frame++
+    }
+
+    /** 系统 → mosh 安装命令（无 sudo 前缀，权限层在 [installMosh] 按 root/免密/密码组装）；未知系统返回 null。 */
+    private fun moshInstallCommand(system: String?): String? = when (system) {        "ubuntu", "debian" -> "apt-get update -y && apt-get install -y mosh"
+        "fedora", "centos", "rhel", "rocky", "almalinux" -> "dnf install -y mosh"
+        "arch", "manjaro", "endeavouros" -> "pacman -S --noconfirm mosh"
+        "alpine" -> "apk add --no-cache mosh"
+        "opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse" -> "zypper -n install mosh"
+        "void" -> "xbps-install -y mosh"
+        "macos", "darwin" -> "brew install mosh"
+        else -> null
     }
 
     /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显），
@@ -704,6 +856,12 @@ internal class SessionConnector(
         }
     }
 }
+
+/**
+ * POSIX sh 单引号转义：`'` → `'\''`，用于 printf 管道喂 sudo 密码
+ * （跨平台无 base64 -d 参数差异）。
+ */
+internal fun shSingleQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
 /**
  * 从 install.sh 输出解析实际安装路径（install.sh 打印

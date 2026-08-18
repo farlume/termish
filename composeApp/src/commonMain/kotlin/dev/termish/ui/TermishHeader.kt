@@ -82,15 +82,22 @@ fun TermishLargeHeader(
     title: String,
     modifier: Modifier = Modifier,
     contentColor: Color = MaterialTheme.colorScheme.onSurface,
+    /** 非空时标题前渲染返回箭头（二级页统一返回入口）。 */
+    onBack: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(start = 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
+            .padding(start = if (onBack != null) 4.dp else 20.dp, end = 12.dp, top = 12.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (onBack != null) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = LocalAppStrings.current.navBack, tint = contentColor)
+            }
+        }
         Text(
             title,
             style = MaterialTheme.typography.headlineSmall,

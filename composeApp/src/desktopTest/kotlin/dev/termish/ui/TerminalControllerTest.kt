@@ -148,6 +148,17 @@ class TerminalControllerTest {
         return c to fake
     }
 
+    private fun moshController(
+        fake: FakeSsh,
+        repo: HostRepository = repo(),
+    ): Pair<TerminalController, FakeSsh> {
+        val c = TerminalController(host().copy(connectionMode = ConnectionMode.MOSH), "pw", null, repo, false) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        return c to fake
+    }
+
     private fun awaitStatus(c: TerminalController, expected: ConnStatus) = runBlocking {
         withTimeout(5_000) {
             while (c.status != expected) delay(10)
@@ -337,6 +348,19 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun shSingleQuoteEscapesForSudoPipe() {
+        // 普通密码：原样包单引号
+        assertEquals("'abc'", shSingleQuote("abc"))
+        // 含单引号：拆段转义 `'` → `'\''`，shell 拼接后还原原密码
+        assertEquals("'a'\\''b'", shSingleQuote("a'b"))
+        assertEquals("'a'\\''b'\\''c'", shSingleQuote("a'b'c"))
+        // 含 shell 敏感字符：单引号内全部安全，无需额外转义
+        assertEquals("'a\$b c\\d\"e'", shSingleQuote("a\$b c\\d\"e"))
+        // 空密码
+        assertEquals("''", shSingleQuote(""))
+    }
+
+    @Test
     fun herdrBootstrapFailureDegradesToExecAndConnected() {
         // snapshot 有效但 mosh 引导无 MOSH CONNECT → 降级 exec+pty；状态必须置
         // CONNECTED（回归：此前状态停在 CONNECTING，banner 常驻「连接中…」）
@@ -399,6 +423,115 @@ class TerminalControllerTest {
         assertTrue(probed[2].startsWith("/usr/local/bin/herdr "))
         // 命中路径贯穿降级 exec（非裸 herdr）
         assertEquals(listOf("/usr/local/bin/herdr"), f.execCommands)
+        c.destroy()
+    }
+
+    // ---------- Mosh 引导安装 ----------
+
+    @Test
+    fun moshMissingGuidesInstall() {
+        // Mosh 模式：mosh-server 缺失（not found）→ 保留 SSH 连接进入「待安装」
+        //（引导卡片：安装或降级 SSH），不直接降级
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> "mosh: command not found"
+                    cmd.contains("os-release") -> "ID=ubuntu"
+                    else -> null
+                }
+            },
+        )
+        val (c, f) = moshController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertTrue(c.moshNeedsInstall, "应进入引导安装状态")
+        assertTrue(!f.closed, "SSH 引导通道应保留（安装/降级都靠它）")
+        c.destroy()
+    }
+
+    @Test
+    fun installMoshRunsPackageManagerAndReGuides() {
+        // 免密 sudo：安装命令（sudo -n apt-get…）执行 → command -v 验证通过 →
+        // 重新引导仍缺（模拟装后 PATH 未刷新）→ 回到引导卡片（可重试/降级）
+        var installed = false
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    // bootstrap 命令串也含 os-release：mosh-server 分支必须在最前
+                    cmd.contains("mosh-server new") -> "mosh: command not found"
+                    cmd.contains("command -v mosh-server") ->
+                        if (installed) "/usr/bin/mosh-server" else null
+                    cmd.contains("os-release") -> "ID=ubuntu"
+                    cmd.contains("id -u") -> "1000"
+                    cmd.contains("command -v sudo") -> "/usr/bin/sudo"
+                    cmd.contains("sudo -n true") -> "SUDO_OK"
+                    else -> null
+                }
+            },
+            execFactory = { cmd ->
+                if (cmd.contains("apt-get install -y mosh")) installed = true
+                FakeExec(eof = true)
+            },
+        )
+        val (c, f) = moshController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(c.moshNeedsInstall)
+
+        c.installMosh()
+        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+
+        assertTrue(installed, "应执行包管理器安装命令")
+        assertTrue(f.execCommands.any { it.contains("sudo -n apt-get") }, "非 root 免密 sudo 前缀")
+        assertTrue(c.moshNeedsInstall, "重引导仍缺 → 回到引导卡片（可重试/降级）")
+        c.destroy()
+    }
+
+    @Test
+    fun installMoshWithSudoPasswordFeedsStdin() {
+        // 需要 sudo 密码：首次点击无密码 → 卡片提示输入；输入后安装命令走
+        // `sudo -S` 且密码经 exec stdin 写入（不进命令字符串）
+        var passwordSeen = ""
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> "mosh: command not found"
+                    cmd.contains("command -v mosh-server") -> "/usr/bin/mosh-server"
+                    cmd.contains("os-release") -> "ID=debian"
+                    cmd.contains("id -u") -> "1000"
+                    cmd.contains("command -v sudo") -> "/usr/bin/sudo"
+                    cmd.contains("sudo -n true") -> "sudo: a password is required"
+                    else -> null
+                }
+            },
+            execFactory = { cmd ->
+                if (cmd.contains("sudo -S")) {
+                    FakeExec(onWrite = { passwordSeen = it.decodeToString() }, eof = true)
+                } else {
+                    FakeExec(eof = true)
+                }
+            },
+        )
+        val (c, f) = moshController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(c.moshNeedsInstall)
+
+        // 首次点击（无密码）：探测发现需要 sudo 密码 → 卡片提示输入
+        c.installMosh()
+        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+        assertTrue(c.moshNeedsSudoPassword, "应提示输入 sudo 密码")
+        assertTrue(!f.execCommands.any { it.contains("sudo -S") }, "无密码时不应执行安装")
+
+        // 输入密码后重试：sudo -S 经 exec stdin 收密码
+        c.installMosh("p@ss'w0rd")
+        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+
+        assertTrue(f.execCommands.any { it.contains("sudo -S -p '' sh -c") }, "应走 sudo -S 非交互")
+        assertEquals("p@ss'w0rd\n", passwordSeen, "密码经 stdin 送达，不进命令字符串")
+        assertTrue(f.execCommands.none { it.contains("p@ss") }, "命令串不含密码明文")
+        assertTrue(!c.moshNeedsSudoPassword, "安装成功应退出密码输入态")
         c.destroy()
     }
 }

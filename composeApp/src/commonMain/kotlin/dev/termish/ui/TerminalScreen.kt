@@ -83,12 +83,15 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.termish.data.AppSettings
 import dev.termish.data.Host
+import dev.termish.data.HostRepository
 import dev.termish.ssh.SftpSession
 import dev.termish.ssh.AuthPrompt
 import dev.termish.term.argbToRgb
@@ -132,6 +135,8 @@ fun TerminalScreen(
     current: SessionTab,
     theme: TerminalTheme,
     settings: AppSettings,
+    /** 终端内插入命令片段（全局库读取）。 */
+    repository: HostRepository,
     onBack: () -> Unit,
     onSwitchTab: (SessionTab) -> Unit,
     onAddSession: () -> Unit,
@@ -164,6 +169,7 @@ fun TerminalScreen(
                 controller = tab.controller,
                 theme = theme,
                 settings = settings,
+                repository = repository,
                 onBack = onBack,
             )
             is SessionTab.Sftp -> SftpContent(
@@ -210,6 +216,7 @@ private fun TerminalBody(
     controller: TerminalController,
     theme: TerminalTheme,
     settings: AppSettings,
+    repository: HostRepository,
     onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -222,6 +229,8 @@ private fun TerminalBody(
     var inputValue by remember { mutableStateOf(TextFieldValue("")) }
     // 已提交基线：输入法组合态（拼音等）不参与 diff，提交时才更新
     var committedText by remember { mutableStateOf("") }
+    // 命令片段插入面板
+    var snippetOpen by remember { mutableStateOf(false) }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
     val inputFocusRequester = remember { FocusRequester() }
@@ -346,10 +355,16 @@ private fun TerminalBody(
             WindowInsets.ime.getBottom(density).toFloat() + with(density) { 12.dp.toPx() }
         // 画布四周留出小间距，文字不贴屏幕边缘；行列按内缩后宽度自动重算
         Box(Modifier.weight(1f).clipToBounds().background(theme.background())) {
-            if (controller.herdrNeedsInstall || controller.herdrInstalling) {
-                HerdrInstallGuide(controller)
-            } else {
-            TerminalView(
+            when {
+                controller.herdrNeedsInstall || controller.herdrInstalling -> {
+                    // 底部让出工具栏高度：卡片在「画布−工具栏」区域内居中，视觉重心不上偏
+                    HerdrInstallGuide(controller, with(density) { toolbarHeightPx.toDp() })
+                }
+                controller.moshNeedsInstall || controller.moshInstalling -> {
+                    MoshInstallGuide(controller, with(density) { toolbarHeightPx.toDp() })
+                }
+                else -> {
+                    TerminalView(
                 controller = controller,
                 theme = theme,
                 fontSizeSp = settings.terminalFontSize.toFloat(),
@@ -372,6 +387,7 @@ private fun TerminalBody(
                     .padding(horizontal = 6.dp, vertical = 4.dp)
                     .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
             )
+            }
             }
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
@@ -408,6 +424,10 @@ private fun TerminalBody(
                             if (settings.hapticFeedback) hapticTick()
                             if (imeVisible) keyboardController?.hide() else showKeyboard()
                         },
+                        onSnippets = {
+                            if (settings.hapticFeedback) hapticTick()
+                            snippetOpen = true
+                        },
                         onPaste = {
                             val text = clipboard.getText()?.text
                             if (!text.isNullOrEmpty()) {
@@ -426,6 +446,18 @@ private fun TerminalBody(
                         theme = theme,
                         modifier = Modifier.padding(bottom = 8.dp),
                     )
+                // 命令片段插入面板（键盘工具栏「{}」触发）
+                if (snippetOpen) {
+                    SnippetInsertSheet(
+                        repository = repository,
+                        onUse = { content, run ->
+                            controller.sendText(if (run) content + "\n" else content)
+                            snippetOpen = false
+                            scope.launch { snackbar.showSnackbar(s.snippetInserted) }
+                        },
+                        onDismiss = { snippetOpen = false },
+                    )
+                }
                 // 隐藏输入字段：仅作为输入法接入口，不渲染可见 UI。
                 // 打字内容以终端回显为准（远端 echo 才是真实状态，本地显示反而重复干扰）。
                 BasicTextField(
@@ -573,9 +605,15 @@ private fun TerminalTabBar(
                     val statusColor = (tab as? SessionTab.Terminal)?.let {
                         statusColor(it.controller.status, it.controller.linkLostSeconds)
                     }
+                    // 断开/失败的会话 tab 置灰（状态点保留：灰点=已断开，红点=失败）
+                    val inactive = (tab as? SessionTab.Terminal)?.let {
+                        val st = it.controller.status
+                        st != ConnStatus.CONNECTED && st != ConnStatus.CONNECTING && st != ConnStatus.AUTH
+                    } ?: false
                     SessionTabChip(
                         host = host,
                         statusDotColor = statusColor,
+                        inactive = inactive,
                         selected = tab.id == current.id,
                         foreground = barForeground,
                         onClick = {
@@ -623,6 +661,8 @@ private fun TerminalTabBar(
 private fun SessionTabChip(
     host: Host,
     statusDotColor: Color?,
+    /** 断开/失败的会话：文字与背景降透明度（状态点仍保留区分）。 */
+    inactive: Boolean = false,
     selected: Boolean,
     foreground: Color,
     onClick: () -> Unit,
@@ -634,8 +674,8 @@ private fun SessionTabChip(
         Modifier
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (selected) foreground.copy(alpha = 0.18f)
-                else foreground.copy(alpha = 0.07f),
+                if (selected) foreground.copy(alpha = if (inactive) 0.09f else 0.18f)
+                else foreground.copy(alpha = if (inactive) 0.03f else 0.07f),
             )
             .clickable(onClick = onClick)
             .padding(start = 8.dp, top = 5.dp, bottom = 5.dp, end = 2.dp)
@@ -660,7 +700,7 @@ private fun SessionTabChip(
         Text(
             "${host.username}@${host.hostname}",
             style = MaterialTheme.typography.labelSmall,
-            color = foreground,
+            color = if (inactive) foreground.copy(alpha = 0.4f) else foreground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -712,12 +752,15 @@ private fun QuickCommandsBar(controller: TerminalController) {
     }
 }
 
-/** HERDR 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。 */
+/** HERDR 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。
+ *  @param bottomInset 底部让出高度（工具栏），卡片在其中居中以保持视觉重心。 */
 @Composable
-private fun HerdrInstallGuide(controller: TerminalController) {
+private fun HerdrInstallGuide(controller: TerminalController, bottomInset: Dp) {
     val s = LocalAppStrings.current
     Box(
-        Modifier.fillMaxSize().padding(24.dp),
+        Modifier
+            .fillMaxSize()
+            .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 24.dp + bottomInset),
         contentAlignment = Alignment.Center,
     ) {
         Card(
@@ -780,6 +823,114 @@ private fun HerdrInstallGuide(controller: TerminalController) {
                 } else {
                     Button(onClick = { controller.installHerdr() }) {
                         Text(s.herdrInstall)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Mosh 引导安装卡片：远端未装 mosh-server 时引导安装（包管理器），可降级 SSH。
+ *  @param bottomInset 底部让出高度（工具栏），卡片在其中居中以保持视觉重心。 */
+@Composable
+private fun MoshInstallGuide(controller: TerminalController, bottomInset: Dp) {
+    val s = LocalAppStrings.current
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 24.dp + bottomInset),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    Icons.Filled.Link,
+                    contentDescription = null,
+                    modifier = Modifier.size(44.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    s.moshMissing,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    s.moshInstallHint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                if (controller.moshInstalling) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text(
+                            s.moshInstalling,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    // 安装实时日志：显示最后 8 行，挂住时可见无新进展
+                    val log = controller.moshInstallLog
+                    if (log.isNotBlank()) {
+                        Text(
+                            log.lines().takeLast(8).joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = monospaceFontFamily(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 8,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(10.dp),
+                        )
+                    }
+                } else {
+                    // sudo 需要密码：输入框（密码仅本次安装使用，经加密 SSH 通道传输）
+                    val sudoPwd = remember { mutableStateOf("") }
+                    if (controller.moshNeedsSudoPassword) {
+                        OutlinedTextField(
+                            value = sudoPwd.value,
+                            onValueChange = { sudoPwd.value = it },
+                            label = { Text(s.moshSudoPasswordLabel) },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            s.moshSudoPasswordHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            controller.installMosh(
+                                if (controller.moshNeedsSudoPassword) sudoPwd.value else null,
+                            )
+                        },
+                        enabled = !controller.moshNeedsSudoPassword || sudoPwd.value.isNotBlank(),
+                    ) {
+                        Text(s.moshInstall)
+                    }
+                    // 降级选项：用户可选择不安装，继续用 SSH
+                    TextButton(onClick = { controller.degradeMoshToSsh() }) {
+                        Text(s.moshDegradeToSsh)
                     }
                 }
             }

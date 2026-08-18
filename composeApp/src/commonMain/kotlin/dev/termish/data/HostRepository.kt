@@ -16,6 +16,8 @@ class HostRepository(
 
     private val hostsKey = "termish.hosts.v1"
     private val settingsKey = "termish.settings.v1"
+    private val tagGroupsKey = "termish.tag_groups.v1"
+    private val snippetsKey = "termish.snippets.v1"
 
     // ---------- 主机 ----------
 
@@ -63,6 +65,61 @@ class HostRepository(
 
     private fun saveHosts(hosts: List<Host>) {
         settings.putString(hostsKey, json.encodeToString(hosts))
+    }
+
+    // ---------- 标签组（全局，片段引用） ----------
+
+    fun listTagGroups(): List<TagGroup> {
+        val raw = settings.getStringOrNull(tagGroupsKey) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<TagGroup>>(raw)
+        } catch (e: Exception) {
+            backupCorrupt(tagGroupsKey, raw)
+            emptyList()
+        }
+    }
+
+    fun upsertTagGroup(group: TagGroup) {
+        val groups = listTagGroups().toMutableList()
+        val idx = groups.indexOfFirst { it.id == group.id }
+        if (idx >= 0) groups[idx] = group else groups.add(group)
+        settings.putString(tagGroupsKey, json.encodeToString(groups))
+    }
+
+    /** 删除标签组：级联清理所有片段对该标签的引用（不删片段本身）。 */
+    fun deleteTagGroup(id: String) {
+        settings.putString(tagGroupsKey, json.encodeToString(listTagGroups().filter { it.id != id }))
+        // 级联清理片段引用（仅当确有引用被清理时才回写，避免无谓写入）
+        val before = listSnippets()
+        val cleaned = before.map { s -> if (id in s.tagIds) s.copy(tagIds = s.tagIds - id) else s }
+        if (cleaned != before) {
+            settings.putString(snippetsKey, json.encodeToString(cleaned))
+        }
+    }
+
+    // ---------- 命令片段（全局库） ----------
+
+    fun listSnippets(): List<Snippet> {
+        val raw = settings.getStringOrNull(snippetsKey) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<Snippet>>(raw)
+        } catch (e: Exception) {
+            backupCorrupt(snippetsKey, raw)
+            emptyList()
+        }
+    }
+
+    fun getSnippet(id: String): Snippet? = listSnippets().firstOrNull { it.id == id }
+
+    fun upsertSnippet(snippet: Snippet) {
+        val snippets = listSnippets().toMutableList()
+        val idx = snippets.indexOfFirst { it.id == snippet.id }
+        if (idx >= 0) snippets[idx] = snippet else snippets.add(snippet)
+        settings.putString(snippetsKey, json.encodeToString(snippets))
+    }
+
+    fun deleteSnippet(id: String) {
+        settings.putString(snippetsKey, json.encodeToString(listSnippets().filter { it.id != id }))
     }
 
     // ---------- 设置 ----------

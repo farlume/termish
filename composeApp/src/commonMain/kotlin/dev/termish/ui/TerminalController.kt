@@ -132,6 +132,22 @@ class TerminalController(
     var herdrInstallLog by mutableStateOf("")
         internal set
 
+    /** Mosh 模式：远端未安装 mosh-server（引导卡片：安装或降级 SSH）。 */
+    var moshNeedsInstall by mutableStateOf(false)
+        internal set
+
+    /** Mosh 安装进行中（引导卡片显示进度，避免重复触发）。 */
+    var moshInstalling by mutableStateOf(false)
+        internal set
+
+    /** Mosh 安装命令的实时输出（引导卡片里展示；挂住时可见无新进展）。 */
+    var moshInstallLog by mutableStateOf("")
+        internal set
+
+    /** Mosh 安装需要 sudo 密码（卡片显示密码输入框；仅当远端非 root 且 sudo 非免密）。 */
+    var moshNeedsSudoPassword by mutableStateOf(false)
+        internal set
+
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
@@ -232,6 +248,14 @@ class TerminalController(
 
     /** HERDR 模式：远端未安装时，在已认证连接上执行官网安装脚本并继续连接。 */
     fun installHerdr() = connector.installHerdr()
+
+    /** Mosh 模式：远端未安装时按系统包管理器安装并继续 mosh 连接。
+     *  @param password sudo 密码（远端非 root 且 sudo 需密码时由引导卡片传入；
+     *  仅本次安装使用，不经 Compose 状态存储、不进日志）。 */
+    fun installMosh(password: String? = null) = connector.installMosh(password)
+
+    /** Mosh 引导卡片上的「降级 SSH」：放弃安装，继续用当前 SSH 连接。 */
+    fun degradeMoshToSsh() = connector.degradeMoshToSsh()
 
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect
@@ -405,6 +429,11 @@ class TerminalController(
         stopKeepAlive()
         moshSession?.close()
         moshSession = null
+        // 引导安装状态不跨会话残留（重连后重新探测决定）
+        moshNeedsInstall = false
+        moshInstalling = false
+        moshInstallLog = ""
+        moshNeedsSudoPassword = false
         herdrExec?.close()
         herdrExec = null
         session?.close()

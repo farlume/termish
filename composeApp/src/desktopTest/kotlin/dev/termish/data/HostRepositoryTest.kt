@@ -130,4 +130,86 @@ class HostRepositoryTest {
         r.saveRecentSftpEntries(emptyList())
         assertTrue(r.loadRecentSftpEntries().isEmpty())
     }
+
+
+
+// ---------- 命令片段 + 标签组 ----------
+
+private fun snippet(id: String, name: String = "snip-$id", tagIds: List<String> = emptyList()) =
+    Snippet(id = id, name = name, content = "echo $id", tagIds = tagIds, updatedAt = 1L)
+
+@Test
+fun tagGroupsCrud() {
+    val r = repo()
+    assertTrue(r.listTagGroups().isEmpty())
+
+    r.upsertTagGroup(TagGroup("t1", "docker"))
+    r.upsertTagGroup(TagGroup("t2", "git"))
+    assertEquals(listOf("t1", "t2"), r.listTagGroups().map { it.id })
+
+    // 同名覆盖（改名）
+    r.upsertTagGroup(TagGroup("t1", "containers"))
+    assertEquals("containers", r.listTagGroups().first { it.id == "t1" }.name)
+    assertEquals(2, r.listTagGroups().size)
+
+    r.deleteTagGroup("t2")
+    assertEquals(listOf("t1"), r.listTagGroups().map { it.id })
+}
+
+@Test
+fun snippetsCrud() {
+    val r = repo()
+    assertTrue(r.listSnippets().isEmpty())
+
+    r.upsertSnippet(snippet("a"))
+    r.upsertSnippet(snippet("b"))
+    assertEquals(listOf("a", "b"), r.listSnippets().map { it.id })
+
+    r.upsertSnippet(snippet("a", name = "renamed"))
+    assertEquals("renamed", r.getSnippet("a")!!.name)
+    assertEquals(2, r.listSnippets().size)
+
+    r.deleteSnippet("a")
+    assertNull(r.getSnippet("a"))
+    assertEquals(listOf("b"), r.listSnippets().map { it.id })
+}
+
+@Test
+fun deleteTagGroupCleansSnippetReferences() {
+    val r = repo()
+    r.upsertTagGroup(TagGroup("t1", "docker"))
+    r.upsertSnippet(snippet("a", tagIds = listOf("t1")))
+    r.upsertSnippet(snippet("b", tagIds = listOf("t1", "t2"))) // t2 不存在也保留原样？不——只清 t1
+    r.upsertSnippet(snippet("c")) // 无标签不受影响
+
+    r.deleteTagGroup("t1")
+
+    assertEquals(emptyList<String>(), r.getSnippet("a")!!.tagIds, "引用 t1 的片段应被清理")
+    assertEquals(listOf("t2"), r.getSnippet("b")!!.tagIds, "其他标签引用保留")
+    assertEquals(emptyList<String>(), r.getSnippet("c")!!.tagIds, "无标签片段不受影响")
+    // 片段本身不删除
+    assertEquals(listOf("a", "b", "c"), r.listSnippets().map { it.id })
+}
+
+@Test
+fun deleteTagGroupWithoutReferencesSkipsSnippetWrite() {
+    // 无引用的标签删除不应改写 snippets 存储（避免无谓写入）
+    val r = repo()
+    r.upsertTagGroup(TagGroup("t1", "docker"))
+    r.upsertSnippet(snippet("a"))
+
+    r.deleteTagGroup("t1")
+    assertEquals(emptyList<String>(), r.getSnippet("a")!!.tagIds)
+    assertEquals(1, r.listSnippets().size)
+}
+
+@Test
+fun corruptSnippetsBacksUp() {
+    val settings = PropertiesSettings(Properties())
+    settings.putString("termish.snippets.v1", "{not-json")
+    val r = HostRepository(settings)
+
+    assertTrue(r.listSnippets().isEmpty())
+    assertTrue(settings.keys.any { it.startsWith("termish.snippets.v1.corrupt.") }, "损坏数据应备份")
+}
 }

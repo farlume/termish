@@ -68,6 +68,8 @@ fun KeyToolbar(
     onKey: (SpecialKey) -> Unit,
     onToggleKeyboard: () -> Unit = {},
     onPaste: () -> Unit = {},
+    /** 命令片段插入面板（行 2 的「{}」键位；原符号键 / 由系统键盘提供）。 */
+    onSnippets: () -> Unit = {},
     /** 普通字符键（如 /），直接作为终端输入发送。 */
     onChar: (String) -> Unit = {},
     theme: TerminalTheme,
@@ -88,11 +90,11 @@ fun KeyToolbar(
             KeyButton("⌃L", false, theme) { onKey(SpecialKey.CTRL_L) }
             KeyButton("⌨", false, theme) { onToggleKeyboard() }
         }
-        // 行 2：⌃D/PST 左侧、两个空位、方向键 + ENT 右侧（8 列均分，按钮与行 1 等宽）
+        // 行 2：⌃D/PST 左侧、{}（片段）、方向键 + ENT 右侧（8 列均分，按钮与行 1 等宽）
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             KeyButton("⌃D", false, theme) { onKey(SpecialKey.CTRL_D) }
             KeyButton("PST", false, theme) { onPaste() }
-            KeyButton("/", false, theme) { onChar("/") }
+            KeyButton("{}", false, theme) { onSnippets() }
             KeyButton("⌃E", false, theme) { onKey(SpecialKey.CTRL_E) }
             KeyButton("←", false, theme) { onKey(SpecialKey.LEFT) }
             KeyButton("↓", false, theme) { onKey(SpecialKey.DOWN) }
