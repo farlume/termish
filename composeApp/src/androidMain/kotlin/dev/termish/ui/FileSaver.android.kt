@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.provider.OpenableColumns
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
@@ -77,7 +78,7 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
 private fun insertDownload(context: Context, name: String): Uri? {
     val values = ContentValues().apply {
         put(MediaStore.Downloads.DISPLAY_NAME, name)
-        put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+        put(MediaStore.Downloads.MIME_TYPE, guessMimeType(name))
         put(MediaStore.Downloads.IS_PENDING, 1)
     }
     return context.contentResolver.insert(
@@ -91,3 +92,14 @@ private fun queryName(context: Context, uri: Uri): String? =
         val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
         if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
     }
+
+/** 按文件扩展名推断 MIME；未知回退 application/octet-stream。 */
+internal fun guessMimeType(name: String): String {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    // apk 本质是 zip，部分设备 MimeTypeMap 会误判或返回 null：显式指定安装包 MIME
+    if (ext == "apk") return "application/vnd.android.package-archive"
+    if (ext.isNotEmpty()) {
+        MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
+    }
+    return "application/octet-stream"
+}

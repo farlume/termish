@@ -6,11 +6,11 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
 import androidx.core.net.toUri
 import dev.termish.AppContext
 import dev.termish.app.R
+import dev.termish.ui.guessMimeType
 
 private const val CHANNEL_ID = "termish_download"
 
@@ -51,13 +51,4 @@ actual fun showDownloadDoneNotification(title: String, body: String, openUri: St
     }
 
     nm.notify(openUri?.hashCode() ?: body.hashCode(), builder.build())
-}
-
-/** 按文件扩展名推断 MIME（body 为文件名）；未知回退 application/octet-stream。 */
-private fun guessMimeType(name: String): String {
-    val ext = name.substringAfterLast('.', "").lowercase()
-    if (ext.isNotEmpty()) {
-        MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)?.let { return it }
-    }
-    return "application/octet-stream"
 }
