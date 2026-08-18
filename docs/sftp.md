@@ -3,9 +3,10 @@
 > **English summary:** the platform-neutral `SftpSession` contract (list / mkdir /
 > home / upload / download), the sshj implementation for JVM and the libssh2
 > one for iOS — including the longentry→stat fallback for servers without
-> `readdir` long entries, the binary-safe upload workaround, and how the UI
-> layer does streaming download / recursive folder download with system save
-> dialogs.
+> `readdir` long entries, the binary-safe upload workaround, the download
+> progress callback, and how the UI layer does recursive cross-directory
+> search, streaming download (Android straight to Downloads / iOS Files
+> export / desktop chooser), and recursive folder download.
 
 ## 设计
 
@@ -19,7 +20,11 @@ interface SftpSession {
     fun mkdir(path: String)
     fun home(): String                        // realpath(".") 解析用户主目录
     fun upload(remotePath: String, content: ByteArray)
-    fun download(remotePath: String, onChunk: (ByteArray) -> Unit)  // 阻塞分块回调
+    fun download(
+        remotePath: String,
+        onProgress: (loaded: Long, total: Long) -> Unit = { _, _ -> },  // 进度
+        onChunk: (ByteArray) -> Unit,                                   // 阻塞分块回调
+    )
     fun close()
 }
 ```
@@ -39,7 +44,8 @@ interface SftpSession {
 - **upload**：包一个 `LocalSourceFile`（内存 `ByteArrayInputStream`，
   权限 0644）走 sshj 的 `put` 传输
 - **download**：`open(remotePath)` + 按 offset 读 64KB 分块回调——**流式**，
-  不整文件驻留内存；由 UI 层写本地文件并 close 保存通道
+  不整文件驻留内存；`onProgress` 用 `remote.length()` 报总大小；由 UI 层写
+  本地文件并 close 保存通道
 
 ## iOS 实现（SftpSessionLibssh2）
 
@@ -75,16 +81,20 @@ cinterop 对 `unsigned char*` 生成指针参数，`usePinned` 拿字节地址�
 
 - **home**：`symlink_ex(".", …, LIBSSH2_SFTP_REALPATH)` 解析主目录
 - **mkdir**：`0x1ED`（0755）
-- **download**：64KB 分块 `sftp_read` 回调，与 JVM 侧同语义
+- **download**：64KB 分块 `sftp_read` 回调，与 JVM 侧同语义；`onProgress`
+  用 `fstat_ex` 拿总大小
 
 ## UI 层（SftpScreen / SftpHostPickerOverlay）
 
 - 连接覆盖层 → 文件浏览 tab；**面包屑导航**（两级折叠 + 返回=历史回退）；
-  通配符 / 多关键词搜索；切 tab 保持路径 / 列表状态（`SftpUiState` 随
+  **递归搜索**（跨目录，文件名 + 相对路径扁平展示，点击跳转所在目录；
+  限深 8 层 / 限 500 结果）；切 tab 保持路径 / 列表状态（`SftpUiState` 随
   `SftpSessionEntry` 存活）
 - 上传：系统文件选择器（SAF / UIDocumentPicker / AWT）
-- 下载：**流式分块写本地文件**（不整文件驻留内存）+ 系统保存对话框
-  （`FileSaver` expect/actual）
+- 下载：**流式分块写本地文件**（不整文件驻留内存）+ 顶部进度横幅（文件名 /
+  百分比 / 进度条）+ 下载完成系统通知（Android 点击打开文件）；Android 10+
+  直接写公共 Download 目录（MediaStore，同名自动去重、不弹另存为），
+  Android 9- 回退 SAF；iOS 写临时文件下载完弹 Files 转存；桌面文件选择器
 - **递归目录下载**：`DirectorySaver` 逐文件/子目录展开，目录识别依赖
   `isDirectory` 的准确性（见上）
 - 会话与终端会话平级管理（`SessionManager.sftpSessions`）：连接页可见、
@@ -92,7 +102,7 @@ cinterop 对 `unsigned char*` 生成指针参数，`usePinned` 拿字节地址�
 
 ## 测试
 
-- `commonTest/ui/SftpLogicTest`：UI 层纯逻辑（路径拼接 / 递归展开 / 搜索）
+- `commonTest/ui/SftpLogicTest`：UI 层纯逻辑（路径拼接 / 递归展开 / 递归搜索）
 - `desktopTest/ssh/SftpIntegrationTest`：打真实 sshd 的上传 / 下载 / 递归
   目录往返（self-detect，sshd 缺席 SKIP）
 - iOS 的 longentry→stat 兜底路径无自动化覆盖——涉及 `SftpSessionLibssh2.kt`

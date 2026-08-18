@@ -170,9 +170,10 @@ never appear. Termish's input pipeline is designed around composition from day o
 
 **SFTP**
 - File browser with upload / streaming download / recursive folder download,
-  breadcrumb navigation with back-as-history
-- System save dialogs on all platforms (SAF on Android, document picker on
-  iOS, file chooser on desktop)
+  breadcrumb navigation with back-as-history, recursive cross-directory search
+- Download: progress banner + completion notification (Android taps to open);
+  Android 10+ saves straight to the Download folder (auto-rename, no save-as
+  dialog), iOS exports to Files, desktop file chooser
 
 **Input**
 - Fixed two-row key toolbar: `CTRL ALT ESC TAB ⌃C ↑ ⌃L ⌨` / `⌃D PST / ⌃E ← ↓ → ENT`
