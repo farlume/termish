@@ -29,7 +29,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
@@ -45,8 +44,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
-import dev.termish.herdr.HerdrAgentStatus
-import dev.termish.herdr.HerdrMonitor
 import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.ThemeMode
@@ -122,51 +119,6 @@ fun AppRoot(repository: HostRepository) {
     val scope = rememberCoroutineScope()
     val sessionManager = remember { SessionManager(repository) }
 
-    // ---- Agent 监控（herdr）：HERDR 模式主机 = 显式同意监控 ----
-    val agentMonitors = remember { mutableStateMapOf<String, HerdrMonitor>() }
-    /** 主机卡徽章（hostId → blocked/working 计数）。 */
-    val agentBadges = remember { mutableStateMapOf<String, Pair<Int, Int>>() }
-
-    /** 确保主机有 monitor（幂等）：runCommand 复用该主机已认证连接。 */
-    fun ensureAgentMonitor(controller: TerminalController) {
-        val hostId = controller.host.id
-        if (agentMonitors.containsKey(hostId)) return
-        val monitor = HerdrMonitor(
-            hostName = controller.host.name,
-            hostId = hostId,
-            runCommand = { cmd -> controller.runControlCommand(cmd, 5_000) },
-            scope = scope,
-        )
-        agentMonitors[hostId] = monitor
-    }
-
-    // 监控生命周期：HERDR 主机连接且探测到 herdr → start（幂等）；断开 → stop
-    LaunchedEffect(Unit) {
-        while (true) {
-            sessionManager.sessions.forEach { c ->
-                if (c.host.connectionMode == dev.termish.data.ConnectionMode.HERDR &&
-                    c.isConnected() && c.herdrAvailable
-                ) {
-                    ensureAgentMonitor(c)
-                    agentMonitors[c.host.id]?.let { if (!it.isRunning()) it.start() }
-                }
-            }
-            agentMonitors.keys.toList().forEach { hostId ->
-                val c = sessionManager.sessions.firstOrNull { it.host.id == hostId }
-                if (c == null || !c.isConnected() || !c.herdrAvailable) {
-                    agentMonitors[hostId]?.stop()
-                }
-            }
-            // 徽章聚合：blocked/working 计数（状态机事件驱动，轮询读当前状态）
-            agentMonitors.forEach { (hostId, mon) ->
-                val st = mon.currentStatus()
-                agentBadges[hostId] = st.values.count { it == HerdrAgentStatus.BLOCKED } to
-                    st.values.count { it == HerdrAgentStatus.WORKING }
-            }
-            kotlinx.coroutines.delay(1_000)
-        }
-    }
-
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
@@ -179,6 +131,7 @@ fun AppRoot(repository: HostRepository) {
 
     // 语言文案（提前声明供 connectSftp 等 lambda 使用）
     val appStrings = remember(settings.language) { appStringsFor(settings.language) }
+
 
     /**
      * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。
@@ -252,6 +205,14 @@ fun AppRoot(repository: HostRepository) {
     }
     LaunchedEffect(pendingNavigate) {
         val target = pendingNavigate ?: return@LaunchedEffect
+        // HERDR 模式不预连：exec+pty 的 pty 尺寸固定（无法后续调整），
+        // 必须等 TerminalView 就绪拿到实际画布尺寸再建连（终端页显示连接中）
+        if (target.host.connectionMode == dev.termish.data.ConnectionMode.HERDR) {
+            currentTab = SessionTab.Terminal(target)
+            screen = Screen.Terminal(target.host.id)
+            pendingNavigate = null
+            return@LaunchedEffect
+        }
         // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
         // 到实际画布尺寸），否则会话停留在 IDLE 永远无法连接
         if (target.status == ConnStatus.IDLE) {
@@ -263,6 +224,7 @@ fun AppRoot(repository: HostRepository) {
         }
         pendingNavigate = null
         if (target.status == ConnStatus.CONNECTED) {
+            // HERDR 模式终端页 = herdr TUI（连接时自动发 startupCommand "herdr"）
             currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal(target.host.id)
         } else if (target.status == ConnStatus.ERROR) {

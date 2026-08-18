@@ -124,8 +124,6 @@ fun HostListScreen(
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: (Host) -> Unit,
-    /** 主机卡 agent 徽章（hostId → blocked/working；HERDR 模式监控）。 */
-    agentBadges: Map<String, Pair<Int, Int>> = emptyMap(),
 ) {
     val s = LocalAppStrings.current
     var query by remember { mutableStateOf("") }
@@ -229,7 +227,6 @@ fun HostListScreen(
                             host = host,
                             sessions = sessions,
                             active = sessions.any { it.isActive },
-                            agentBadge = agentBadges[host.id],
                             selectionMode = selectionMode,
                             selected = isSelected,
                             onCardClick = {
@@ -372,7 +369,6 @@ private fun HostCard(
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: () -> Unit,
-    agentBadge: Pair<Int, Int>? = null,
 ) {
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
@@ -395,20 +391,6 @@ private fun HostCard(
             if (host.system.isNotBlank()) {
                 append(", ")
                 append(host.system)
-            }
-            // agent 徽章（HERDR 监控）：等待回复红 / 运行中绿
-            agentBadge?.let { (blocked, working) ->
-                if (blocked > 0) {
-                    append(", ")
-                    append(blocked)
-                    append(" ")
-                    append(s.agentBlockedBadge)
-                } else if (working > 0) {
-                    append(", ")
-                    append(working)
-                    append(" ")
-                    append(s.agentWorkingBadge)
-                }
             }
         }
     } else {

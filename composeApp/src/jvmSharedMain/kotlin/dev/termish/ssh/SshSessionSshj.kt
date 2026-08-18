@@ -1,4 +1,5 @@
 package dev.termish.ssh
+import dev.termish.util.TermLog
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -139,6 +140,52 @@ class SshSessionSshj(
                 s?.close()
             } catch (_: Exception) {
             }
+        }
+    }
+
+    override fun startExec(command: String, columns: Int, rows: Int): dev.termish.ssh.SshExecChannel? {
+        if (closed.get() || !client.isConnected) return null
+        val s = client.startSession()
+        return try {
+            // 带 PTY 的 exec：交互式 CLI（herdr TUI）需要 tty，crossterm 无 tty 会 panic
+            s.allocatePTY(connection.terminalType, columns, rows, 0, 0, emptyMap())
+            val cmd = s.exec(command)
+            val mutex = Any()
+            object : dev.termish.ssh.SshExecChannel {
+                override fun read(): ByteArray? {
+                    return try {
+                        val buf = ByteArray(8192)
+                        val n = cmd.inputStream.read(buf)
+                        if (n < 0) null else buf.copyOf(n)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                override fun write(data: ByteArray) {
+                    synchronized(mutex) {
+                        try {
+                            cmd.outputStream.write(data)
+                            cmd.outputStream.flush()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+
+                override fun close() {
+                    try {
+                        s.close()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "startExec failed: ${e.message}" }
+            try {
+                s.close()
+            } catch (_: Exception) {
+            }
+            null
         }
     }
 

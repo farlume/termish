@@ -83,6 +83,8 @@ class TerminalControllerTest {
 
         override fun runCommand(command: String, timeoutMs: Long): String? = null
 
+        override fun startExec(command: String, columns: Int, rows: Int): dev.termish.ssh.SshExecChannel? = null
+
         override fun close() {
             closed = true
         }

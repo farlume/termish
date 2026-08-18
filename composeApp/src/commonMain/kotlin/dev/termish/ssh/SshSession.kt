@@ -146,10 +146,32 @@ interface SshSession {
      */
     fun probeSystem(): String? = runCommand(SYSTEM_PROBE_COMMAND, timeoutMs = 5_000)
 
+    /**
+     * 带 PTY 的 exec 通道（如 `herdr` TUI：crossterm 需要 tty，无 tty 会 panic）。
+     * 不经交互 shell——没有提示符/命令回显，输出直接就是程序的界面。
+     * 返回通道（阻塞 read / write / close）；失败/未连接返回 null。
+     * 注意：exec 通道的 pty 尺寸无法后续调整（固定为分配时的尺寸）。
+     */
+    fun startExec(command: String, columns: Int, rows: Int): SshExecChannel?
+
     /** 主动关闭会话。 */
     fun close()
 
     fun isActive(): Boolean
+}
+
+/**
+ * exec+pty 通道：stdout = 程序渲染字节流，stdin = raw 输入。
+ */
+interface SshExecChannel {
+    /** 阻塞读下一块；EOF/关闭返回 null。 */
+    fun read(): ByteArray?
+
+    /** 写入远端（exec 通道 stdin）。 */
+    fun write(data: ByteArray)
+
+    /** 关闭通道（幂等）。 */
+    fun close()
 }
 
 /** 平台工厂：创建对应引擎的 [SshSession]。 */

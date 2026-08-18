@@ -35,9 +35,22 @@ class HerdrMonitor(
     private val pollIntervalMs: Long = 4_000,
     /** 状态迁移事件回调（UI 徽章/面板刷新）。 */
     private val onEvents: (List<HerdrAgentEvent>) -> Unit = {},
+    /** 每轮快照后的完整 agents 列表回调（UI 面板数据源；含无变化轮）。 */
+    private val onAgents: (List<HerdrAgentInfo>) -> Unit = {},
 ) {
     companion object {
         private const val SNAPSHOT_CMD = "herdr api snapshot"
+        /**
+         * herdr 命令候选（sshd 非交互 exec 的 PATH 常不含 ~/.local/bin、/usr/local/bin、
+         * /opt/homebrew 等常见安装位置——失败时逐个尝试，命中即固定）。
+         * $HOME 由远端 /bin/sh -c 展开（ssh exec 通道的标准执行方式）。
+         */
+        private val SNAPSHOT_CMD_CANDIDATES = listOf(
+            SNAPSHOT_CMD,
+            "\$HOME/.local/bin/herdr api snapshot",
+            "/usr/local/bin/herdr api snapshot",
+            "/opt/homebrew/bin/herdr api snapshot",
+        )
         private const val MIN_BACKOFF_MS = 3_000L
         private const val MAX_BACKOFF_MS = 15_000L
         /** 连续失败后的暂停轮数（≈60s @ 4s 轮询）：纯 delay 驱动，测试可虚拟时间推进。 */
@@ -51,6 +64,10 @@ class HerdrMonitor(
     private var job: Job? = null
     /** pane_id → 已确认 blocked 的轮数（达到阈值即发通知并移除）。 */
     private val pendingNotify = HashMap<String, Int>()
+    /** 已发过 blocked 通知的 pane（防重复通知；Unblocked/离开 blocked 时清除）。 */
+    private val notifiedBlocked = HashSet<String>()
+    /** 当前使用的 herdr 命令候选下标（失败轮询时切换探测）。 */
+    private var cmdIndex = 0
 
     /** 是否正在轮询。 */
     fun isRunning(): Boolean = job?.isActive == true
@@ -62,6 +79,7 @@ class HerdrMonitor(
         if (job?.isActive == true) return
         machine.reset()
         pendingNotify.clear()
+        notifiedBlocked.clear()
         TermLog.i("herdr") { "monitor start $hostName" }
         job = scope.launch {
             var backoffMs = MIN_BACKOFF_MS
@@ -74,10 +92,11 @@ class HerdrMonitor(
                     delay(jitter(pollIntervalMs))
                     continue
                 }
-                val raw = runCommand(SNAPSHOT_CMD)
+                val raw = runCommand(currentCmd())
                 val snapshot = raw?.let { parseHerdrSnapshot(it) }
                 if (snapshot == null) {
-                    // 失败退避：herdr 未装/未启动/连接断开
+                    // 失败退避：herdr 未装/未启动/连接断开；换下一个候选命令（循环探测）
+                    cmdIndex = (cmdIndex + 1) % SNAPSHOT_CMD_CANDIDATES.size
                     failures++
                     backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
                     TermLog.d("herdr") { "poll failed $hostName #$failures: ${raw?.take(80) ?: "null"}" }
@@ -96,6 +115,7 @@ class HerdrMonitor(
                     TermLog.d("herdr") { "events $hostName: ${events.joinToString { it::class.simpleName ?: "?" }}" }
                     onEvents(events)
                 }
+                onAgents(snapshot.agents)
                 confirmBlocked(snapshot)
                 delay(jitter(pollIntervalMs))
             }
@@ -107,6 +127,7 @@ class HerdrMonitor(
         job = null
         machine.reset()
         pendingNotify.clear()
+        notifiedBlocked.clear()
         TermLog.i("herdr") { "monitor stop $hostName" }
     }
 
@@ -124,7 +145,10 @@ class HerdrMonitor(
             val rounds = (pendingNotify[a.paneId] ?: 0) + 1
             if (rounds >= BLOCKED_CONFIRM_ROUNDS) {
                 pendingNotify.remove(a.paneId)
-                postBlockedNotification(a)
+                // 防重复：同一 pane 连续 blocked 只通知一次（Unblocked 才重置）
+                if (notifiedBlocked.add(a.paneId)) {
+                    postBlockedNotification(a)
+                }
             } else {
                 pendingNotify[a.paneId] = rounds
             }
@@ -146,6 +170,8 @@ class HerdrMonitor(
         val agent = a.agent?.takeIf { it.isNotBlank() } ?: "agent"
         return "$agent 在 $hostName 等待回答：${a.title() ?: a.cwd ?: "请查看会话"}"
     }
+
+    private fun currentCmd(): String = SNAPSHOT_CMD_CANDIDATES[cmdIndex]
 
     private fun HerdrAgentInfo.title(): String? = terminalTitleStripped ?: terminalTitle
 
