@@ -5,7 +5,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
-import dev.termish.data.QuickCommand
 import dev.termish.ssh.AuthPrompt
 import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.MoshSession
@@ -373,8 +372,6 @@ class TerminalController(
         if (exec != null) exec.write(text.encodeToByteArray())
         else moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
     }
-
-    fun quickCommands(): List<QuickCommand> = host.quickCommands
 
     fun sendBytes(bytes: ByteArray) {
         val exec = herdrExec

@@ -341,11 +341,6 @@ private fun TerminalBody(
             }
         }
 
-        // 快速命令
-        if (controller.isConnected()) {
-            QuickCommandsBar(controller)
-        }
-
         // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
         // 键盘弹起时不挤压画布（adjustNothing），工具栏上移会遮住画布底部，
         // 由 TerminalView 向上平移保证光标可见；键盘收起即归位，顶部（herdr
@@ -735,28 +730,10 @@ private fun sendTyped(controller: TerminalController, text: String, ctrl: Boolea
     }
 }
 
-@Composable
-private fun QuickCommandsBar(controller: TerminalController) {
-    val cmds = controller.quickCommands()
-    if (cmds.isEmpty()) return
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        for (cmd in cmds) {
-            AssistChip(
-                onClick = { controller.sendText(cmd.command + "\n") },
-                label = { Text(cmd.label) },
-            )
-        }
-    }
-}
-
 /** HERDR 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。
  *  @param bottomInset 底部让出高度（工具栏），卡片在其中居中以保持视觉重心。 */
 @Composable
-private fun HerdrInstallGuide(controller: TerminalController, bottomInset: Dp) {
-    val s = LocalAppStrings.current
+private fun HerdrInstallGuide(controller: TerminalController, bottomInset: Dp) {    val s = LocalAppStrings.current
     Box(
         Modifier
             .fillMaxSize()

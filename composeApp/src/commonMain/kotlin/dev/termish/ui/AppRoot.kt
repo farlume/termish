@@ -511,6 +511,7 @@ fun AppRoot(repository: HostRepository) {
                     val existing = hosts.firstOrNull { it.id == s.hostId }
                     HostEditScreen(
                         existing = existing,
+                        repository = repository,
                         onSave = { host, pw, key ->
                             if (pw.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "password"), pw)
                             if (key.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"), key)

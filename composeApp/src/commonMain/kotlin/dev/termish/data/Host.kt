@@ -21,14 +21,6 @@ enum class ConnectionMode {
 }
 
 @Serializable
-data class QuickCommand(
-    val id: String,
-    val label: String,
-    val command: String,
-)
-
-/** 一个 SSH 主机配置（不含秘密信息）。 */
-@Serializable
 data class Host(
     val id: String,
     val name: String,
@@ -37,7 +29,6 @@ data class Host(
     val username: String = "root",
     val authMethod: HostAuthMethod = HostAuthMethod.PASSWORD,
     val tags: List<String> = emptyList(),
-    val quickCommands: List<QuickCommand> = emptyList(),
     /**
      * 远端系统标识（头像显示用）：如 ubuntu / debian / macos / windows。
      * 头像图标与颜色按关键词自动映射，未识别时显示通用图标。

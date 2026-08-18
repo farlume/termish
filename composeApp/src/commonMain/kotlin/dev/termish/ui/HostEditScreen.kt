@@ -1,5 +1,11 @@
 package dev.termish.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
@@ -23,8 +30,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -58,14 +67,16 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
-import dev.termish.data.QuickCommand
+import dev.termish.data.HostRepository
 import dev.termish.data.newId
 import dev.termish.util.monospaceFontFamily
 
@@ -75,6 +86,8 @@ fun HostEditScreen(
     existing: Host?,
     onSave: (Host, password: String, privateKey: String) -> Unit,
     onCancel: () -> Unit,
+    /** 命令片段入口：点击打开片段管理/创建页（全局库，跨主机复用）。 */
+    repository: HostRepository = HostRepository(),
 ) {
     val s = LocalAppStrings.current
     var name by remember { mutableStateOf(existing?.name ?: "") }
@@ -86,12 +99,8 @@ fun HostEditScreen(
     var password by remember { mutableStateOf("") }
     var privateKey by remember { mutableStateOf("") }
     var tags by remember { mutableStateOf(existing?.tags ?: emptyList()) }
-    // 结构化快速命令：每行 label + command（可增删，不再用文本行解析）
-    var quickCommands: List<EditableQuickCommand> by remember {
-        mutableStateOf(
-            existing?.quickCommands?.map { EditableQuickCommand(it.id, it.label, it.command) } ?: emptyList(),
-        )
-    }
+    // 命令片段管理页覆盖层（主机编辑页入口）
+    var showSnippets by remember { mutableStateOf(false) }
     var startupCommand by remember { mutableStateOf(existing?.startupCommand ?: "") }
     var moshThemeSync by remember { mutableStateOf(existing?.moshThemeSync ?: false) }
     var moshUdpPort by remember { mutableStateOf((existing?.moshUdpPort ?: 0).toString()) }
@@ -116,9 +125,6 @@ fun HostEditScreen(
                             authMethod = authMethod,
                             connectionMode = connectionMode,
                             tags = tags,
-                            quickCommands = quickCommands
-                                .filter { it.label.isNotBlank() || it.command.isNotBlank() }
-                                .map { QuickCommand(it.id, it.label.trim(), it.command.trim()) },
                             createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
                             lastConnectedAt = existing?.lastConnectedAt ?: 0L,
                             knownHostFingerprint = existing?.knownHostFingerprint,
@@ -204,37 +210,41 @@ fun HostEditScreen(
                 label = s.editTags,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // 快速命令：结构化行编辑（名称 + 命令，可增删）
-            Text(s.editQuickCommands, style = MaterialTheme.typography.labelLarge)
-            quickCommands.forEachIndexed { i, qc ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        qc.label, { qc.label = it },
-                        Modifier.weight(1f),
-                        label = { Text(s.quickCmdName) },
-                        singleLine = true,
+            // 命令片段入口：主机级快速命令已废弃（跨主机复用靠全局片段库），
+            // 编辑页只留入口，点击进入片段管理/创建页
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                    .clickable { showSnippets = true }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Terminal,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        s.snippetsTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
                     )
-                    Spacer(Modifier.width(8.dp))
-                    OutlinedTextField(
-                        qc.command, { qc.command = it },
-                        Modifier.weight(2f),
-                        label = { Text(s.quickCmdCommand) },
-                        singleLine = true,
-                        textStyle = LocalTextStyle.current.copy(fontFamily = monospaceFontFamily()),
+                    Text(
+                        s.snippetsEmptyHint,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     )
-                    IconButton(onClick = { quickCommands = quickCommands.filterIndexed { j, _ -> j != i } }) {
-                        Icon(
-                            Icons.Filled.Close,
-                            contentDescription = s.quickCmdDelete,
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        )
-                    }
                 }
-            }
-            TextButton(onClick = { quickCommands = quickCommands + EditableQuickCommand(newId(), "", "") }) {
-                Icon(Icons.Filled.Add, contentDescription = s.quickCmdAdd, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text(s.quickCmdAdd)
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = s.snippetsTitle,
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                )
             }
             OutlinedTextField(
                 startupCommand, { startupCommand = it }, Modifier.fillMaxWidth(),
@@ -262,10 +272,19 @@ fun HostEditScreen(
             }
         }
     }
-}
 
-/** 快速命令编辑行：可变包装（QuickCommand 为不可变 data class，UI 编辑用本类）。 */
-private class EditableQuickCommand(val id: String, var label: String, var command: String)
+    // 命令片段覆盖层：入口点击进入（全局库管理/创建，返回继续编辑主机）
+    AnimatedVisibility(
+        visible = showSnippets,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SnippetManageScreen(
+            repository = repository,
+            onBack = { showSnippets = false },
+        )
+    }
+}
 
 /**
  * 标签 chip 输入框：输入后按回车/逗号 → 变成可删除的 tag 气泡（Gmail 收件人式）。
@@ -323,6 +342,7 @@ private fun TagInputField(
                                 .clickable { onTagsChange(tags - t) },
                         )
                     },
+                    modifier = Modifier.align(Alignment.CenterVertically),
                 )
             }
             BasicTextField(
@@ -338,8 +358,12 @@ private fun TagInputField(
                         commit()
                     }
                 },
+                // 单行：光标不换行、placeholder 不折行；宽度自适应内容
+                //（固定 120dp 时中文 placeholder 会折行成两行，撑高输入框）
+                singleLine = true,
                 modifier = Modifier
-                    .width(120.dp)
+                    .widthIn(min = 100.dp)
+                    .align(Alignment.CenterVertically)
                     .focusRequester(focusRequester)
                     .onPreviewKeyEvent { ev ->
                         if (ev.type == KeyEventType.KeyDown) {
@@ -363,19 +387,19 @@ private fun TagInputField(
                             false
                         }
                     },
-                textStyle = TextStyle(
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontSize = MaterialTheme.typography.bodyMedium.fontSize,
-                ),
+                // placeholder 与输入文本共用同一 textStyle：行高一致，光标/文字对齐
+                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
                     Box {
-                        // 空态占位提示：无标签且无输入时显示
+                        // 空态占位提示：无标签且无输入时显示（与输入同 style，不折行）
                         if (tags.isEmpty() && input.isEmpty()) {
                             Text(
                                 label,
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                         }
                         inner()
