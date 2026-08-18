@@ -163,11 +163,15 @@ class SshSessionSshj(
                 }
 
                 override fun write(data: ByteArray) {
-                    synchronized(mutex) {
-                        try {
-                            cmd.outputStream.write(data)
-                            cmd.outputStream.flush()
-                        } catch (_: Exception) {
+                    // 异步写：调用方可能是主线程（emulator.onResponse 应答 OSC 查询——
+                    // herdr 启动连发 256 个 OSC 4 查询，同步 socket 写会把主线程卡死）
+                    scope.launch(writeDispatcher) {
+                        synchronized(mutex) {
+                            try {
+                                cmd.outputStream.write(data)
+                                cmd.outputStream.flush()
+                            } catch (_: Exception) {
+                            }
                         }
                     }
                 }

@@ -39,18 +39,11 @@ class HerdrMonitor(
     private val onAgents: (List<HerdrAgentInfo>) -> Unit = {},
 ) {
     companion object {
-        private const val SNAPSHOT_CMD = "herdr api snapshot"
         /**
-         * herdr 命令候选（sshd 非交互 exec 的 PATH 常不含 ~/.local/bin、/usr/local/bin、
-         * /opt/homebrew 等常见安装位置——失败时逐个尝试，命中即固定）。
-         * $HOME 由远端 /bin/sh -c 展开（ssh exec 通道的标准执行方式）。
+         * snapshot 命令候选（轮换探测，命中即固定到下标）。
+         * 单一事实源在 [HerdrApi.SNAPSHOT_CMD_CANDIDATES]。
          */
-        private val SNAPSHOT_CMD_CANDIDATES = listOf(
-            SNAPSHOT_CMD,
-            "\$HOME/.local/bin/herdr api snapshot",
-            "/usr/local/bin/herdr api snapshot",
-            "/opt/homebrew/bin/herdr api snapshot",
-        )
+        private val SNAPSHOT_CMD_CANDIDATES = HerdrApi.SNAPSHOT_CMD_CANDIDATES
         private const val MIN_BACKOFF_MS = 3_000L
         private const val MAX_BACKOFF_MS = 15_000L
         /** 连续失败后的暂停轮数（≈60s @ 4s 轮询）：纯 delay 驱动，测试可虚拟时间推进。 */

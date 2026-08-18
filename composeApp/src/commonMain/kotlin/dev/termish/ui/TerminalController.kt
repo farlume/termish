@@ -196,7 +196,10 @@ class TerminalController(
         buffer.defaultCursorRgb = argbToRgb(terminalTheme.cursor)
 
         emulator.onTitleChange = { t -> title = t }
-        emulator.onResponse = { bytes -> session?.sendData(bytes) }
+        // OSC 应答（10/11/4 颜色查询、DSR/DA 等）与键盘输入同路由：herdrExec 优先。
+        // 此前直发 session——HERDR 降级路径（exec+pty 跑 herdr）下 herdr 的 OSC 4
+        // 调色板查询应答被发到 shell stdin，readline 回显成满屏 "]4;i;rgb:…" 文本。
+        emulator.onResponse = { bytes -> sendBytes(bytes) }
         emulator.onClipboardWrite = { text ->
             // OSC 52 远端写剪贴板受设置开关控制（远端可静默覆盖剪贴板，默认开）
             if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
@@ -524,7 +527,8 @@ class TerminalController(
             info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
 
             // 2. 探测 herdr：失败明确报错（不降级——选 HERDR = herdr 工作台）
-            if (probeHerdr(s) == null) {
+            val probed = probeHerdr(s)
+            if (probed == null) {
                 TermLog.e("herdr") { "HERDR probe failed ${host.name}: 远端无 herdr" }
                 session = null
                 try { s.close() } catch (_: Exception) { }
@@ -533,15 +537,16 @@ class TerminalController(
                 stopKeepAlive()
                 return
             }
-            TermLog.i("herdr") { "HERDR probe ok ${host.name}" }
+            val (herdrBin, _) = probed
+            TermLog.i("herdr") { "HERDR probe ok ${host.name} bin=$herdrBin" }
 
             // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
             doConnectMosh(
                 existingSession = s,
-                bootstrapExtra = " -- herdr",
+                bootstrapExtra = " -- $herdrBin",
                 onDegraded = { ssh ->
                     // 降级（无 mosh-server）：SSH + exec+pty 直接跑 herdr TUI（无回显）
-                    startHerdrExec(ssh)
+                    startHerdrExec(ssh, herdrBin)
                 },
             )
             herdrSuppressShellOutput = false
@@ -560,10 +565,13 @@ class TerminalController(
 
     /** HERDR 降级显示通道：exec+pty 跑 `herdr`（无 shell 提示符/命令回显），
      *  EOF = 工作台关闭（正常结束，关闭整个会话）。 */
-    private suspend fun startHerdrExec(s: SshSession) {
-        val exec = s.startExec("herdr", lastCols, lastRows)
+    private suspend fun startHerdrExec(s: SshSession, herdrBin: String) {
+        val exec = s.startExec(herdrBin, lastCols, lastRows)
         if (exec != null) {
             herdrExec = exec
+            // 状态收尾：CONNECTED + 保活 + 免疫期（此前漏掉——会话实际可用
+            // 但状态永远停在 CONNECTING，banner 一直显示「连接中…」）
+            finishConnected(s, sendStartup = false)
             val execRef = exec
             scope.launch {
                 try {
@@ -587,7 +595,8 @@ class TerminalController(
             TermLog.i("herdr") { "HERDR degraded to ssh-exec ${host.name}" }
         } else {
             // exec+pty 不可用（如 iOS 暂未实现）：退回 shell 命令路径
-            s.sendData("herdr\n".encodeToByteArray())
+            s.sendData("$herdrBin\n".encodeToByteArray())
+            finishConnected(s, sendStartup = false)
             TermLog.i("herdr") { "HERDR degraded to ssh-shell ${host.name}" }
         }
     }
@@ -620,12 +629,14 @@ class TerminalController(
         frame++
     }
 
-    /** HERDR 探测：候选命令逐个试，第一个返回合法快照的即 herdr 存在；全部失败返回 null。 */
-    private fun probeHerdr(s: SshSession): dev.termish.herdr.HerdrSessionSnapshot? {
-        for (cmd in dev.termish.herdr.HerdrApi.SNAPSHOT_CMD_CANDIDATES) {
-            val raw = s.runCommand(cmd, 5_000) ?: continue
+    /** HERDR 探测：候选二进制逐个试，返回（命中路径, 快照）；全部失败返回 null。
+     *  命中路径必须贯穿下游（mosh 引导 / exec 降级）——裸 `herdr` 在非默认 PATH
+     *  场景（~/.local/bin、/opt/homebrew）探测能过但启动必败。 */
+    private fun probeHerdr(s: SshSession): Pair<String, dev.termish.herdr.HerdrSessionSnapshot>? {
+        for (bin in dev.termish.herdr.HerdrApi.BIN_CANDIDATES) {
+            val raw = s.runCommand("$bin api snapshot", 5_000) ?: continue
             val snap = dev.termish.herdr.parseHerdrSnapshot(raw) ?: continue
-            return snap
+            return bin to snap
         }
         return null
     }

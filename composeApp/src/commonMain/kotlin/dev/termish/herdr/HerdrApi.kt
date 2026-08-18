@@ -14,16 +14,22 @@ object HerdrApi {
     const val SNAPSHOT_CMD = "herdr api snapshot"
 
     /**
-     * herdr 命令候选（sshd 非交互 exec 的 PATH 常不含 ~/.local/bin、/usr/local/bin、
-     * /opt/homebrew 等常见安装位置——失败时逐个尝试，命中即固定）。
+     * herdr 二进制路径候选（sshd 非交互 exec 的 PATH 常不含 ~/.local/bin、
+     * /usr/local/bin、/opt/homebrew 等常见安装位置——失败时逐个尝试）。
      * $HOME 由远端 /bin/sh -c 展开（ssh exec 通道的标准执行方式）。
+     *
+     * 探测命中后必须复用全路径（mosh 引导 `-- <bin>`、exec 降级 startExec）——
+     * 裸 `herdr` 在非默认 PATH 场景探测能过但启动必败。
      */
-    val SNAPSHOT_CMD_CANDIDATES = listOf(
-        SNAPSHOT_CMD,
-        "\$HOME/.local/bin/herdr api snapshot",
-        "/usr/local/bin/herdr api snapshot",
-        "/opt/homebrew/bin/herdr api snapshot",
+    val BIN_CANDIDATES = listOf(
+        "herdr",
+        "\$HOME/.local/bin/herdr",
+        "/usr/local/bin/herdr",
+        "/opt/homebrew/bin/herdr",
     )
+
+    /** snapshot 命令候选（由 [BIN_CANDIDATES] 派生）。 */
+    val SNAPSHOT_CMD_CANDIDATES = BIN_CANDIDATES.map { "$it api snapshot" }
 
     /** pane 最近输出读取（approve 对话框上下文）。输出为纯文本。 */
     fun paneReadCmd(paneId: String, lines: Int = 30): String =
