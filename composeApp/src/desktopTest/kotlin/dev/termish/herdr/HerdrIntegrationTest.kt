@@ -1,6 +1,7 @@
 package dev.termish.herdr
 
 import dev.termish.ssh.AuthPrompt
+import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
 import dev.termish.ssh.createSshSession
@@ -53,7 +54,7 @@ class HerdrIntegrationTest {
                 override fun onExitStatus(status: Int) {}
                 override fun onClosed(reason: String?) {}
                 override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
-                override fun verifyHostKey(hostKey: dev.termish.ssh.HostKeyInfo): Boolean = true
+                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
             },
         )
         try {

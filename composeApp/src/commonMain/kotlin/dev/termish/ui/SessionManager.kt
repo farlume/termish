@@ -1,11 +1,13 @@
 package dev.termish.ui
 
 import androidx.compose.runtime.mutableStateListOf
+import dev.termish.crypto.Sha256
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
 import dev.termish.ssh.SftpSession
 import dev.termish.util.TermLog
+import dev.termish.util.base64Encode
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -202,7 +204,7 @@ class SessionManager(private val repository: HostRepository) {
 internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String {
     // 敏感字段只保留散列：避免明文密码/私钥以签名串形式常驻内存
     fun hash(s: String?): String =
-        if (s == null) "-" else dev.termish.util.base64Encode(dev.termish.crypto.Sha256.digest(s.encodeToByteArray()))
+        if (s == null) "-" else base64Encode(Sha256.digest(s.encodeToByteArray()))
     return "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|" +
         "${hash(password)}|${hash(privateKeyPem)}|" +
         "${host.startupCommand}|${host.connectionMode}|${host.moshUdpPort}|${host.moshThemeSync}"

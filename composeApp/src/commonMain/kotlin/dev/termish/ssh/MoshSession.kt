@@ -5,6 +5,9 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 
+import dev.termish.mosh.KmpMoshSession
+import dev.termish.term.TerminalBuffer
+
 /**
  * Mosh 客户端会话：由纯 Kotlin 实现（dev.termish.mosh 包，SSP 协议）。
  * UI 通过 sendData/resize 驱动，影子终端状态经 onStateUpdate 同步进 UI buffer。
@@ -57,7 +60,7 @@ fun createKmpMoshSession(
     columns: Int,
     rows: Int,
     scope: kotlinx.coroutines.CoroutineScope,
-    uiBuffer: dev.termish.term.TerminalBuffer,
+    uiBuffer: TerminalBuffer,
     onTitle: (String) -> Unit,
     onClipboard: (String) -> Unit,
     onExit: (String?) -> Unit,
@@ -70,7 +73,7 @@ fun createKmpMoshSession(
     onLinkStatus: (Int) -> Unit,
 ): MoshSession {
     // 渲染合并：CONFLATED 通道只保留最新状态，突发更新时最多一个主线程拷贝在途
-    val pending = Channel<dev.termish.mosh.KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
+    val pending = Channel<KmpMoshSession.ShadowTerminalView>(Channel.CONFLATED)
     scope.launch(Dispatchers.Main) {
         for (view in pending) {
             // 拷贝持影子锁：会话协程正在 applyDiff/resize 时不能读，
@@ -81,7 +84,7 @@ fun createKmpMoshSession(
             }
         }
     }
-    val session = dev.termish.mosh.KmpMoshSession(
+    val session = KmpMoshSession(
         ip = ip,
         port = port,
         key = key,

@@ -82,6 +82,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.termish.data.AppSettings
 import dev.termish.data.Host
 import dev.termish.ssh.SftpSession
 import dev.termish.ssh.AuthPrompt
@@ -124,7 +125,7 @@ fun TerminalScreen(
     tabs: List<SessionTab>,
     current: SessionTab,
     theme: TerminalTheme,
-    settings: dev.termish.data.AppSettings,
+    settings: AppSettings,
     onBack: () -> Unit,
     onSwitchTab: (SessionTab) -> Unit,
     onAddSession: () -> Unit,
@@ -202,7 +203,7 @@ fun TerminalScreen(
 private fun TerminalBody(
     controller: TerminalController,
     theme: TerminalTheme,
-    settings: dev.termish.data.AppSettings,
+    settings: AppSettings,
     onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current

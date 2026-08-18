@@ -42,7 +42,9 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
+import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
@@ -207,7 +209,7 @@ fun AppRoot(repository: HostRepository) {
         val target = pendingNavigate ?: return@LaunchedEffect
         // HERDR 模式不预连：exec+pty 的 pty 尺寸固定（无法后续调整），
         // 必须等 TerminalView 就绪拿到实际画布尺寸再建连（终端页显示连接中）
-        if (target.host.connectionMode == dev.termish.data.ConnectionMode.HERDR) {
+        if (target.host.connectionMode == ConnectionMode.HERDR) {
             currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal(target.host.id)
             pendingNavigate = null
@@ -259,8 +261,8 @@ fun AppRoot(repository: HostRepository) {
                 sessionManager.sessions
                     .firstOrNull { it.host.id == hostId }
                     ?.let { controller ->
-                        if (controller.status == dev.termish.ui.ConnStatus.CLOSED ||
-                            controller.status == dev.termish.ui.ConnStatus.ERROR
+                        if (controller.status == ConnStatus.CLOSED ||
+                            controller.status == ConnStatus.ERROR
                         ) {
                             controller.reconnect()
                         }
@@ -622,8 +624,8 @@ fun resolveCredentials(host: Host): Pair<String?, String?> {
     val pw = SecretStore.get(SECRET_SERVICE, secretAccountFor(host.id, "password"))
     val key = SecretStore.get(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"))
     return when (host.authMethod) {
-        dev.termish.data.HostAuthMethod.PASSWORD -> pw to null
-        dev.termish.data.HostAuthMethod.PRIVATE_KEY -> null to key
-        dev.termish.data.HostAuthMethod.KEY_OR_PASSWORD -> key to pw
+        HostAuthMethod.PASSWORD -> pw to null
+        HostAuthMethod.PRIVATE_KEY -> null to key
+        HostAuthMethod.KEY_OR_PASSWORD -> key to pw
     }
 }

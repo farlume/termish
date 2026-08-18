@@ -143,7 +143,7 @@ class SshSessionSshj(
         }
     }
 
-    override fun startExec(command: String, columns: Int, rows: Int): dev.termish.ssh.SshExecChannel? {
+    override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? {
         if (closed.get() || !client.isConnected) return null
         val s = client.startSession()
         return try {
@@ -151,7 +151,7 @@ class SshSessionSshj(
             s.allocatePTY(connection.terminalType, columns, rows, 0, 0, emptyMap())
             val cmd = s.exec(command)
             val mutex = Any()
-            object : dev.termish.ssh.SshExecChannel {
+            object : SshExecChannel {
                 override fun read(): ByteArray? {
                     return try {
                         val buf = ByteArray(8192)

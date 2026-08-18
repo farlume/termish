@@ -43,6 +43,8 @@ class KmpMoshSession(
     class ShadowTerminalView internal constructor(
         internal val shadow: ShadowTerminal,
     ) {
+        // 全限定名是刻意的：协议层纪律禁止 import dev.termish.term（见 AGENTS.md），
+        // 但视图必须向 UI 暴露影子 buffer 类型——全限定是唯一不违纪律的写法。
         val buffer: dev.termish.term.TerminalBuffer get() = shadow.buffer
         val echoAck: ULong get() = shadow.echoAck
         /** 影子 buffer 读写锁：UI 拷贝前先拿锁，与会话协程写入互斥。 */
