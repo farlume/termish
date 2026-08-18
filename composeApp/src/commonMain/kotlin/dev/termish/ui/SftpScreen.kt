@@ -3,10 +3,10 @@ package dev.termish.ui
 import dev.termish.util.TermLog
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,11 +17,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,7 +49,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -69,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
@@ -85,6 +83,7 @@ import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.ioDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
@@ -178,6 +177,14 @@ fun SftpContent(
     var showParents by state::showParents
     /** 等待用户选择保存目录后开始递归下载的远端目录。 */
     var pendingDownloadDir by remember { mutableStateOf<String?>(null) }
+    /** header 搜索框焦点：展开后自动聚焦弹键盘。 */
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(searching) {
+        if (searching) {
+            delay(150)
+            searchFocusRequester.requestFocus()
+        }
+    }
 
     /** 统一目录跳转入口：压入当前路径到浏览历史，再切换目录。 */
     fun navigateTo(newPath: String) {
@@ -473,84 +480,69 @@ fun SftpContent(
                         }
                     }
                 }
-                // 搜索模式：X + 圆角搜索框，横向展开动画
-                AnimatedVisibility(
-                    visible = searching,
-                    enter = slideInHorizontally(initialOffsetX = { it / 2 }) + fadeIn(),
-                    exit = slideOutHorizontally(targetOffsetX = { it / 2 }) + fadeOut(),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = { searching = false; query = "" },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                Icons.Filled.Close,
-                                contentDescription = s.navBack,
-                                tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            modifier = Modifier.width(190.dp).height(44.dp),
-                            placeholder = {
-                                Text(
-                                    s.sftpSearch,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            textStyle = MaterialTheme.typography.labelMedium.copy(
-                                color = MaterialTheme.colorScheme.onSurface,
-                            ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                cursorColor = MaterialTheme.colorScheme.primary,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            ),
-                        )
-                    }
+                TextButton(onClick = { pickFile() }) {
+                    Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.size(4.dp))
+                    Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
                 }
-                // 普通模式：Upload + 菜单 + 搜索 icon（占用右侧固定区域）
-                AnimatedVisibility(
-                    visible = !searching,
-                    enter = fadeIn() + slideInHorizontally(initialOffsetX = { -it / 2 }),
-                    exit = fadeOut() + slideOutHorizontally(targetOffsetX = { -it / 2 }),
+                SftpMoreMenu(
+                    sort = sort,
+                    showHidden = showHidden,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    onSort = { sort = it },
+                    onToggleHidden = { showHidden = !showHidden },
+                    onNewFolder = { newFolderDialog = true },
+                    onCopyPath = {
+                        clipboard.setText(AnnotatedString(path))
+                        scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                    },
+                    onChangeDownload = {
+                        startDownloadDir()
+                    },
+                )
+                // 搜索开关：图标切换（搜索 ⇄ 关闭），搜索框在下方垂直展开
+                IconButton(
+                    onClick = {
+                        if (searching) {
+                            searching = false
+                            query = ""
+                        } else {
+                            searching = true
+                        }
+                    },
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(onClick = { pickFile() }) {
-                            Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-                            Spacer(Modifier.size(4.dp))
-                            Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                        SftpMoreMenu(
-                            sort = sort,
-                            showHidden = showHidden,
-                            tint = MaterialTheme.colorScheme.onSurface,
-                            onSort = { sort = it },
-                            onToggleHidden = { showHidden = !showHidden },
-                            onNewFolder = { newFolderDialog = true },
-                            onCopyPath = {
-                                clipboard.setText(AnnotatedString(path))
-                                scope.launch { snackbar.showSnackbar(s.sftpCopied) }
-                            },
-                            onChangeDownload = {
-                                startDownloadDir()
-                            },
-                        )
-                        IconButton(onClick = { searching = true }) {
-                            Icon(Icons.Filled.Search, contentDescription = s.sftpSearch, tint = MaterialTheme.colorScheme.onSurface)
-                        }
-                    }
+                    Icon(
+                        if (searching) Icons.Filled.Close else Icons.Filled.Search,
+                        contentDescription = if (searching) s.navBack else s.sftpSearch,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
+            }
+            // 搜索框：与主机/连接页同款——点击 header 图标垂直展开 + 淡入，自动聚焦
+            AnimatedVisibility(
+                visible = searching,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .focusRequester(searchFocusRequester),
+                    placeholder = { Text(s.sftpSearch) },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = s.navBack)
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp),
+                )
             }
             when {
                 entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
