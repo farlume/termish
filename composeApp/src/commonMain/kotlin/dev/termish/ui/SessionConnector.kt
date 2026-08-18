@@ -412,9 +412,15 @@ internal class SessionConnector(
         c.scope.launch {
             try {
                 val log = StringBuilder()
+                // 非交互 exec 的 $HOME 可能空/错（install.sh 会 mkdir 到 /.local/bin 失败），
+                // 用 pwd 拿真实主目录（sshd 默认 chdir 到 home），显式传给安装脚本
+                val home = withContext(Dispatchers.IO) {
+                    s.runCommand("pwd")?.trim()?.takeIf { it.startsWith("/") }
+                }
+                val installCmd = if (home != null) "HOME=\"$home\" $HERDR_INSTALL_CMD" else HERDR_INSTALL_CMD
                 withContext(Dispatchers.IO) {
                     // 流式 exec（JVM）：逐块读脚本输出进日志；iOS 无 startExec 回退 runCommand
-                    val exec = s.startExec(HERDR_INSTALL_CMD, c.lastCols, c.lastRows)
+                    val exec = s.startExec(installCmd, c.lastCols, c.lastRows)
                     if (exec != null) {
                         try {
                             while (true) {
@@ -426,15 +432,17 @@ internal class SessionConnector(
                             exec.close()
                         }
                     } else {
-                        log.append(s.runCommand(HERDR_INSTALL_CMD, HERDR_INSTALL_TIMEOUT_MS) ?: "")
+                        log.append(s.runCommand(installCmd, HERDR_INSTALL_TIMEOUT_MS) ?: "")
                         c.herdrInstallLog = log.toString()
                     }
                 }
-                // 从安装日志解析实际安装路径（不写死 ~/.local/bin、不依赖 $HOME），
-                // 优先探测该路径，回退 HerdrProbe 候选
-                val installPath = parseInstallPath(log.toString())
+                // 探测：install.sh 输出解析的实际路径 → $home/.local/bin → HerdrProbe 候选
                 val probed = withContext(Dispatchers.IO) {
-                    val explicit = installPath?.let { path ->
+                    val candidates = buildList {
+                        parseInstallPath(log.toString())?.let(::add)
+                        home?.let { add("$it/.local/bin/herdr") }
+                    }.distinct()
+                    val explicit = candidates.firstNotNullOfOrNull { path ->
                         val raw = s.runCommand("$path api snapshot", 5_000)
                         raw?.let { snap ->
                             parseHerdrSnapshot(snap)?.let { HerdrProbe.Result(path, it) }

@@ -1,6 +1,7 @@
 package dev.termish.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -313,33 +314,11 @@ private fun TerminalBody(
             controller.status == ConnStatus.ERROR -> s.terminalFailed
             else -> null
         }
-        bannerText?.let { message ->
-            val bannerColor = if (controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED) {
-                androidx.compose.ui.graphics.Color(0xFFEF5350)
-            } else {
-                androidx.compose.ui.graphics.Color(0xFFFFA726)
-            }
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(bannerColor.copy(alpha = 0.12f))
-                    .padding(start = 12.dp, end = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    message,
-                    color = bannerColor,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.weight(1f).padding(vertical = 6.dp),
-                )
-                // 断开/失败状态的手动重连入口（自动重连 3 次耗尽后唯一出路）
-                if (controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED) {
-                    TextButton(onClick = { controller.reconnect() }) {
-                        Text(s.terminalReconnect, color = bannerColor, style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-            }
-        }
+        // 状态标志：浮层 banner 用（关闭/重连按钮的显隐）
+        val bannerIsError = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
+        // 只有真实错误（errorMessage）可关闭；状态提示（连接中/失联）不提供关闭
+        val bannerDismissable = controller.errorMessage != null
+        val bannerReconnectable = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
 
         // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
         // 键盘弹起时不挤压画布（adjustNothing），工具栏上移会遮住画布底部，
@@ -383,6 +362,17 @@ private fun TerminalBody(
                     .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
             )
             }
+            }
+
+            // 顶部浮层 banner：盖在画布上（不占布局空间、不把画布顶下来）
+            bannerText?.let { message ->
+                ErrorBanner(
+                    message = message,
+                    isError = bannerIsError,
+                    onDismiss = if (bannerDismissable) { { controller.dismissError() } } else null,
+                    onReconnect = if (bannerReconnectable) { { controller.reconnect() } } else null,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
             }
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
@@ -927,6 +917,46 @@ private fun MoshInstallGuide(controller: TerminalController, bottomInset: Dp) {
                         Text(s.moshDegradeToSsh)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 顶部浮层错误/状态 banner：圆角卡片盖在画布上（不占布局空间、不把画布顶下来）。 */
+@Composable
+private fun ErrorBanner(
+    message: String,
+    isError: Boolean,
+    onDismiss: (() -> Unit)?,
+    onReconnect: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val s = LocalAppStrings.current
+    val color = if (isError) Color(0xFFEF5350) else Color(0xFFFFA726)
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(color.copy(alpha = 0.16f))
+            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            message,
+            color = color,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f).padding(vertical = 8.dp),
+        )
+        if (onReconnect != null) {
+            TextButton(onClick = onReconnect) {
+                Text(s.terminalReconnect, color = color, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        if (onDismiss != null) {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = color, modifier = Modifier.size(16.dp))
             }
         }
     }

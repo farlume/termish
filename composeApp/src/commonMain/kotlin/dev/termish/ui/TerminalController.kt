@@ -256,6 +256,11 @@ class TerminalController(
     /** Mosh 引导卡片上的「降级 SSH」：放弃安装，继续用当前 SSH 连接。 */
     fun degradeMoshToSsh() = connector.degradeMoshToSsh()
 
+    /** 关闭错误 banner（清除 [errorMessage]）。 */
+    fun dismissError() {
+        errorMessage = null
+    }
+
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect
 
