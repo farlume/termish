@@ -136,7 +136,9 @@ fun HostListScreen(
                 h.system.contains(query, ignoreCase = true) ||
                 h.tags.any { it.contains(query, ignoreCase = true) }
         }
-        .sortedWith(compareByDescending<Host> { it.lastConnectedAt }.thenBy { it.name.lowercase() })
+        // 稳定顺序：按创建时间排（新主机追加在尾），不随最近连接重排——
+        // 连接后回列表卡片位置不变，肌肉记忆可依赖（旧数据 createdAt=0 按名称兜底）
+        .sortedWith(compareBy<Host> { it.createdAt }.thenBy { it.name.lowercase() })
 
     // 批处理（多选）模式：头像点击 / 长按卡片进入
     var selectionMode by remember { mutableStateOf(false) }
