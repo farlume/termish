@@ -18,8 +18,13 @@ composeApp/
 │   ├── crypto/                # 纯 Kotlin 密码原语（未审计——见其 README；生产只用 Sha256）
 │   ├── data/                  # Host / AppSettings @Serializable 模型、HostRepository
 │   │                          #   （multiplatform-settings + JSON）、SecretStore expect
+│   ├── herdr/                 # herdr 控制面域：HerdrProbe（探测）/ HerdrApi（命令构造）/
+│   │                          #   HerdrMonitor（轮询）/ HerdrModels（快照模型）
 │   ├── ui/                    # AppRoot 导航、SessionManager、TerminalScreen/View、
 │   │                          #   KeyToolbar、SFTP、Host/Connections/Settings 页、theme/
+│   │                          #   TerminalController（会话状态/UI 观察点）+ SessionConnector
+│   │                          #   （连接编排：三模式建连/重连/herdr 引导降级——状态所有权在
+│   │                          #   controller，connector 经同包 internal 读写）
 │   └── util/                  # SessionKeepAlive / NetworkChange / Dispatchers /
 │                              #   MonoFont / AppLifecycle 等 expect 接缝
 ├── jvmSharedMain/             # Android + desktop 共享的 JVM 引擎
