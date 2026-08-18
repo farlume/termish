@@ -132,16 +132,46 @@ interface SshSession {
     fun connectAndRun(command: String, timeoutMs: Long = 15_000): CommandResult
 
     /**
-     * 探测远端系统（Termius 式自动识别）。在已认证的同一连接上开临时 exec
-     * 通道执行 [SYSTEM_PROBE_COMMAND]，返回原始输出；失败返回 null。
-     * 不重新认证、不影响交互通道。
+     * 在已认证的同一连接上开临时 exec 通道执行命令，返回 stdout；
+     * 失败/未连接/超时返回 null。不重新认证、不打断交互 shell。
+     * 供控制面查询使用（系统探测、herdr api 等）；执行一次性命令且
+     * 连接尚未建立时用 [connectAndRun]（连接+认证+执行+关闭）。
      */
-    fun probeSystem(): String?
+    fun runCommand(command: String, timeoutMs: Long = 15_000): String?
+
+    /**
+     * 探测远端系统（Termius 式自动识别）：在已认证连接上执行
+     * [SYSTEM_PROBE_COMMAND]，返回原始输出；失败返回 null。
+     * 默认实现委托 [runCommand]（引擎无需重复实现）。
+     */
+    fun probeSystem(): String? = runCommand(SYSTEM_PROBE_COMMAND, timeoutMs = 5_000)
+
+    /**
+     * 带 PTY 的 exec 通道（如 `herdr` TUI：crossterm 需要 tty，无 tty 会 panic）。
+     * 不经交互 shell——没有提示符/命令回显，输出直接就是程序的界面。
+     * 返回通道（阻塞 read / write / close）；失败/未连接返回 null。
+     * 注意：exec 通道的 pty 尺寸无法后续调整（固定为分配时的尺寸）。
+     */
+    fun startExec(command: String, columns: Int, rows: Int): SshExecChannel?
 
     /** 主动关闭会话。 */
     fun close()
 
     fun isActive(): Boolean
+}
+
+/**
+ * exec+pty 通道：stdout = 程序渲染字节流，stdin = raw 输入。
+ */
+interface SshExecChannel {
+    /** 阻塞读下一块；EOF/关闭返回 null。 */
+    fun read(): ByteArray?
+
+    /** 写入远端（exec 通道 stdin）。 */
+    fun write(data: ByteArray)
+
+    /** 关闭通道（幂等）。 */
+    fun close()
 }
 
 /** 平台工厂：创建对应引擎的 [SshSession]。 */

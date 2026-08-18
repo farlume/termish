@@ -33,6 +33,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
@@ -110,6 +112,10 @@ class TerminalController(
     /** 自动探测到远端系统并已保存时回调（Termius 式识别；UI 据此刷新主机列表）。 */
     var onSystemDetected: ((Host) -> Unit)? = null
 
+    /** herdr 是否可用（HERDR 模式探测：远端装了 herdr）。 */
+    var herdrAvailable by mutableStateOf(false)
+        private set
+
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
@@ -118,6 +124,8 @@ class TerminalController(
         private const val RECONNECT_SSH_MAX = 3
         /** mosh 已连接后异常退出自动重连上限（UDP 环境更脆弱，上限更低）。 */
         private const val RECONNECT_MOSH_MAX = 2
+        /** UDP 首包确认窗口：引导成功但首包未到 = mosh 连接失败（明确报错不降级）。 */
+        private const val MOSH_UDP_CONFIRM_MS = 5_000L
         /** 自动重连基础退避：第 n 次重连延迟 2n 秒。 */
         private const val RECONNECT_BASE_DELAY_MS = 2_000L
         /** 连接成功后的网络事件免疫期：刚连上不折腾，避免「连上即断」循环。 */
@@ -141,6 +149,12 @@ class TerminalController(
 
     private var session: SshSession? = null
     private var moshSession: MoshSession? = null
+    /** HERDR 模式 SSH 兜底的 exec+pty 通道（herdr TUI 直接跑，无 shell 回显）。 */
+    private var herdrExec: dev.termish.ssh.SshExecChannel? = null
+    /** HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）。 */
+    private var herdrSuppressShellOutput = false
+    /** Mosh 成功路径关闭 SSH 引导通道时短路 onClosed（避免误判为意外断线）。 */
+    private var swallowClosed = false
     private val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
     /** destroy() 后置位：reader 协程停止向输出队列投递（队列已关闭，投递会抛）。 */
     @Volatile
@@ -249,9 +263,16 @@ class TerminalController(
         status = ConnStatus.CONNECTING
         scope.launch {
             try {
-                if (host.connectionMode == dev.termish.data.ConnectionMode.MOSH) {
-                    doConnectMosh()
-                    return@launch
+                when (host.connectionMode) {
+                    dev.termish.data.ConnectionMode.MOSH -> {
+                        doConnectMosh()
+                        return@launch
+                    }
+                    dev.termish.data.ConnectionMode.HERDR -> {
+                        doConnectHerdr()
+                        return@launch
+                    }
+                    dev.termish.data.ConnectionMode.SSH -> {}
                 }
                 val s = sessionFactory(newConnection(), callbacks(trace))
                 session = s
@@ -290,9 +311,22 @@ class TerminalController(
                         }
                     }
                 }
-                // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
-                if (host.startupCommand.isNotBlank()) {
-                    s.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+                // HERDR 模式：探测 herdr（snapshot 成功 = 已装）——显式选模式即同意监控
+                if (host.connectionMode == dev.termish.data.ConnectionMode.HERDR) {
+                    val ssh = s
+                    scope.launch {
+                        val raw = runCatching { ssh.runCommand("herdr api snapshot") }.getOrNull()
+                        herdrAvailable = raw != null && raw.isNotBlank()
+                        TermLog.d("herdr") { "probe ${host.name}: herdrAvailable=${herdrAvailable}" }
+                    }
+                }
+                // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复。
+                // HERDR 模式缺省启动 herdr TUI（点击卡片进终端 = herdr 工作台界面）
+                val startup = if (host.connectionMode == dev.termish.data.ConnectionMode.HERDR &&
+                    host.startupCommand.isBlank()
+                ) "herdr" else host.startupCommand
+                if (startup.isNotBlank()) {
+                    s.sendData((startup.trim() + "\n").encodeToByteArray())
                 }
                 frame++
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -326,54 +360,79 @@ class TerminalController(
     }
 
     /** Mosh 模式：先 SSH 引导 mosh-server，再拉起 mosh-client。 */
-    private suspend fun doConnectMosh() {
+    /**
+     * Mosh 模式：SSH 引导 mosh-server，UDP 首包确认后关闭 SSH（引导工具使命完成）。
+     * 降级语义（仅此一种）：引导失败 = 远端未安装 mosh-server → 降级
+     * （Mosh：SSH shell；HERDR：SSH + herdr TUI）。引导成功但 UDP 首包超时 =
+     * mosh 连接失败（明确报错，不静默降级——用户选 Mosh/HERDR，UDP 不通是真实故障）。
+     *
+     * @param existingSession HERDR 复用已认证连接（探测后引导；null = 自建）
+     * @param bootstrapExtra 引导命令追加参数（HERDR：` -- herdr`，mosh 会话直接跑 herdr）
+     * @param onDegraded 引导失败降级回调（HERDR：exec+pty 跑 herdr；null = 普通 shell）
+     */
+    private suspend fun doConnectMosh(
+        existingSession: SshSession? = null,
+        bootstrapExtra: String = "",
+        onDegraded: (suspend (SshSession) -> Unit)? = null,
+    ) {
+        val t0 = nowMs()
         try {
-            val callbacks = callbacks()
-            // 引导用的临时 SSH 会话：connectAndRun 的 finally 会 close() 并同步触发
-            // onClosed；若路由到主回调，会把 CONNECTING 置为 CLOSED，导致下方
-            // "status == CLOSED" 检查误判为用户关闭，刚拉起的 mosh-client 被立即销毁。
-            // onPrompt / verifyHostKey 仍需委托主回调（认证与 TOFU 确认）。
-            val bootstrapCallbacks = object : SshCallbacks by callbacks {
-                override fun onClosed(reason: String?) {}
+            // 1. SSH 连接 + shell（引导通道；降级时变显示通道，Mosh 成功时关闭）
+            val s = existingSession ?: sessionFactory(newConnection(), callbacks())
+            if (existingSession == null) {
+                session = s
+                val info = s.connectAndStart(lastCols, lastRows)
+                if (status == ConnStatus.CLOSED) {
+                    session = null
+                    try { s.close() } catch (_: Exception) { }
+                    return
+                }
+                info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
             }
-            val ssh = createSshSession(newConnection(), bootstrapCallbacks)
-            // mosh -c 只支持 8/256 两档：xterm-256color → 256（默认），
-            // 其余 TERM（vt100/linux 等）按 8 色保守协商
+
+            // 2. 同连接引导 mosh-server（runCommand 复用已认证连接；探测输出跟在
+            //    MOSH CONNECT 之后，不影响 parseMoshConnect，自动识别系统）
             val moshColors = if (repository.loadSettings().terminalType == "xterm-256color") "256" else "8"
             val baseBootstrap = if (host.moshUdpPort in 1024..65535) {
-                "mosh-server new -c $moshColors -p ${host.moshUdpPort} -l LANG=en_US.UTF-8"
+                "mosh-server new -c $moshColors -p ${host.moshUdpPort} -l LANG=en_US.UTF-8$bootstrapExtra"
             } else {
-                "mosh-server new -c $moshColors -l LANG=en_US.UTF-8"
+                "mosh-server new -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
             }
-            // 引导同时探测远端系统：探测输出跟在 MOSH CONNECT 之后，
-            // 不影响 parseMoshConnect，自动识别系统（用户无需手填）。
             val bootstrap = "$baseBootstrap; $SYSTEM_PROBE_COMMAND"
             TermLog.i("mosh") { "bootstrap ${host.name}: $baseBootstrap" }
-            val result = ssh.connectAndRun(bootstrap)
-            result.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
-            val (moshPort, moshKey) = parseMoshConnect(result.output)
-                ?: throw SshException(
-                    if (host.moshUdpPort in 1024..65535 && result.output.contains("Address already in use")) {
-                        "固定 UDP 端口 ${host.moshUdpPort} 仍被旧会话占用（刚切换网络，稍等几秒重试即可）"
-                    } else {
-                        "mosh-server 引导失败：${result.output.trim().take(200)}"
-                    },
-                )
-            TermLog.i("mosh") { "mosh-server up port=$moshPort ${host.hostname}" }
-            detectSystemFromOutput(result.output)?.takeIf { it.isNotBlank() }?.let { detected ->
+            val raw = s.runCommand(bootstrap, 5_000)
+            val parsed = raw?.let { parseMoshConnect(it) }
+            detectSystemFromOutput(raw ?: "")?.takeIf { it.isNotBlank() }?.let { detected ->
                 if (host.system.isBlank()) {
                     val updated = host.copy(system = detected)
                     repository.upsertHost(updated)
                     onSystemDetected?.invoke(updated)
                 }
             }
+            if (parsed == null) {
+                // 3a. 引导失败 = 远端未装 mosh-server（或固定端口被占）→ 唯一降级路径
+                val rawTrimmed = raw?.trim()?.take(120)
+                val reason = when {
+                    host.moshUdpPort in 1024..65535 && raw?.contains("Address already in use") == true ->
+                        "固定 UDP 端口 ${host.moshUdpPort} 被占用"
+                    rawTrimmed.isNullOrEmpty() -> "远端未安装 mosh-server（引导无输出）"
+                    else -> "mosh-server 引导失败（无 MOSH CONNECT；输出：$rawTrimmed）"
+                }
+                TermLog.w("mosh") { "mosh bootstrap failed ${host.name}: $reason——降级" }
+                if (onDegraded != null) {
+                    onDegraded(s)
+                } else {
+                    finishConnected(s)
+                }
+                TermLog.i("mosh") { "mosh degraded ${host.name} in ${nowMs() - t0}ms" }
+                return
+            }
+            val (moshPort, moshKey) = parsed
+            TermLog.i("mosh") { "mosh-server up port=$moshPort ${host.hostname}" }
 
-            // payload 读 buffer 默认色（buildThemeSyncPayload），而 buffer 只在
-            // 主线程读写（TerminalScreen 换主题时也会更新默认色）：构建必须切到
-            // 主线程，不能在这个 IO 协程里读
+            // 3b. 引导成功：建 mosh client，等 UDP 首包确认（连接成功判定）
             withContext(Dispatchers.Main) { prepareThemeSync() }
-            // 纯 Kotlin mosh 客户端：影子终端状态直接同步进 UI buffer，
-            // 不经过字节流路径（emulator.write）。
+            val peerReady = CompletableDeferred<Unit>()
             val client = createKmpMoshSession(
                 ip = host.hostname,
                 port = moshPort,
@@ -387,12 +446,11 @@ class TerminalController(
                     if (repository.loadSettings().osc52Clipboard) onRemoteClipboard?.invoke(text)
                 },
                 onExit = { reason -> handleMoshExit(reason) },
-                // 状态拷进 buffer 后显式触发重绘，否则新输出/预测回显要等
-                // 光标闪烁等偶发 frame 变更（0~530ms）才上屏
                 onFrame = { frame++ },
-                // 收到对端首包才算真正连上（mosh still_connecting 语义）：
-                // UDP 不通时状态停留在「连接中」，15s 超时由 onExit 报出原因
-                onPeerConnected = { moshSession?.let { onMoshConnected(it) } },
+                onPeerConnected = {
+                    peerReady.complete(Unit)
+                    moshSession?.let { onMoshConnected(it) }
+                },
                 onLinkStatus = { secs ->
                     if (secs >= LINK_LOST_THRESHOLD_SECONDS && linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
                         TermLog.w("mosh") { "link lost ${host.name} ${secs}s" }
@@ -402,34 +460,176 @@ class TerminalController(
             )
             moshSession = client
             TermLog.i("mosh") { "mosh client started ${host.name} cols=${lastCols}x$lastRows" }
-            // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须拉起后立即销毁
             if (status == ConnStatus.CLOSED) {
                 moshSession = null
                 client.close()
-                return@doConnectMosh
+                return
             }
-            if (!client.isActive()) {
+            val udpOk = kotlinx.coroutines.withTimeoutOrNull(MOSH_UDP_CONFIRM_MS) { peerReady.await() }
+            if (udpOk == null && status != ConnStatus.CONNECTED) {
+                // 3c. 引导成功但 UDP 首包超时 = mosh 连接失败：明确报错（不降级）
+                TermLog.e("mosh") { "mosh UDP unconfirmed ${host.name} ${MOSH_UDP_CONFIRM_MS}ms——连接失败" }
+                moshSession?.close()
+                moshSession = null
+                session = null
+                try { s.close() } catch (_: Exception) { }
                 status = ConnStatus.ERROR
-                errorMessage = "mosh 连接失败：客户端已退出。若主机是域名或经 NAS/路由器端口转发，" +
-                    "请确认 UDP 端口（自动 60000-61000，或在主机里固定一个端口）已转发且未被防火墙拦截。"
+                errorMessage = "mosh 连接失败：UDP ${host.moshUdpPort.takeIf { it in 1024..65535 } ?: "端口(60000-61000)"} 不可达" +
+                    "（已连上 mosh-server 但收不到首包——检查端口转发/防火墙；固定 UDP 端口可解）"
                 stopKeepAlive()
-                return@doConnectMosh
+                return
             }
-            // 等 onPeerConnected 首包回调再置 CONNECTED（UDP 不通时保持「连接中」）
+            // 3d. UDP 确认成功：mosh 连接成功——关闭 SSH（引导工具使命完成；
+            //     close 同步触发 onClosed，用 swallowClosed 短路避免误判断开）
+            swallowClosed = true
+            session = null
+            try { s.close() } catch (_: Exception) { }
+            swallowClosed = false
+            TermLog.i("mosh") { "mosh connected ${host.name} in ${nowMs() - t0}ms（SSH 引导通道已关）" }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
             if (status != ConnStatus.CLOSED) {
+                TermLog.e("mosh") { "mosh connect failed ${host.name}: ${e.message}" }
                 status = ConnStatus.ERROR
                 errorMessage = e.message
-                // 重连失败：停保活防空转（见 doConnect 的 catch 注释）
                 stopKeepAlive()
             }
         }
     }
 
-    /** mosh 客户端退出回调：已连接后异常退出走自动重连（上限 [RECONNECT_MOSH_MAX]），
-     *  连接中退出报连接失败。用户主动 close 时状态为 CLOSED，直接忽略。 */
+    /**
+     * HERDR 模式：herdr 的一等连接模式（Mosh 优先，降级能力在 Mosh 内）。
+     *
+     * - SSH 连接（认证/TOFU 一次）→ 探测 herdr（候选路径；失败明确报错并释放）
+     * - 探测成功 → Mosh 引导 `mosh-server new -- herdr`（mosh 会话直接跑 herdr TUI）
+     *   - 引导失败（无 mosh-server）→ 降级 SSH + exec+pty 跑 herdr（无 shell 回显）
+     *   - UDP 首包超时 → 明确报错（真实故障，不静默降级）
+     *   - Mosh 成功 → 关闭 SSH（漫游）
+     */
+    private suspend fun doConnectHerdr() {
+        val t0 = nowMs()
+        try {
+            // HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）
+            herdrSuppressShellOutput = true
+            // 1. SSH 连接 + shell（探测/引导通道）
+            val s = sessionFactory(newConnection(), callbacks())
+            session = s
+            val info = s.connectAndStart(lastCols, lastRows)
+            if (status == ConnStatus.CLOSED) {
+                session = null
+                try { s.close() } catch (_: Exception) { }
+                return
+            }
+            info.hostKey?.let { repository.touchConnected(host.id, it.fingerprintSha256) }
+
+            // 2. 探测 herdr：失败明确报错（不降级——选 HERDR = herdr 工作台）
+            if (probeHerdr(s) == null) {
+                TermLog.e("herdr") { "HERDR probe failed ${host.name}: 远端无 herdr" }
+                session = null
+                try { s.close() } catch (_: Exception) { }
+                status = ConnStatus.ERROR
+                errorMessage = "HERDR 模式需要远端安装 herdr（连接已通，但 herdr api 无响应）"
+                stopKeepAlive()
+                return
+            }
+            TermLog.i("herdr") { "HERDR probe ok ${host.name}" }
+
+            // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
+            doConnectMosh(
+                existingSession = s,
+                bootstrapExtra = " -- herdr",
+                onDegraded = { ssh ->
+                    // 降级（无 mosh-server）：SSH + exec+pty 直接跑 herdr TUI（无回显）
+                    startHerdrExec(ssh)
+                },
+            )
+            herdrSuppressShellOutput = false
+            TermLog.i("herdr") { "HERDR connected ${host.name} in ${nowMs() - t0}ms" }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (status != ConnStatus.CLOSED) {
+                TermLog.e("herdr") { "HERDR connect failed ${host.name}: ${e.message}" }
+                status = ConnStatus.ERROR
+                errorMessage = e.message
+                stopKeepAlive()
+            }
+        }
+    }
+
+    /** HERDR 降级显示通道：exec+pty 跑 `herdr`（无 shell 提示符/命令回显），
+     *  EOF = 工作台关闭（正常结束，关闭整个会话）。 */
+    private suspend fun startHerdrExec(s: SshSession) {
+        val exec = s.startExec("herdr", lastCols, lastRows)
+        if (exec != null) {
+            herdrExec = exec
+            val execRef = exec
+            scope.launch {
+                try {
+                    while (true) {
+                        val chunk = execRef.read() ?: break
+                        enqueueOutput(chunk)
+                    }
+                    if (status != ConnStatus.CLOSED) {
+                        TermLog.i("herdr") { "herdr exec exited ${host.name}（工作台关闭）" }
+                        close()
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (status != ConnStatus.CLOSED) {
+                        TermLog.w("herdr") { "herdr exec read error ${host.name}: ${e.message}" }
+                        close()
+                    }
+                }
+            }
+            TermLog.i("herdr") { "HERDR degraded to ssh-exec ${host.name}" }
+        } else {
+            // exec+pty 不可用（如 iOS 暂未实现）：退回 shell 命令路径
+            s.sendData("herdr\n".encodeToByteArray())
+            TermLog.i("herdr") { "HERDR degraded to ssh-shell ${host.name}" }
+        }
+    }
+
+    /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
+    private fun finishConnected(s: SshSession, sendStartup: Boolean = true) {
+        status = ConnStatus.CONNECTED
+        reconnectAttempts = 0
+        reconnectCount = 0
+        errorMessage = null
+        startKeepAlive()
+        networkImmuneUntilMs = nowMs() + NETWORK_IMMUNE_MS
+        swallowClosed = false
+        if (host.system.isBlank()) {
+            scope.launch {
+                val raw = runCatching { s.probeSystem() }.getOrNull()
+                TermLog.d("ssh") { "probeSystem ${host.name}: ${raw?.take(60) ?: "null"}" }
+                val detected = raw?.let { detectSystemFromOutput(it) }
+                if (detected != null && detected.isNotBlank() && status == ConnStatus.CONNECTED) {
+                    val updated = host.copy(system = detected)
+                    repository.upsertHost(updated)
+                    onSystemDetected?.invoke(updated)
+                }
+            }
+        }
+        // 启动命令（如 tmux new -A -s main）：HERDR 不发送（herdr 是唯一入口）
+        if (sendStartup && host.startupCommand.isNotBlank()) {
+            s.sendData((host.startupCommand.trim() + "\n").encodeToByteArray())
+        }
+        frame++
+    }
+
+    /** HERDR 探测：候选命令逐个试，第一个返回合法快照的即 herdr 存在；全部失败返回 null。 */
+    private fun probeHerdr(s: SshSession): dev.termish.herdr.HerdrSessionSnapshot? {
+        for (cmd in dev.termish.herdr.HerdrApi.SNAPSHOT_CMD_CANDIDATES) {
+            val raw = s.runCommand(cmd, 5_000) ?: continue
+            val snap = dev.termish.herdr.parseHerdrSnapshot(raw) ?: continue
+            return snap
+        }
+        return null
+    }
+
     private fun handleMoshExit(reason: String?) {
         TermLog.w("mosh") { "mosh exit ${host.name} reason=$reason status=$status" }
         if (status == ConnStatus.CONNECTED) {
@@ -539,6 +739,8 @@ class TerminalController(
             trace?.step(step)
         }
         override suspend fun onOutput(data: ByteArray) {
+            // HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）
+            if (herdrSuppressShellOutput) return
             enqueueOutput(data)
         }
 
@@ -551,6 +753,7 @@ class TerminalController(
         }
 
         override fun onClosed(reason: String?) {
+            if (swallowClosed) return // Mosh 成功路径主动关闭引导通道
             if (status == ConnStatus.CLOSED) return // 用户主动断开
             TermLog.w("ssh") { "onClosed ${host.name} reason=$reason status=$status attempts=$reconnectAttempts" }
             // 意外断线：指数退避自动重连，终端缓冲保留
@@ -671,13 +874,17 @@ class TerminalController(
     }
 
     fun sendText(text: String) {
-        moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
+        val exec = herdrExec
+        if (exec != null) exec.write(text.encodeToByteArray())
+        else moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
     }
 
     fun quickCommands(): List<dev.termish.data.QuickCommand> = host.quickCommands
 
     fun sendBytes(bytes: ByteArray) {
-        moshSession?.sendData(bytes) ?: session?.sendData(bytes)
+        val exec = herdrExec
+        if (exec != null) exec.write(bytes)
+        else moshSession?.sendData(bytes) ?: session?.sendData(bytes)
     }
 
     fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
@@ -711,6 +918,8 @@ class TerminalController(
         stopKeepAlive()
         moshSession?.close()
         moshSession = null
+        herdrExec?.close()
+        herdrExec = null
         session?.close()
         session = null
     }

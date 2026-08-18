@@ -118,6 +118,7 @@ fun AppRoot(repository: HostRepository) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val scope = rememberCoroutineScope()
     val sessionManager = remember { SessionManager(repository) }
+
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
@@ -130,6 +131,7 @@ fun AppRoot(repository: HostRepository) {
 
     // 语言文案（提前声明供 connectSftp 等 lambda 使用）
     val appStrings = remember(settings.language) { appStringsFor(settings.language) }
+
 
     /**
      * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。
@@ -203,6 +205,14 @@ fun AppRoot(repository: HostRepository) {
     }
     LaunchedEffect(pendingNavigate) {
         val target = pendingNavigate ?: return@LaunchedEffect
+        // HERDR 模式不预连：exec+pty 的 pty 尺寸固定（无法后续调整），
+        // 必须等 TerminalView 就绪拿到实际画布尺寸再建连（终端页显示连接中）
+        if (target.host.connectionMode == dev.termish.data.ConnectionMode.HERDR) {
+            currentTab = SessionTab.Terminal(target)
+            screen = Screen.Terminal(target.host.id)
+            pendingNavigate = null
+            return@LaunchedEffect
+        }
         // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
         // 到实际画布尺寸），否则会话停留在 IDLE 永远无法连接
         if (target.status == ConnStatus.IDLE) {
@@ -214,6 +224,7 @@ fun AppRoot(repository: HostRepository) {
         }
         pendingNavigate = null
         if (target.status == ConnStatus.CONNECTED) {
+            // HERDR 模式终端页 = herdr TUI（连接时自动发 startupCommand "herdr"）
             currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal(target.host.id)
         } else if (target.status == ConnStatus.ERROR) {

@@ -81,7 +81,9 @@ class TerminalControllerTest {
         override fun connectAndRun(command: String, timeoutMs: Long): CommandResult =
             throw UnsupportedOperationException()
 
-        override fun probeSystem(): String? = null
+        override fun runCommand(command: String, timeoutMs: Long): String? = null
+
+        override fun startExec(command: String, columns: Int, rows: Int): dev.termish.ssh.SshExecChannel? = null
 
         override fun close() {
             closed = true

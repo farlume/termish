@@ -382,7 +382,8 @@ private fun HostCard(
     // 有会话：统计文字分段着色；无会话显示连接详情
     val sessionStats = sessions.isNotEmpty()
     val detail = if (!sessionStats) {
-        val mode = if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh
+        val mode = if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh
+        else if (host.connectionMode == ConnectionMode.HERDR) s.editModeHerdr else s.hostsModeSsh
         buildString {
             append(mode)
             append(", ")

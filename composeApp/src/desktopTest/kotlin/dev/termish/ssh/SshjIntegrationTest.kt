@@ -169,4 +169,77 @@ class SshjIntegrationTest {
             session.close()
         }
     }
+
+    /**
+     * 控制面命令（herdr api 等）：复用已认证连接执行命令，
+     * 不重新认证，且【不打断交互 shell】——跑完 runCommand 后
+     * sendData 必须仍然正常回显（这是它与 connectAndRun 的本质区别）。
+     */
+    @Test
+    fun runCommandReusesConnectionWithoutKillingShell() {
+        if (!skipUnlessSshd()) return
+        val pemFile = File(env("Termish_TEST_KEY", "/tmp/termish_test/client"))
+        if (!pemFile.exists()) {
+            println("SKIP: no key at ${pemFile.absolutePath}")
+            return
+        }
+        val output = StringBuilder()
+        val session = createSshSession(
+            SshConnection(
+                host = "127.0.0.1",
+                port = env("Termish_TEST_PORT", "22222").toInt(),
+                username = System.getProperty("user.name"),
+                privateKeyPem = pemFile.readText(),
+            ),
+            object : SshCallbacks {
+                override suspend fun onOutput(data: ByteArray) { output.append(String(data, Charsets.UTF_8)) }
+                override suspend fun onStderr(data: ByteArray) { output.append(String(data, Charsets.UTF_8)) }
+                override fun onExitStatus(status: Int) {}
+                override fun onClosed(reason: String?) {}
+                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+            },
+        )
+        try {
+            session.connectAndStart(columns = 100, rows = 40)
+
+            // 未连接时（close 后）runCommand 应返回 null，不抛异常
+            val closedSession = createSshSession(
+                SshConnection(host = "127.0.0.1", port = 22222, username = "x", privateKeyPem = null),
+                object : SshCallbacks {
+                    override suspend fun onOutput(data: ByteArray) {}
+                    override suspend fun onStderr(data: ByteArray) {}
+                    override fun onExitStatus(status: Int) {}
+                    override fun onClosed(reason: String?) {}
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+                },
+            )
+            assertTrue(closedSession.runCommand("echo nope") == null, "未连接的会话 runCommand 应返回 null")
+            closedSession.close()
+
+            // 复用已认证连接执行控制面命令
+            val r1 = session.runCommand("echo Termish_RUNCMD_OK")
+            assertNotNull(r1, "runCommand 应返回命令输出")
+            assertContains(r1!!, "Termish_RUNCMD_OK")
+            println("runCommand #1: ${r1.trim()}")
+
+            // 多行输出 + 明确超时
+            val r2 = session.runCommand("echo A; echo B", timeoutMs = 3_000)
+            assertNotNull(r2, "多行命令应返回输出")
+            assertContains(r2!!, "A")
+            assertContains(r2, "B")
+
+            // 关键：runCommand 不打断交互 shell——之后 sendData 仍正常回显
+            session.sendData("echo Termish_SHELL_ALIVE\n".encodeToByteArray())
+            val deadline = System.currentTimeMillis() + 10_000
+            while (System.currentTimeMillis() < deadline) {
+                if (output.toString().contains("Termish_SHELL_ALIVE")) break
+                Thread.sleep(100)
+            }
+            assertTrue(output.toString().contains("Termish_SHELL_ALIVE"), "runCommand 后交互 shell 必须仍然存活")
+        } finally {
+            session.close()
+        }
+    }
 }
