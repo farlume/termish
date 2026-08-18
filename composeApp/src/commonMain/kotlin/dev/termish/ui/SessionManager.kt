@@ -187,6 +187,7 @@ class SessionManager(
         } catch (_: Exception) {
         }
         sftpSessions.remove(entry)
+        persist()
     }
 
     /** 关闭主机的全部会话：终端断开保留可重入 + SFTP 释放（卡片 Close）。 */

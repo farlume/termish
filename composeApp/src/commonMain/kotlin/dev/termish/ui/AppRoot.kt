@@ -407,9 +407,8 @@ fun AppRoot(repository: HostRepository) {
                                         }
                                     },
                                     onDisconnect = { host ->
-                                        sessionManager.sessions
-                                            .firstOrNull { it.host.id == host.id }
-                                            ?.let { sessionManager.disconnect(it) }
+                                        // 断开该主机全部会话：终端断开保留 + SFTP 释放（与「全部关闭」一致）
+                                        sessionManager.closeAllForHost(host.id)
                                     },
                                     onOpenSession = { controller ->
                                         // 卡片点击 = 用当前配置连这台主机：配置/凭据已变更的旧会话不复用，

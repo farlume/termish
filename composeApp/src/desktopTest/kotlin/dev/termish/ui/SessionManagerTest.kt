@@ -98,6 +98,37 @@ class SessionManagerTest {
     }
 
     @Test
+    fun closeAllForHostClosesSftpSession() {
+        val r = repo()
+        val m = SessionManager(r)
+        val h = host("a")
+        var closed = false
+        val fake = object : SftpSession {
+            override fun list(path: String) = emptyList<SftpEntry>()
+            override fun mkdir(path: String) {}
+            override fun home() = "/home/root"
+            override fun upload(remotePath: String, content: ByteArray) {}
+            override fun download(
+                remotePath: String,
+                onProgress: (loaded: Long, total: Long) -> Unit,
+                onChunk: (ByteArray) -> Unit,
+            ) {
+            }
+            override fun close() {
+                closed = true
+            }
+        }
+        m.addSftp(h, fake)
+        assertEquals(1, m.sftpSessions.size)
+
+        m.closeAllForHost(h.id)
+
+        assertTrue(m.sftpSessions.isEmpty())           // SFTP 条目被移除
+        assertTrue(closed)                              // 底层连接被关闭
+        assertTrue(r.loadRecentSftpEntries().isEmpty()) // 持久化同步
+    }
+
+    @Test
     fun signatureForChangesWhenConfigChanges() {
         val m = SessionManager(repo())
         val h = host("a")
