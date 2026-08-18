@@ -110,6 +110,10 @@ class TerminalController(
     /** 自动探测到远端系统并已保存时回调（Termius 式识别；UI 据此刷新主机列表）。 */
     var onSystemDetected: ((Host) -> Unit)? = null
 
+    /** herdr 是否可用（HERDR 模式探测：远端装了 herdr）。 */
+    var herdrAvailable by mutableStateOf(false)
+        private set
+
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
@@ -288,6 +292,15 @@ class TerminalController(
                             repository.upsertHost(updated)
                             onSystemDetected?.invoke(updated)
                         }
+                    }
+                }
+                // HERDR 模式：探测 herdr（snapshot 成功 = 已装）——显式选模式即同意监控
+                if (host.connectionMode == dev.termish.data.ConnectionMode.HERDR) {
+                    val ssh = s
+                    scope.launch {
+                        val raw = runCatching { ssh.runCommand("herdr api snapshot") }.getOrNull()
+                        herdrAvailable = raw != null && raw.isNotBlank()
+                        TermLog.d("herdr") { "probe ${host.name}: herdrAvailable=${herdrAvailable}" }
                     }
                 }
                 // 启动命令（如 tmux new -A -s main）：配合自动重连实现会话现场恢复
@@ -729,6 +742,18 @@ class TerminalController(
     }
 
     fun isConnected(): Boolean = status == ConnStatus.CONNECTED || status == ConnStatus.AUTH
+
+    /** 在已认证连接上执行控制面命令（herdr monitor 轮询用）；未连接返回 null。 */
+    fun runControlCommand(command: String, timeoutMs: Long = 10_000): String? {
+        val s = session ?: return null
+        if (!isConnected()) return null
+        return try {
+            s.runCommand(command, timeoutMs)
+        } catch (e: Exception) {
+            TermLog.d("ssh") { "runControlCommand failed ${host.name}: ${e.message}" }
+            null
+        }
+    }
 
     /**
      * 网络切换（Wi-Fi ↔ 流量等）时由平台层调用：

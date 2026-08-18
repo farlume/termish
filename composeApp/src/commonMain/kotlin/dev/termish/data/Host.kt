@@ -11,11 +11,13 @@ enum class HostAuthMethod {
     KEY_OR_PASSWORD,
 }
 
-/** 连接方式：SSH 终端（默认）或 Mosh（需要远端安装 mosh-server）。 */
+/** 连接方式：SSH 终端（默认）、Mosh（需要远端安装 mosh-server）或 Herdr
+ *  （agent 工作台：SSH 底座 + 探测 herdr + agent 状态监控；选 Herdr = 显式同意监控）。 */
 @Serializable
 enum class ConnectionMode {
     SSH,
     MOSH,
+    HERDR,
 }
 
 @Serializable

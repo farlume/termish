@@ -127,6 +127,20 @@ fun HostEditScreen(
                 RadioButton(connectionMode == ConnectionMode.MOSH, { connectionMode = ConnectionMode.MOSH })
                 Text(s.editModeMosh)
             }
+            // Herdr：agent 工作台模式——SSH 底座 + herdr 探测 + agent 监控（选 Herdr = 显式同意监控）
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                RadioButton(connectionMode == ConnectionMode.HERDR, { connectionMode = ConnectionMode.HERDR })
+                Column {
+                    Text(s.editModeHerdr)
+                    if (connectionMode == ConnectionMode.HERDR) {
+                        Text(
+                            s.editModeHerdrHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
 
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {
                 OutlinedTextField(
