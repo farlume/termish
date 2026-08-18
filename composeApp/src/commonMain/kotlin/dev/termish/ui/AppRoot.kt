@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
@@ -119,7 +120,12 @@ fun AppRoot(repository: HostRepository) {
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val scope = rememberCoroutineScope()
-    val sessionManager = remember { SessionManager(repository) }
+
+    // 语言文案（提前声明供 connectSftp 等 lambda 使用）
+    val appStrings = remember(settings.language) { appStringsFor(settings.language) }
+    // 连接错误文案随语言即时切换：SessionManager 跨重组复用，须经 State 取最新值
+    val currentStrings = rememberUpdatedState(appStrings)
+    val sessionManager = remember { SessionManager(repository, strings = { currentStrings.value }) }
 
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
@@ -130,10 +136,6 @@ fun AppRoot(repository: HostRepository) {
     var sftpAuth by remember { mutableStateOf<AuthPromptRequest?>(null) }
     var sftpHostKey by remember { mutableStateOf<HostKeyRequest?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
-
-    // 语言文案（提前声明供 connectSftp 等 lambda 使用）
-    val appStrings = remember(settings.language) { appStringsFor(settings.language) }
-
 
     /**
      * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。

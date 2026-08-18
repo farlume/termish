@@ -13,6 +13,16 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
+/** mosh 会话退出原因。协议层不产 UI 文案（保持零 UI 依赖），UI 层据此翻译。 */
+enum class MoshExitReason {
+    /** 会话事件循环协程异常退出（底层消息见 TermLog）。 */
+    SESSION_ERROR,
+    /** still_connecting 阶段 15s 未收到对端首包（UDP 端口不可达等）。 */
+    CONNECT_TIMEOUT,
+    /** 正常关闭（对端 ack shutdown / 我方确认对端 shutdown / shutdown 超时）。 */
+    NORMAL,
+}
+
 /**
  * 纯 Kotlin 实现的 mosh 客户端会话（SSP 协议，不依赖原生 mosh-client）。
  *
@@ -32,7 +42,7 @@ class KmpMoshSession(
     private val scope: CoroutineScope,
     /** 最新影子状态（在会话协程里回调；实现方应拷贝后切回主线程渲染）。 */
     private val onStateUpdate: (ShadowTerminalView) -> Unit,
-    private val onExit: (String?) -> Unit,
+    private val onExit: (MoshExitReason) -> Unit,
     /** 收到对端第一个有效包（连接建立，对应协议 still_connecting 翻转）时回调一次。 */
     private val onPeerConnected: () -> Unit = {},
     /** 链路健康度：距上次收到对端包的秒数，值变化才回调（空闲心跳约 3s 一次）。
@@ -140,7 +150,7 @@ class KmpMoshSession(
                 if (active) {
                     active = false
                     TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
-                    onExit("mosh 会话异常：${e.message}")
+                    onExit(MoshExitReason.SESSION_ERROR)
                 }
             }
         }
@@ -236,7 +246,7 @@ class KmpMoshSession(
             if (!peerSeen && nowMs() - startedAt > 15_000) {
                 active = false
                 cleanup()
-                onExit("mosh 连接超时：UDP 端口不可达（检查端口转发/防火墙）")
+                onExit(MoshExitReason.CONNECT_TIMEOUT)
                 return
             }
             // 正常关闭路径：对端 ack 了我们的 shutdown，或我们已确认对端 shutdown——
@@ -247,13 +257,13 @@ class KmpMoshSession(
             ) {
                 active = false
                 cleanup()
-                onExit(null)
+                onExit(MoshExitReason.NORMAL)
                 return
             }
             if (transport.shutdownAckTimedOut()) {
                 active = false
                 cleanup()
-                onExit(null)
+                onExit(MoshExitReason.NORMAL)
                 return
             }
         }
@@ -325,7 +335,7 @@ class KmpMoshSession(
             // 从未收到对端任何数据报：没有握手可言，直接结束
             active = false
             cleanup()
-            onExit(null)
+            onExit(MoshExitReason.NORMAL)
             return
         }
         events.trySend(Event.Close)

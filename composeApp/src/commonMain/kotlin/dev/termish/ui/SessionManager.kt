@@ -28,7 +28,11 @@ data class SftpSessionEntry(
  * 同一主机已有活跃会话时复用（终端缓冲保留，重新进入即"继续上次"）；
  * 离开终端页（返回主页）不断开，连接由前台服务保活。
  */
-class SessionManager(private val repository: HostRepository) {
+class SessionManager(
+    private val repository: HostRepository,
+    /** 连接错误文案提供器（随语言切换取最新 AppStrings）。 */
+    private val strings: () -> AppStrings = { appStringsFor("en") },
+) {
 
     val sessions = mutableStateListOf<TerminalController>()
     /** SFTP 会话（与终端会话同源管理：连接页可见、卡片 Close 可关、删除主机连带释放）。 */
@@ -76,7 +80,7 @@ class SessionManager(private val repository: HostRepository) {
         repository.loadRecentSessionHostIds().forEach { id ->
             val host = byId[id] ?: return@forEach
             val (pw, key) = resolveCredentials(host)
-            TerminalController(host, pw, key, repository, autoReconnect).also {
+            TerminalController(host, pw, key, repository, autoReconnect, strings = strings).also {
                 it.onSystemDetected = onSystemDetected
                 sessions.add(it)
             }
@@ -111,7 +115,7 @@ class SessionManager(private val repository: HostRepository) {
         // 同一主机支持多个会话（Termius 风格）：每次打开都新建，
         // 旧的保留在列表，可从卡片下拉/连接页重入。
         val (pw, key) = resolveCredentials(host)
-        val controller = TerminalController(host, pw, key, repository, autoReconnect)
+        val controller = TerminalController(host, pw, key, repository, autoReconnect, strings = strings)
         controller.onSystemDetected = onSystemDetected
         sessions.add(controller)
         persist()

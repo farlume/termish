@@ -2,6 +2,7 @@ package dev.termish.ui
 
 import dev.termish.data.ConnectionMode
 import dev.termish.herdr.HerdrProbe
+import dev.termish.mosh.MoshExitReason
 import dev.termish.notify.NotificationCenter
 import dev.termish.notify.NotificationEvent
 import dev.termish.ssh.MoshSession
@@ -29,15 +30,20 @@ import kotlinx.coroutines.withTimeoutOrNull
  * 状态所有权（Compose 观察点：status / frame / buffer …）留在
  * [TerminalController]——本类通过同包 internal 访问读写，UI 观察点不变。
  */
-internal class SessionConnector(private val c: TerminalController) {
+internal class SessionConnector(
+    private val c: TerminalController,
+    private val strings: () -> AppStrings,
+) {
 
     companion object {
         /** SSH 意外断线自动重连上限次数（指数退避，见 [RECONNECT_BASE_DELAY_MS]）。 */
         private const val RECONNECT_SSH_MAX = 3
         /** mosh 已连接后异常退出自动重连上限（UDP 环境更脆弱，上限更低）。 */
         private const val RECONNECT_MOSH_MAX = 2
-        /** UDP 首包确认窗口：引导成功但首包未到 = mosh 连接失败（明确报错不降级）。 */
+        /** UDP 首包确认窗口：引导成功但首包未到 = mosh 连接失败 → 降级 SSH。 */
         private const val MOSH_UDP_CONFIRM_MS = 5_000L
+        /** mosh 降级提示自动消失时长（提示常驻会压住终端顶部）。 */
+        private const val MOSH_DEGRADE_NOTICE_MS = 6_000L
         /** 自动重连基础退避：第 n 次重连延迟 2n 秒。 */
         private const val RECONNECT_BASE_DELAY_MS = 2_000L
         /** 连接成功后的网络事件免疫期：刚连上不折腾，避免「连上即断」循环。 */
@@ -153,7 +159,7 @@ internal class SessionConnector(private val c: TerminalController) {
                         NotificationCenter.post(
                             NotificationEvent.RECONNECT_FAILED,
                             "Termish",
-                            "${c.host.name}：重连失败（${e.message ?: "连接失败"}）",
+                            strings().notificationReconnectFailed(c.host.name, e.message ?: strings().terminalFailed),
                             hostId = c.host.id,
                         )
                     }
@@ -164,13 +170,15 @@ internal class SessionConnector(private val c: TerminalController) {
 
     /**
      * Mosh 模式：SSH 引导 mosh-server，UDP 首包确认后关闭 SSH（引导工具使命完成）。
-     * 降级语义（仅此一种）：引导失败 = 远端未安装 mosh-server → 降级
-     * （Mosh：SSH shell；HERDR：SSH + herdr TUI）。引导成功但 UDP 首包超时 =
-     * mosh 连接失败（明确报错，不静默降级——用户选 Mosh/HERDR，UDP 不通是真实故障）。
+     * 降级语义（两种）：引导失败 = 远端未安装 mosh-server → 降级
+     * （Mosh：SSH shell；HERDR：SSH + herdr TUI）；引导成功但 UDP 首包超时 =
+     * mosh 连接失败 → 同样降级到 SSH（SSH 引导通道还活着，直接当显示通道——
+     * UDP 不通时用户至少拿到一个可用 shell，而不是面对一个报错发愣；
+     * banner 提示降级原因 + 固定 UDP 端口解法）。
      *
      * @param existingSession HERDR 复用已认证连接（探测后引导；null = 自建）
      * @param bootstrapExtra 引导命令追加参数（HERDR：` -- herdr`，mosh 会话直接跑 herdr）
-     * @param onDegraded 引导失败降级回调（HERDR：exec+pty 跑 herdr；null = 普通 shell）
+     * @param onDegraded 降级回调（HERDR：exec+pty 跑 herdr；null = 普通 shell）
      */
     private suspend fun doConnectMosh(
         existingSession: SshSession? = null,
@@ -200,7 +208,7 @@ internal class SessionConnector(private val c: TerminalController) {
             } else {
                 "mosh-server new -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
             }
-            val bootstrap = "$baseBootstrap; $SYSTEM_PROBE_COMMAND"
+            val bootstrap = "$baseBootstrap 2>&1; $SYSTEM_PROBE_COMMAND"
             TermLog.i("mosh") { "bootstrap ${c.host.name}: $baseBootstrap" }
             val raw = s.runCommand(bootstrap, 5_000)
             val parsed = raw?.let { parseMoshConnect(it) }
@@ -212,13 +220,16 @@ internal class SessionConnector(private val c: TerminalController) {
                 }
             }
             if (parsed == null) {
-                // 3a. 引导失败 = 远端未装 mosh-server（或固定端口被占）→ 唯一降级路径
+                // 3a. 引导失败 = 远端未装 mosh-server（或固定端口被占）→ 降级路径之一
                 val rawTrimmed = raw?.trim()?.take(120)
                 val reason = when {
                     c.host.moshUdpPort in 1024..65535 && raw?.contains("Address already in use") == true ->
-                        "固定 UDP 端口 ${c.host.moshUdpPort} 被占用"
-                    rawTrimmed.isNullOrEmpty() -> "远端未安装 mosh-server（引导无输出）"
-                    else -> "mosh-server 引导失败（无 MOSH CONNECT；输出：$rawTrimmed）"
+                        strings().moshPortBusy(c.host.moshUdpPort)
+                    // 2>&1 后 command not found 进 stdout：精确识别「未安装 mosh-server」
+                    raw?.contains("not found") == true || raw?.contains("No such file") == true ->
+                        strings().moshServerMissing
+                    rawTrimmed.isNullOrEmpty() -> strings().moshServerMissing
+                    else -> strings().moshBootstrapFailed(rawTrimmed)
                 }
                 TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——降级" }
                 if (onDegraded != null) {
@@ -226,6 +237,7 @@ internal class SessionConnector(private val c: TerminalController) {
                 } else {
                     finishConnected(s)
                 }
+                showDegradeNotice(reason)
                 TermLog.i("mosh") { "mosh degraded ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
             }
@@ -269,16 +281,19 @@ internal class SessionConnector(private val c: TerminalController) {
             }
             val udpOk = withTimeoutOrNull(MOSH_UDP_CONFIRM_MS) { peerReady.await() }
             if (udpOk == null && c.status != ConnStatus.CONNECTED) {
-                // 3c. 引导成功但 UDP 首包超时 = mosh 连接失败：明确报错（不降级）
-                TermLog.e("mosh") { "mosh UDP unconfirmed ${c.host.name} ${MOSH_UDP_CONFIRM_MS}ms——连接失败" }
+                // 3c. 引导成功但 UDP 首包超时 = mosh 连接失败：降级到 SSH
+                //（SSH 引导通道还活着，直接当显示通道；UDP 不通是真实故障但
+                // 用户至少拿到一个可用 shell，banner 提示原因与固定端口解法）
+                TermLog.w("mosh") { "mosh UDP unconfirmed ${c.host.name} ${MOSH_UDP_CONFIRM_MS}ms——降级 SSH" }
                 c.moshSession?.close()
                 c.moshSession = null
-                c.session = null
-                try { s.close() } catch (_: Exception) { }
-                c.status = ConnStatus.ERROR
-                c.errorMessage = "mosh 连接失败：UDP ${c.host.moshUdpPort.takeIf { it in 1024..65535 } ?: "端口(60000-61000)"} 不可达" +
-                    "（已连上 mosh-server 但收不到首包——检查端口转发/防火墙；固定 UDP 端口可解）"
-                c.stopKeepAlive()
+                if (onDegraded != null) {
+                    onDegraded(s)
+                } else {
+                    finishConnected(s)
+                }
+                showDegradeNotice(strings().moshUdpDegraded)
+                TermLog.i("mosh") { "mosh degraded-to-ssh ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
             }
             // 3d. UDP 确认成功：mosh 连接成功——关闭 SSH（引导工具使命完成；
@@ -306,7 +321,7 @@ internal class SessionConnector(private val c: TerminalController) {
      * - SSH 连接（认证/TOFU 一次）→ 探测 herdr（候选路径；失败明确报错并释放）
      * - 探测成功 → Mosh 引导 `mosh-server new -- herdr`（mosh 会话直接跑 herdr TUI）
      *   - 引导失败（无 mosh-server）→ 降级 SSH + exec+pty 跑 herdr（无 shell 回显）
-     *   - UDP 首包超时 → 明确报错（真实故障，不静默降级）
+     *   - UDP 首包超时 → 同样降级 SSH + exec+pty 跑 herdr（banner 提示原因）
      *   - Mosh 成功 → 关闭 SSH（漫游）
      */
     private suspend fun doConnectHerdr() {
@@ -332,7 +347,7 @@ internal class SessionConnector(private val c: TerminalController) {
                 c.session = null
                 try { s.close() } catch (_: Exception) { }
                 c.status = ConnStatus.ERROR
-                c.errorMessage = "HERDR 模式需要远端安装 herdr（连接已通，但 herdr api 无响应）"
+                c.errorMessage = strings().herdrProbeFailed
                 c.stopKeepAlive()
                 return
             }
@@ -428,7 +443,17 @@ internal class SessionConnector(private val c: TerminalController) {
         c.frame++
     }
 
-    fun handleMoshExit(reason: String?) {
+    /** 降级 banner：提示降级原因，几秒后自动消失（常驻会压住终端顶部）。
+     *  === 只清这条提示；期间若被真实错误覆盖则不清。 */
+    private fun showDegradeNotice(message: String) {
+        c.errorMessage = message
+        c.scope.launch {
+            delay(MOSH_DEGRADE_NOTICE_MS)
+            if (c.errorMessage === message) c.errorMessage = null
+        }
+    }
+
+    fun handleMoshExit(reason: MoshExitReason) {
         TermLog.w("mosh") { "mosh exit ${c.host.name} reason=$reason status=${c.status}" }
         if (c.status == ConnStatus.CONNECTED) {
             c.moshSession = null
@@ -446,14 +471,21 @@ internal class SessionConnector(private val c: TerminalController) {
                 c.status = ConnStatus.CLOSED
                 // 会话异常/超时等原因必须浮现（此前被静默丢弃，
                 // 用户只能看到「已断开」且不知为何）
-                if (reason != null) c.errorMessage = reason
+                moshExitMessage(reason)?.let { c.errorMessage = it }
                 c.stopKeepAlive()
             }
         } else if (c.status == ConnStatus.CONNECTING) {
             c.status = ConnStatus.ERROR
-            c.errorMessage = reason ?: "mosh 连接失败：客户端已退出"
+            c.errorMessage = moshExitMessage(reason) ?: strings().moshClientExited
             c.stopKeepAlive()
         }
+    }
+
+    /** 退出原因 → 用户可见文案；NORMAL（正常关闭）返回 null（不显示错误）。 */
+    private fun moshExitMessage(reason: MoshExitReason): String? = when (reason) {
+        MoshExitReason.SESSION_ERROR -> strings().moshSessionError
+        MoshExitReason.CONNECT_TIMEOUT -> strings().moshConnectTimeout
+        MoshExitReason.NORMAL -> null
     }
 
     /** mosh 会话真正建立后的统一收尾（收到对端首包时回调）。 */
@@ -549,7 +581,11 @@ internal class SessionConnector(private val c: TerminalController) {
                 NotificationEvent.CONNECTION_LOST
             },
             "Termish",
-            "${c.host.name}：${reason ?: "连接已断开"}",
+            if (c.reconnectAttempts > 0) {
+                strings().notificationReconnectFailed(c.host.name, reason ?: strings().terminalFailed)
+            } else {
+                strings().notificationConnectionLost(c.host.name, reason ?: strings().terminalDisconnected)
+            },
             hostId = c.host.id,
         )
     }

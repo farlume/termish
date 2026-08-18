@@ -6,6 +6,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 
 import dev.termish.mosh.KmpMoshSession
+import dev.termish.mosh.MoshExitReason
 import dev.termish.term.TerminalBuffer
 
 /**
@@ -63,7 +64,7 @@ fun createKmpMoshSession(
     uiBuffer: TerminalBuffer,
     onTitle: (String) -> Unit,
     onClipboard: (String) -> Unit,
-    onExit: (String?) -> Unit,
+    onExit: (MoshExitReason) -> Unit,
     /** 状态已同步进 [uiBuffer]，请求 UI 重绘（TerminalBuffer 不是 Compose 状态，
      *  不通知的话新内容要等下一个偶发 frame 变更才上屏）。 */
     onFrame: () -> Unit,

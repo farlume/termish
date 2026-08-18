@@ -74,6 +74,8 @@ class TerminalController(
     internal val repository: HostRepository,
     /** 意外断线时自动重连（指数退避，最多 3 次）。 */
     internal val autoReconnect: Boolean = true,
+    /** 连接错误文案提供器（随语言切换取最新 AppStrings）。 */
+    private val strings: () -> AppStrings = { appStringsFor("en") },
     /** SSH 会话工厂（测试注入 fake；生产默认走平台引擎）。 */
     internal val sessionFactory: (SshConnection, SshCallbacks) -> SshSession = ::createSshSession,
 ) {
@@ -172,7 +174,7 @@ class TerminalController(
     /** 最近一次主动重连时刻（单调毫秒）：15 秒防抖，避免网络抖动引发连续重连。 */
     internal var lastNetworkReconnectAtMs = 0L
 
-    private val connector = SessionConnector(this)
+    private val connector = SessionConnector(this, strings)
 
     init {
         // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
