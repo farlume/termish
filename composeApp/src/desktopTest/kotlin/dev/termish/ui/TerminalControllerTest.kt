@@ -1,6 +1,7 @@
 package dev.termish.ui
 
 import com.russhwolf.settings.PropertiesSettings
+import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.ssh.CommandResult
@@ -8,6 +9,7 @@ import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SessionInfo
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
+import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import java.util.Properties
 import kotlin.test.AfterTest
@@ -53,11 +55,34 @@ class TerminalControllerTest {
     private fun host(startup: String = "") =
         Host(id = "h1", name = "dev", hostname = "example.com", username = "root", startupCommand = startup)
 
+    private fun herdrHost() =
+        host().copy(connectionMode = ConnectionMode.HERDR)
+
+    /** 最小合法 herdr 快照（HerdrSessionSnapshot 字段全有默认值）。 */
+    private val snapshotJson = """{"id":"x","result":{"snapshot":{}}}"""
+
+    private class FakeExec(
+        val onWrite: (ByteArray) -> Unit = {},
+    ) : SshExecChannel {
+        var closed = false
+
+        override fun read(): ByteArray? = if (closed) null else ByteArray(0)
+
+        override fun write(data: ByteArray) = onWrite(data)
+
+        override fun close() {
+            closed = true
+        }
+    }
+
     private class FakeSsh(
         var connectError: Throwable? = null,
+        var commandHandler: (String) -> String? = { null },
+        var execFactory: ((String) -> SshExecChannel?)? = null,
     ) : SshSession {
         lateinit var callbacks: SshCallbacks
         val sent = mutableListOf<ByteArray>()
+        val execCommands = mutableListOf<String>()
         var closed = false
         var resized = 0
 
@@ -81,9 +106,12 @@ class TerminalControllerTest {
         override fun connectAndRun(command: String, timeoutMs: Long): CommandResult =
             throw UnsupportedOperationException()
 
-        override fun runCommand(command: String, timeoutMs: Long): String? = null
+        override fun runCommand(command: String, timeoutMs: Long): String? = commandHandler(command)
 
-        override fun startExec(command: String, columns: Int, rows: Int): dev.termish.ssh.SshExecChannel? = null
+        override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? {
+            execCommands += command
+            return execFactory?.invoke(command)
+        }
 
         override fun close() {
             closed = true
@@ -104,6 +132,17 @@ class TerminalControllerTest {
             fake
         }
         return Triple(c, fake, r)
+    }
+
+    private fun herdrController(
+        fake: FakeSsh,
+        repo: HostRepository = repo(),
+    ): Pair<TerminalController, FakeSsh> {
+        val c = TerminalController(herdrHost(), "pw", null, repo, false) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        return c to fake
     }
 
     private fun awaitStatus(c: TerminalController, expected: ConnStatus) = runBlocking {
@@ -234,5 +273,84 @@ class TerminalControllerTest {
         scheduler.advanceUntilIdle()
 
         assertEquals(frameBefore, c.frame)
+    }
+
+    // ---------- HERDR 连接状态机 ----------
+
+    @Test
+    fun herdrProbeFailureSetsErrorNotDegrade() {
+        // 全部候选 runCommand 返回 null → 远端无 herdr：明确报错，不降级、不重连
+        val (c, _) = herdrController(FakeSsh())
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.ERROR)
+
+        assertTrue(c.errorMessage!!.contains("herdr"), "错误应说明需要 herdr，实际: ${c.errorMessage}")
+        c.destroy()
+    }
+
+    @Test
+    fun herdrBootstrapFailureDegradesToExecAndConnected() {
+        // snapshot 有效但 mosh 引导无 MOSH CONNECT → 降级 exec+pty；状态必须置
+        // CONNECTED（回归：此前状态停在 CONNECTING，banner 常驻「连接中…」）
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> "no mosh-server here"
+                }
+            },
+            execFactory = { FakeExec() },
+        )
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertEquals(listOf("herdr"), f.execCommands)
+        c.destroy()
+    }
+
+    @Test
+    fun herdrExecUnavailableFallsBackToShell() {
+        // startExec 不可用（iOS 现状）→ shell 命令路径，同样置 CONNECTED
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                if (cmd.contains("api snapshot")) snapshotJson else null
+            },
+            execFactory = { null },
+        )
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "应经 shell 发送 herdr 命令")
+        c.destroy()
+    }
+
+    @Test
+    fun herdrProbeUsesFullPathCandidates() {
+        // 裸 herdr 不在 PATH、全路径命中：探测记录候选顺序，命中路径贯穿 exec
+        val probed = mutableListOf<String>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                if (cmd.contains("api snapshot")) {
+                    probed += cmd
+                    if (cmd.startsWith("/usr/local/bin/herdr")) snapshotJson else null
+                } else {
+                    null
+                }
+            },
+            execFactory = { FakeExec() },
+        )
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        // 探测按候选顺序：herdr → \$HOME/.local/bin/herdr → /usr/local/bin/herdr（命中）
+        assertEquals(3, probed.size)
+        assertTrue(probed[0].startsWith("herdr "))
+        assertTrue(probed[2].startsWith("/usr/local/bin/herdr "))
+        // 命中路径贯穿降级 exec（非裸 herdr）
+        assertEquals(listOf("/usr/local/bin/herdr"), f.execCommands)
+        c.destroy()
     }
 }
