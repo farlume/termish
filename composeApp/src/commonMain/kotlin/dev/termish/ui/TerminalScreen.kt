@@ -285,6 +285,10 @@ private fun TerminalBody(
         val bannerText = when {
             controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
                 s.terminalReconnectingN(controller.reconnectCount)
+            // 首连进行中（HERDR 模式直接进终端页等画布尺寸后才建连——无此提示
+            // 用户看到的是黑屏几秒）：琥珀色「连接中…」
+            controller.status == ConnStatus.CONNECTING ->
+                s.terminalConnecting + "…"
             // mosh 链路失联（会话保持中，网络恢复自动续传）：对齐 mosh 的
             // "Last contact Ns ago" 提示；状态点同步变琥珀色「失联中」
             controller.linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS ->
