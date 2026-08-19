@@ -132,7 +132,7 @@ compose.desktop.application {
     nativeDistributions {
         targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
         packageName = "Termish"
-        packageVersion = "1.1.1"
+        packageVersion = "1.1.2"
         macOS {
             iconFile.set(project.file("src/desktopMain/resources/icon.icns"))
         }
@@ -213,8 +213,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 6
-        versionName = "1.1.1"
+        versionCode = 7
+        versionName = "1.1.2"
     }
     packaging {
         resources {

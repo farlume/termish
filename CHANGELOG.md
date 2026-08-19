@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-08-19
+
+### 修复
+
+- **Xcode Cloud Archive 签名配置**：仓库保留 `CODE_SIGNING_ALLOWED=YES`
+  与空 `DEVELOPMENT_TEAM`，Team ID 改由 Xcode Cloud 环境变量注入，
+  既满足云端归档签名，又避免把个人 Team ID 写进开源仓库
+
 ## [1.1.1] - 2026-08-19
 
 ### 修复
@@ -148,7 +156,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/ttermish/termish/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/ttermish/termish/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ttermish/termish/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ttermish/termish/compare/v1.0.0...v1.0.1
