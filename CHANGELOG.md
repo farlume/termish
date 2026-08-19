@@ -5,6 +5,16 @@
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-08-19
+
+### 变更
+
+- **开源仓库卫生清理**：去源码注释与 AI 测试用例中的个人基础设施
+  信息（部署机公网 IP、个人域名、内网 IP 占位化）；NOTICE 补全运行时
+  依赖声明（Kotlin/Compose、kotlinx-*、multiplatform-settings、
+  AndroidX、slf4j、MIT），新增 LICENSES/MIT.txt；回退误提交的个人
+  Xcode 签名配置，保持 pbxproj 干净（Team ID 由 Xcode Cloud 注入）
+
 ## [1.1.2] - 2026-08-19
 
 ### 修复
