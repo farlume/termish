@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-19
+
+### 修复
+
+- **Xcode Cloud 构建失败**（PhaseScriptExecution failed）：云构建镜像不带
+  Java 且 iosApp/native/ 为 git-ignored（OpenSSL/libssh2 缺失）——新增
+  ci_post_clone.sh 自动装 Temurin 17 + 交叉编译原生依赖，script phase
+  增加 JAVA_HOME 兑底解析；本地构建不受影响
+
 ## [1.1.0] - 2026-08-19
 
 ### 新增
@@ -139,7 +148,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/ttermish/termish/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ttermish/termish/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ttermish/termish/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ttermish/termish/compare/v0.2.0...v1.0.0
