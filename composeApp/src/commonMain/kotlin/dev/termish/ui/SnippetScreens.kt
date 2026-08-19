@@ -19,9 +19,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -72,6 +72,7 @@ import dev.termish.data.HostRepository
 import dev.termish.data.Snippet
 import dev.termish.data.TagGroup
 import dev.termish.data.newId
+import dev.termish.ui.theme.Spacing
 import dev.termish.util.monospaceFontFamily
 import kotlinx.datetime.Clock
 
@@ -562,7 +563,7 @@ fun SnippetInsertSheet(
     val s = LocalAppStrings.current
     var snippets by remember { mutableStateOf(repository.listSnippets()) }
     var tags by remember { mutableStateOf(repository.listTagGroups()) }
-    var query by remember { mutableStateOf("" ) }
+    var query by remember { mutableStateOf("") }
     var filterTagId by remember { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Snippet?>(null) }
     var pendingDelete by remember { mutableStateOf<Snippet?>(null) }
@@ -576,7 +577,16 @@ fun SnippetInsertSheet(
         .sortedByDescending { it.updatedAt }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                // 上限随屏幕比例（小屏不溢出、平板不侏儒）；内容少时 wrap 不占屏
+                .fillMaxHeight(0.72f)
+                // 全局 adjustNothing：键盘不缩窗，列表必须自己让位，
+                // 否则搜索结果下半截被 IME 盖住
+                .imePadding()
+                .padding(horizontal = Spacing.Lg),
+        ) {
             Text(
                 s.snippetInsertTitle,
                 style = MaterialTheme.typography.titleMedium,
@@ -643,7 +653,7 @@ fun SnippetInsertSheet(
                     )
                 }
             } else {
-                LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
+                LazyColumn(Modifier.fillMaxWidth().weight(1f)) {
                     items(filtered, key = { it.id }) { snippet ->
                         Column(
                             Modifier
@@ -652,25 +662,25 @@ fun SnippetInsertSheet(
                                     onClick = { onUse(snippet.content, false) },
                                     onLongClick = { menuFor = snippet },
                                 )
-                                .padding(horizontal = 4.dp, vertical = 8.dp),
+                                .padding(horizontal = Spacing.Xs, vertical = Spacing.Sm),
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    snippet.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Text(
-                                    snippet.content.replace("\n", " ").take(20),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = monospaceFontFamily(),
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                            // 名称小灰在上（助记符是辅信息）；内容等宽拿主宽度——扫读目标是命令本身
+                            Text(
+                                snippet.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                snippet.content.replace("\n", " ⏎ "),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = monospaceFontFamily(),
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = Spacing.Xs),
+                            )
                             val named = snippet.tagIds.mapNotNull { id -> tags.firstOrNull { it.id == id }?.name }
                             if (named.isNotEmpty()) {
                                 Row(
