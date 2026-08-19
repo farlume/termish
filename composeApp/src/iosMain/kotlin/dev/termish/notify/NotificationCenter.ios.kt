@@ -9,16 +9,14 @@ import platform.UserNotifications.UNAuthorizationOptionSound
 import platform.UserNotifications.UNMutableNotificationContent
 import platform.UserNotifications.UNNotificationRequest
 import platform.UserNotifications.UNUserNotificationCenter
-import platform.UserNotifications.UNUserNotificationCenterCurrentNotificationCenter
 
 private val center: UNUserNotificationCenter get() = UNUserNotificationCenter.currentNotificationCenter()
 
 /** iOS：本地通知（APNs 不需要——通知都来自 SSH 连接内事件）。 */
 actual fun showPlatformNotification(id: Int, title: String, body: String, hostId: String?) {
-    val content = UNMutableNotificationContent().apply {
-        this.title = title
-        this.body = body
-    }
+    val content = UNMutableNotificationContent()
+    content.setTitle(title)
+    content.setBody(body)
     val request = UNNotificationRequest.requestWithIdentifier(
         "termish-$id",
         content,
@@ -30,7 +28,7 @@ actual fun showPlatformNotification(id: Int, title: String, body: String, hostId
 /** 跳系统 App 设置页（iOS 通知设置在系统设置里）。 */
 actual fun openNotificationSettings() {
     val url = NSURL.URLWithString(UIApplicationOpenSettingsURLString)
-    url?.let { UIApplication.sharedApplication.openURL(it, null, null) }
+    url?.let { UIApplication.sharedApplication.openURL(it, emptyMap<Any?, Any?>(), null) }
 }
 
 /** 请求通知权限（首次打开通知开关时调用）。 */

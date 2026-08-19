@@ -55,6 +55,7 @@ import libssh2.libssh2_channel_write_ex
 import libssh2.libssh2_init
 import libssh2.libssh2_keepalive_config
 import libssh2.libssh2_keepalive_send
+import libssh2.libssh2_session_set_timeout
 import libssh2.libssh2_session_set_blocking
 import libssh2.libssh2_sftp_init
 import libssh2.LIBSSH2_SFTP
@@ -497,6 +498,14 @@ class SshSessionLibssh2(
     fun openSftp(): CPointer<LIBSSH2_SFTP>? {
         val (s, _) = connectAndAuthenticate()
         libssh2_session_set_blocking(s, 1)
+        // 阻塞模式 + keepalive_config：libssh2 自动发 keepalive（无需应用线程）
+        if (connection.keepAliveSeconds > 0) {
+            libssh2_keepalive_config(s, 1, connection.keepAliveSeconds.toUInt())
+        }
+        // 阻塞调用限时：断链/无响应 30s 返回错误 → 操作抛异常 → UI banner。
+        //（不设则无限挂死：iOS SFTP 断线后 list/download 永久阻塞，与终端
+        //  路径的 keepalive 检测相比，这是请求-响应式通道的兜底）
+        libssh2_session_set_timeout(s, 30_000L)
         return libssh2_sftp_init(s)
     }
 

@@ -1,5 +1,6 @@
 package dev.termish.notify
 
+import kotlin.concurrent.Volatile
 import dev.termish.data.AppSettings
 import dev.termish.util.TermLog
 

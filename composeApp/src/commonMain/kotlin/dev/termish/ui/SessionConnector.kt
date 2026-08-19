@@ -17,6 +17,7 @@ import dev.termish.ssh.parseMoshConnect
 import dev.termish.util.NetworkChangeKind
 import dev.termish.util.TermLog
 import dev.termish.util.TermTrace
+import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -395,15 +396,7 @@ internal class SessionConnector(
             TermLog.i("herdr") { "HERDR probe ok ${c.host.name} bin=$herdrBin" }
 
             // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
-            doConnectMosh(
-                existingSession = s,
-                bootstrapExtra = " -- ${shSingleQuote(herdrBin)}",
-                onDegraded = { ssh ->
-                    // 降级（无 mosh-server）：SSH + exec+pty 直接跑 herdr TUI（无回显）
-                    startHerdrExec(ssh, herdrBin)
-                },
-            )
-            c.herdrSuppressShellOutput = false
+            connectHerdrViaMosh(s, herdrBin)
             TermLog.i("herdr") { "HERDR connected ${c.host.name} in ${c.nowMs() - t0}ms" }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -435,12 +428,12 @@ internal class SessionConnector(
                 val log = StringBuilder()
                 // 非交互 exec 的 $HOME 可能空/错（install.sh 会 mkdir 到 /.local/bin 失败），
                 // 用 pwd 拿真实主目录（sshd 默认 chdir 到 home），显式传给安装脚本
-                val home = withContext(Dispatchers.IO) {
+                val home = withContext(ioDispatcher()) {
                     s.runCommand("pwd")?.trim()?.takeIf { it.startsWith("/") }
                 }
                 // 单引号转义主目录（含空格/特殊字符时不破坏 shell 语义）
                 val installCmd = if (home != null) "HOME=${shSingleQuote(home)} $HERDR_INSTALL_CMD" else HERDR_INSTALL_CMD
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher()) {
                     // 流式 exec（JVM）：逐块读脚本输出进日志；iOS 无 startExec 回退 runCommand
                     val exec = s.startExec(installCmd, c.lastCols, c.lastRows)
                     if (exec != null) {
@@ -459,7 +452,7 @@ internal class SessionConnector(
                     }
                 }
                 // 探测：install.sh 输出解析的实际路径 → $home/.local/bin → HerdrProbe 候选
-                val probed = withContext(Dispatchers.IO) {
+                val probed = withContext(ioDispatcher()) {
                     val candidates = buildList {
                         parseInstallPath(log.toString())?.let(::add)
                         home?.let { add("$it/.local/bin/herdr") }
@@ -556,7 +549,7 @@ internal class SessionConnector(
                 }
                 TermLog.i("mosh") { "mosh install ${c.host.name}: $installCmd${if (sudoNeedsPassword) "（sudo -S）" else ""}" }
                 val log = StringBuilder()
-                withContext(Dispatchers.IO) {
+                withContext(ioDispatcher()) {
                     // 流式 exec（JVM）：逐块读安装输出进日志；iOS 无 startExec 回退 runCommand
                     val exec = s.startExec(fullCmd, c.lastCols, c.lastRows)
                     if (exec != null) {
@@ -607,13 +600,7 @@ internal class SessionConnector(
                 // 降级路径 = exec+pty 跑 herdr），与 doConnectHerdr 的引导一致
                 val herdrPath = c.herdrBin
                 if (c.host.connectionMode == ConnectionMode.HERDR && herdrPath != null) {
-                    c.herdrSuppressShellOutput = true
-                    doConnectMosh(
-                        existingSession = s,
-                        bootstrapExtra = " -- ${shSingleQuote(herdrPath)}",
-                        onDegraded = { ssh -> startHerdrExec(ssh, herdrPath) },
-                    )
-                    c.herdrSuppressShellOutput = false
+                    connectHerdrViaMosh(s, herdrPath)
                 } else {
                     doConnectMosh(existingSession = s)
                 }
@@ -659,6 +646,21 @@ internal class SessionConnector(
         "void" -> "xbps-install -y mosh"
         "macos", "darwin" -> "brew install mosh"
         else -> null
+    }
+
+    /**
+     * HERDR 的 Mosh 优先引导（doConnectHerdr 探测成功后与 mosh 安装完成后共用）：
+     * mosh-server 直接跑 herdr；无 mosh-server 时降级 exec+pty 跑 herdr（无回显）。
+     * shell 输出在决策期间抑制（不渲染提示符/命令回显割裂）。
+     */
+    private suspend fun connectHerdrViaMosh(s: SshSession, herdrBin: String) {
+        c.herdrSuppressShellOutput = true
+        doConnectMosh(
+            existingSession = s,
+            bootstrapExtra = " -- ${shSingleQuote(herdrBin)}",
+            onDegraded = { ssh -> startHerdrExec(ssh, herdrBin) },
+        )
+        c.herdrSuppressShellOutput = false
     }
 
     /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显）。

@@ -287,7 +287,7 @@ private class SftpSessionLibssh2(
             val attrs = alloc<LIBSSH2_SFTP_ATTRIBUTES>()
             var guard = 0
             while (guard++ < 200) {
-                val rc = libssh2_sftp_fstat_ex(h, attrs.ptr)
+                val rc = libssh2_sftp_fstat_ex(h, attrs.ptr, 0)
                 if (rc == 0) return attrs.filesize.toLong()
                 if (rc != LIBSSH2_ERROR_EAGAIN) break
                 usleep(30_000u)

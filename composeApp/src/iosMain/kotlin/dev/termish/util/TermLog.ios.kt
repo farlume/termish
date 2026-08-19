@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.experimental.ExperimentalNativeApi::class, kotlinx.cinterop.ExperimentalForeignApi::class)
+
 package dev.termish.util
 
 import platform.Foundation.NSDocumentDirectory
@@ -12,7 +14,8 @@ import platform.UIKit.UIApplication
 actual val termLogEnabled: Boolean = kotlin.native.Platform.isDebugBinary
 
 actual fun platformLog(level: Char, tag: String, msg: String) {
-    NSLog("[%c/%s] %@", level, tag, msg)
+    // 变参不支持 Char（不对应 C 类型），转 String
+    NSLog("[%s/%s] %@", level.toString(), tag, msg)
 }
 
 /** 日志目录：Documents/logs（iTunes 文件共享可见，方便导出）。 */

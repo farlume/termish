@@ -1,5 +1,7 @@
 package dev.termish.util
 
+import kotlin.concurrent.Volatile
+
 /**
  * 统一日志层。全链路打点（连接/重连/网络/通知/生命周期），
  * 调试定位问题不再需要临时 println。
@@ -42,15 +44,15 @@ object TermLog {
     private fun writeFile(level: Char, tag: String, msg: String) {
         try {
             val dir = logFileDirectory() ?: return
-            val file = java.io.File(dir, "termish.log")
+            val file = TermLogFile("$dir/termish.log")
             if (file.length() > 1024 * 1024) {
-                java.io.File(dir, "termish.log.old").let {
+                TermLogFile("$dir/termish.log.old").let {
                     if (it.exists()) it.delete()
                 }
-                file.renameTo(java.io.File(dir, "termish.log.old"))
+                file.renameTo("$dir/termish.log.old")
             }
             file.appendText("[${level}/${tag}] $msg\n")
-            _logFile = file.absolutePath
+            _logFile = file.absolutePath()
         } catch (_: Throwable) {
         }
     }
