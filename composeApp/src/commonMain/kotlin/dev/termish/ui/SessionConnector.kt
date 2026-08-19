@@ -417,7 +417,8 @@ internal class SessionConnector(
                 val home = withContext(Dispatchers.IO) {
                     s.runCommand("pwd")?.trim()?.takeIf { it.startsWith("/") }
                 }
-                val installCmd = if (home != null) "HOME=\"$home\" $HERDR_INSTALL_CMD" else HERDR_INSTALL_CMD
+                // 单引号转义主目录（含空格/特殊字符时不破坏 shell 语义）
+                val installCmd = if (home != null) "HOME=${shSingleQuote(home)} $HERDR_INSTALL_CMD" else HERDR_INSTALL_CMD
                 withContext(Dispatchers.IO) {
                     // 流式 exec（JVM）：逐块读脚本输出进日志；iOS 无 startExec 回退 runCommand
                     val exec = s.startExec(installCmd, c.lastCols, c.lastRows)
@@ -443,7 +444,7 @@ internal class SessionConnector(
                         home?.let { add("$it/.local/bin/herdr") }
                     }.distinct()
                     val explicit = candidates.firstNotNullOfOrNull { path ->
-                        val raw = s.runCommand("$path api snapshot", 5_000)
+                        val raw = s.runCommand("${shSingleQuote(path)} api snapshot", 5_000)
                         raw?.let { snap ->
                             parseHerdrSnapshot(snap)?.let { HerdrProbe.Result(path, it) }
                         }

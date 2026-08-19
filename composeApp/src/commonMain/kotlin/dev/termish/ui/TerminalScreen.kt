@@ -339,29 +339,29 @@ private fun TerminalBody(
                 }
                 else -> {
                     TerminalView(
-                controller = controller,
-                theme = theme,
-                fontSizeSp = settings.terminalFontSize.toFloat(),
-                targetCols = settings.terminalTargetCols,
-                coveredBottomPx = coveredBottomPx,
-                keyboardVisible = imeVisible,
-                onReady = { cols, rows ->
-                    // 等工具栏高度量到后再建连：画布尺寸已扣除工具栏区域，
-                    // 避免先用"含被盖住区域"的错误行数起 PTY
-                    if (!connectSent && toolbarHeightPx > 0f) {
-                        connectSent = true
-                        controller.connect(cols, rows)
-                    }
-                },
-                onCopy = { text ->
-                    clipboard.setText(AnnotatedString(text))
-                    scope.launch { snackbar.showSnackbar(s.terminalCopied) }
-                },
-                modifier = Modifier.fillMaxSize()
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                    .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
-            )
-            }
+                        controller = controller,
+                        theme = theme,
+                        fontSizeSp = settings.terminalFontSize.toFloat(),
+                        targetCols = settings.terminalTargetCols,
+                        coveredBottomPx = coveredBottomPx,
+                        keyboardVisible = imeVisible,
+                        onReady = { cols, rows ->
+                            // 等工具栏高度量到后再建连：画布尺寸已扣除工具栏区域，
+                            // 避免先用"含被盖住区域"的错误行数起 PTY
+                            if (!connectSent && toolbarHeightPx > 0f) {
+                                connectSent = true
+                                controller.connect(cols, rows)
+                            }
+                        },
+                        onCopy = { text ->
+                            clipboard.setText(AnnotatedString(text))
+                            scope.launch { snackbar.showSnackbar(s.terminalCopied) }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
+                    )
+                }
             }
 
             // 顶部浮层 banner：盖在画布上（不占布局空间、不把画布顶下来）
@@ -956,7 +956,7 @@ private fun ErrorBanner(
         }
         if (onDismiss != null) {
             IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = s.navBack, tint = color, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Close, contentDescription = s.settingsClose, tint = color, modifier = Modifier.size(16.dp))
             }
         }
     }
