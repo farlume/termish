@@ -174,7 +174,8 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 - **设置页「关于」区**——版本号、官网、联系邮箱与「支持作者」支付宝/微信双收款码（支付宝一键唤起，Termius 式底部布局）
 - 密钥存平台安全存储：**Android Keystore（AES-GCM）/ iOS Keychain**
 - 设计系统：zinc 中性色 + emerald 点缀，JetBrains Mono 标题，
-  深色与浅色主题；终端配色（Default / Solarized / Dracula / Light）
+  深色与浅色主题；内置 12 套终端配色（Default、Solarized、Dracula、Nord、
+  Tokyo Night、Gruvbox、Catppuccin Mocha、Monokai 等）
 - 字号按 sp 或**目标列数**（如 120 列——桌面级密度）
 - 设置页细粒度可调：触觉反馈、光标闪烁、OSC 52 剪贴板开关、keepalive 间隔、
   自动重连、首次连接 TOFU 确认

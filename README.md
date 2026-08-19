@@ -192,7 +192,8 @@ never appear. Termish's input pipeline is designed around composition from day o
 - **About section in Settings** — version, website, contact email, "Support the developer" with Alipay + WeChat QR codes (Alipay deep-links to the app; Termius-style bottom placement)
 - Secrets in platform stores: **Android Keystore (AES-GCM) / iOS Keychain**
 - Design system: zinc neutrals + emerald accent, JetBrains Mono titles,
-  dark & light themes; terminal palettes (Default / Solarized / Dracula / Light)
+  dark & light themes; 12 built-in terminal palettes (Default, Solarized, Dracula,
+  Nord, Tokyo Night, Gruvbox, Catppuccin Mocha, Monokai, …)
 - Font size by sp or **target columns** (e.g. 120 cols — desktop-like density)
 - Fine-grained tuning in Settings: haptic feedback, cursor blink, OSC 52
   clipboard toggle, keepalive interval, auto-reconnect, TOFU prompt on first use
