@@ -94,6 +94,22 @@ jobs:
           path: composeApp/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
+      - name: Rename release assets with build stamp
+        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v')
+        # 测试包不改 versionName/versionCode（同号覆盖安装允许，正式发版不受
+        # run_number 膨胀影响）；文件名带 run 号 + 短 SHA，下载后可溯源是
+        # 哪次构建。tag 发版不改名：release job 的重命名步骤依赖原始文件名
+        run: |
+          cd composeApp/build/outputs
+          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
+          STAMP="${VN}-rc${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
+          for f in apk/release/*.apk bundle/release/*.aab; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" | sed 's/^composeApp-//')
+            mv "$f" "$(dirname "$f")/Termish-$STAMP-$name"
+          done
+          ls apk/release bundle/release
+
       - name: Upload release APK and AAB
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
