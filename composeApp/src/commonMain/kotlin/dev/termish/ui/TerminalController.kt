@@ -147,6 +147,15 @@ class TerminalController(
     var moshNeedsSudoPassword by mutableStateOf(false)
         internal set
 
+    /** 探测到的 herdr 可执行路径（HERDR 模式：安装 mosh / 降级后继续连接用）。 */
+    internal var herdrBin: String? = null
+
+    /** 本会话条目已从 mosh 降级到 SSH（UDP 不通，或用户在安装卡片主动选择）：
+     *  后续重连直接走 SSH，不再重试 mosh 引导——UDP 被网络环境阻断不会因重连
+     *  自愈，重试只会每次多耗一次引导 + 5s UDP 确认等待；新开会话才重新尝试 mosh。
+     *  有意不随 close() 重置：降级决策跨重连生效。 */
+    internal var moshDegradedToSsh = false
+
     /** 本会话创建时的凭据签名：主机编辑后凭据变化即可据此判定旧会话过期。 */
     val credentialKey: String = credentialSignature(host, password, privateKeyPem)
 
@@ -431,7 +440,8 @@ class TerminalController(
         stopKeepAlive()
         moshSession?.close()
         moshSession = null
-        // 引导安装状态不跨会话残留（重连后重新探测决定）
+        // 引导安装状态不跨会话残留（重连后重新探测决定）；
+        // moshDegradedToSsh / herdrBin 有意保留：降级决策跨重连生效
         moshNeedsInstall = false
         moshInstalling = false
         moshInstallLog = ""
