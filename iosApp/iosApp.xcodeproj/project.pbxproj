@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A00000000000000000000009 /* iosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000007 /* iosApp.swift */; };
 		A00000000000000000000014 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000015 /* Assets.xcassets */; };
+		A0000000000000000000001A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000019 /* PrivacyInfo.xcprivacy */; };
+		A0000000000000000000001E /* InfoPlist.strings in Resources */ = {isa = PBXVariantGroup; fileRef = A0000000000000000000001B /* InfoPlist.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -16,6 +18,9 @@
 		A00000000000000000000007 /* iosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iosApp.swift; sourceTree = "<group>"; };
 		A00000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A00000000000000000000015 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A00000000000000000000019 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A0000000000000000000001C /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		A0000000000000000000001D /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = zh-Hans.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,11 +64,25 @@
 				A00000000000000000000007 /* iosApp.swift */,
 				A00000000000000000000008 /* Info.plist */,
 				A00000000000000000000015 /* Assets.xcassets */,
+				A00000000000000000000019 /* PrivacyInfo.xcprivacy */,
+				A0000000000000000000001B /* InfoPlist.strings */,
 			);
 			path = iosApp;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
+
+/* Begin PBXVariantGroup section */
+		A0000000000000000000001B /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A0000000000000000000001C /* en */,
+				A0000000000000000000001D /* zh-Hans */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
 
 /* Begin PBXNativeTarget section */
 		A00000000000000000000005 /* iosApp */ = {
@@ -106,6 +125,7 @@
 			knownRegions = (
 				en,
 				Base,
+				zh-Hans,
 			);
 			mainGroup = A00000000000000000000002;
 			productRefGroup = A00000000000000000000003 /* Products */;
@@ -144,6 +164,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A00000000000000000000014 /* Assets.xcassets in Resources */,
+				A0000000000000000000001A /* PrivacyInfo.xcprivacy in Resources */,
+				A0000000000000000000001E /* InfoPlist.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -251,7 +273,7 @@
 				PRODUCT_NAME = Termish;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Debug;
 		};
@@ -288,7 +310,7 @@
 				PRODUCT_NAME = Termish;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
 		};

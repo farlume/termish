@@ -1,0 +1,2 @@
+/* 中文：本地网络权限文案（系统按语言自动选取） */
+"NSLocalNetworkUsageDescription" = "Termish 需要通过局域网连接你配置的 SSH/Mosh 服务器（NAS、Mac 等），用于远程终端与文件传输。";

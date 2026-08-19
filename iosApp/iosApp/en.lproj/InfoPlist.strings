@@ -1,0 +1,2 @@
+/* English: local network permission copy (system picks by language) */
+"NSLocalNetworkUsageDescription" = "Termish connects over the local network to the SSH/Mosh servers you configure (NAS, Mac, etc.) for remote terminal and file transfer.";
