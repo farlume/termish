@@ -104,12 +104,12 @@ where it matters — the terminal experience.
 
 ```mermaid
 flowchart TB
-    UI[Compose Multiplatform UI<br/>Android · iOS · Desktop] --> TERM[纯 Kotlin 终端模拟器<br/>VT100/xterm · CJK · OSC]
-    TERM --> SSH[SSH 传输<br/>sshj JVM · libssh2 iOS]
-    TERM --> MOSH[dev.termish.mosh<br/>纯 Kotlin SSP · AES-128-OCB]
-    SSH --> SRV[(你的服务器)]
-    MOSH -->|UDP 漫游 60000-61000| SRV
-    SEC[系统保险库<br/>Keystore · Keychain] -.-> UI
+    UI[Compose Multiplatform UI<br/>Android · iOS · Desktop] --> TERM[Pure-Kotlin terminal emulator<br/>VT100/xterm · CJK · OSC]
+    TERM --> SSH[SSH transport<br/>sshj JVM · libssh2 iOS]
+    TERM --> MOSH[dev.termish.mosh<br/>pure-Kotlin SSP · AES-128-OCB]
+    SSH --> SRV[(your server)]
+    MOSH -->|UDP roaming 60000-61000| SRV
+    SEC[system vault<br/>Keystore · Keychain] -.-> UI
 ```
 
 ### CJK input, done right
