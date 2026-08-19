@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-08-19
+
+### 修复
+
+- **Xcode Cloud 归档双重故障**：① Xcode 26 下 ad-hoc 归档（Xcode Cloud
+  固定注入 `CODE_SIGN_IDENTITY=-`）与 Automatic 签名风格互斥，改为
+  无签名归档 + 导出阶段重签；② 设备构建链接到模拟器切片的
+  libssh2（`LIBRARY_SEARCH_PATHS` 中 sim 先于 device），改按 SDK
+  条件分流；③ 删除无引用 entitlements（keychain 默认即隐式组，
+  行为不变）；个人 Team ID 不进仓库（本地真机首次需重选团队）
+
 ## [1.1.3] - 2026-08-19
 
 ### 变更
