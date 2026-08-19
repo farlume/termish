@@ -183,7 +183,7 @@ update_changelog() {
     rm -f "$tmp"
     return 0
   fi
-  echo "  [$([ "$DRY_RUN" = 1 ] && echo 预览 || echo 已改)] CHANGELOG [$VERSION] - $TODAY（[Unreleased] 落盘 + 链接块重建）"
+  echo "  [$([ "$DRY_RUN" = 1 ] && echo 预览 || echo 已改)] CHANGELOG [$VERSION] - ${TODAY}（[Unreleased] 落盘 + 链接块重建）"
   if [ "$DRY_RUN" = 1 ]; then
     diff -u "$CHANGELOG" "$tmp" | tail -n +3 | sed 's/^/    /' || true
     rm -f "$tmp"
