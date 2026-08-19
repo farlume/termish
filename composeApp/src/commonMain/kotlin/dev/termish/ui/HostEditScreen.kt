@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,6 +29,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -70,6 +72,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -138,8 +141,10 @@ fun HostEditScreen(
             )
         },
     ) { padding ->
+        // adjustNothing 下键盘不缩放窗口：消费 ime inset 把整个表单顶起，
+        // 否则底部字段（mosh 端口/启动命令）被键盘盖住（与终端页同一套机制）。
         Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(s.editName) }, singleLine = true)
@@ -273,6 +278,10 @@ fun HostEditScreen(
         }
     }
 
+    // 覆盖层打开时拦截系统返回：先关片段页回主机编辑表单，
+    // 而不是穿透到 AppRoot 直接跳首页（表单会被连带丢弃）
+    PlatformBackHandler(enabled = showSnippets) { showSnippets = false }
+
     // 命令片段覆盖层：入口点击进入（全局库管理/创建，返回继续编辑主机）
     AnimatedVisibility(
         visible = showSnippets,
@@ -305,9 +314,11 @@ private fun TagInputField(
     val input = state.text
     val focusRequester = remember { FocusRequester() }
 
+    // 读取 live state（软键盘 onDone 回调时机晚于最后输入，捕获 val 可能拿到旧值）
     fun commit() {
+        val current = state.text
         // 支持一次输入/粘贴多个（逗号分隔）；去重（忽略大小写）
-        val parts = input.split(',', '\n').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
+        val parts = current.split(',', '\n').map { it.trim().removePrefix("#") }.filter { it.isNotEmpty() }
         val merged = tags.toMutableList()
         for (p in parts) {
             if (merged.none { it.equals(p, ignoreCase = true) }) merged.add(p)
@@ -361,6 +372,10 @@ private fun TagInputField(
                 // 单行：光标不换行、placeholder 不折行；宽度自适应内容
                 //（固定 120dp 时中文 placeholder 会折行成两行，撑高输入框）
                 singleLine = true,
+                // 软键盘回车走 IME action（单行框不产生 key event），
+                // onPreviewKeyEvent 只兜硬件键盘/桌面端
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { commit() }),
                 modifier = Modifier
                     .widthIn(min = 100.dp)
                     .align(Alignment.CenterVertically)
@@ -368,7 +383,7 @@ private fun TagInputField(
                     .onPreviewKeyEvent { ev ->
                         if (ev.type == KeyEventType.KeyDown) {
                             when (ev.key) {
-                                Key.Enter -> {
+                                Key.Enter, Key.NumPadEnter -> {
                                     commit()
                                     true
                                 }

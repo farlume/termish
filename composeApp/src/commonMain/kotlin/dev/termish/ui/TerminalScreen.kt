@@ -233,6 +233,8 @@ private fun TerminalBody(
     var committedText by remember { mutableStateOf("") }
     // 命令片段插入面板
     var snippetOpen by remember { mutableStateOf(false) }
+    // 面板打开时拦截系统返回：先关面板，不直接退回首页
+    PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
     val inputFocusRequester = remember { FocusRequester() }

@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -206,6 +207,18 @@ fun SnippetManageScreen(
         }
     }
 
+    // 覆盖层系统返回：先关最上层（标签页 > 编辑页），不穿透到 AppRoot 直接退页
+    //（Compose 返回链 LIFO：后注册的 enabled handler 先触发，此处两级均晚于 AppRoot）
+    PlatformBackHandler(enabled = showTagPage) {
+        showTagPage = false
+        tags = repository.listTagGroups()
+    }
+    PlatformBackHandler(enabled = showEditor && !showTagPage) {
+        showEditor = false
+        snippets = repository.listSnippets()
+        tags = repository.listTagGroups()
+    }
+
     // 编辑页（新建/编辑共用）：二级覆盖层
     AnimatedVisibility(
         visible = showEditor,
@@ -347,7 +360,7 @@ private fun SnippetEditPage(
                 Text(s.editSave, fontWeight = FontWeight.SemiBold)
             }
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
@@ -452,7 +465,7 @@ fun TagManagePage(
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             Text(
                 s.tagsHint,
                 style = MaterialTheme.typography.bodySmall,
