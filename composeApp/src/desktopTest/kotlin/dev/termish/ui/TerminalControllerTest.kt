@@ -328,13 +328,14 @@ class TerminalControllerTest {
         assertTrue(c.herdrNeedsInstall)
 
         c.installHerdr()
-        // 安装成功后继续连接：降级 exec 跑 herdr（execCommands 末尾为 "herdr"）
-        runBlocking { withTimeout(5_000) { while (f.execCommands.none { it == "herdr" }) delay(10) } }
+        // 安装成功后继续连接：降级 exec 跑 herdr（execCommands 末尾为转义后的 'herdr'）
+        val quotedHerdr = shSingleQuote("herdr")
+        runBlocking { withTimeout(5_000) { while (f.execCommands.none { it == quotedHerdr }) delay(10) } }
 
         assertTrue(!c.herdrNeedsInstall, "安装成功应退出待安装状态")
         assertTrue(!c.herdrInstalling)
         assertTrue(f.execCommands.any { it.contains("install.sh") }, "应执行安装脚本")
-        assertEquals("herdr", f.execCommands.last())
+        assertEquals(quotedHerdr, f.execCommands.last())
         c.destroy()
     }
 
@@ -377,7 +378,7 @@ class TerminalControllerTest {
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
 
-        assertEquals(listOf("herdr"), f.execCommands)
+        assertEquals(listOf(shSingleQuote("herdr")), f.execCommands)
         c.destroy()
     }
 
@@ -417,12 +418,13 @@ class TerminalControllerTest {
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
 
-        // 探测按候选顺序：herdr → \$HOME/.local/bin/herdr → /usr/local/bin/herdr（命中）
+        // 探测按候选顺序（HerdrProbe 固定候选为裸命令）：herdr →
+        // \$HOME/.local/bin/herdr → /usr/local/bin/herdr（命中）；降级 exec 为转义后路径
         assertEquals(3, probed.size)
         assertTrue(probed[0].startsWith("herdr "))
         assertTrue(probed[2].startsWith("/usr/local/bin/herdr "))
-        // 命中路径贯穿降级 exec（非裸 herdr）
-        assertEquals(listOf("/usr/local/bin/herdr"), f.execCommands)
+        // 命中路径贯穿降级 exec（非裸 herdr，单引号转义）
+        assertEquals(listOf(shSingleQuote("/usr/local/bin/herdr")), f.execCommands)
         c.destroy()
     }
 

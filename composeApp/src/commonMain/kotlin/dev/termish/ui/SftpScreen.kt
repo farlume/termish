@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import dev.termish.data.Host
 import dev.termish.ssh.SftpEntry
 import dev.termish.ssh.SftpSession
+import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
 import dev.termish.notify.showDownloadDoneNotification
@@ -427,11 +428,7 @@ fun SftpContent(
                 else -> null
             }
             if (bannerText != null) {
-                val bannerColor = if (state.reconnecting) {
-                    androidx.compose.ui.graphics.Color(0xFFFFA726)
-                } else {
-                    androidx.compose.ui.graphics.Color(0xFFEF5350)
-                }
+                val bannerColor = if (state.reconnecting) StatusColors.Warning else StatusColors.Error
                 Row(
                     Modifier
                         .fillMaxWidth()

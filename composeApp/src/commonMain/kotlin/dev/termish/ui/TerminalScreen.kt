@@ -96,6 +96,7 @@ import dev.termish.data.HostRepository
 import dev.termish.ssh.SftpSession
 import dev.termish.ssh.AuthPrompt
 import dev.termish.term.argbToRgb
+import dev.termish.ui.theme.StatusColors
 import dev.termish.ui.theme.TerminalTheme
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.hapticTick
@@ -316,8 +317,11 @@ private fun TerminalBody(
         }
         // 状态标志：浮层 banner 用（关闭/重连按钮的显隐）
         val bannerIsError = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
-        // 只有真实错误（errorMessage）可关闭；状态提示（连接中/失联）不提供关闭
-        val bannerDismissable = controller.errorMessage != null
+        // ✕ 仅当 banner 实际显示 errorMessage 文案时才出现：连接中/失联文案
+        // 优先级更高，此时清 errorMessage 不改变文案、徒增困惑
+        val bannerDismissable = controller.errorMessage != null &&
+            controller.status != ConnStatus.CONNECTING &&
+            controller.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS
         val bannerReconnectable = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
 
         // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
@@ -932,7 +936,7 @@ private fun ErrorBanner(
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
-    val color = if (isError) Color(0xFFEF5350) else Color(0xFFFFA726)
+    val color = if (isError) StatusColors.Error else StatusColors.Warning
     Row(
         modifier
             .fillMaxWidth()

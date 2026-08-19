@@ -44,6 +44,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.termish.ui.theme.StatusColors
 import kotlinx.coroutines.delay
 
 /** 连接页：活跃/历史会话列表（主机页同款卡片 + 搜索），点击重入终端，右侧断开。 */
@@ -190,7 +191,7 @@ fun ConnectionsScreen(
                                                 if (item is HostSessionItem.Terminal) {
                                                     statusColor(item.controller.status, item.controller.linkLostSeconds)
                                                 } else {
-                                                    Color(0xFF4CAF50)
+                                                    StatusColors.Connected
                                                 },
                                             ),
                                     )
@@ -216,9 +217,9 @@ fun ConnectionsScreen(
 
 internal fun statusColor(status: ConnStatus, linkLostSeconds: Int = 0): Color = when {
     // 链路失联（会话保持中）：琥珀色，与终端页状态点/banner 同源
-    status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS -> Color(0xFFFFA726)
-    status == ConnStatus.CONNECTED -> Color(0xFF4CAF50)
-    status == ConnStatus.CONNECTING || status == ConnStatus.AUTH -> Color(0xFFFFA726)
-    status == ConnStatus.ERROR -> Color(0xFFEF5350)
-    else -> Color(0xFF9E9E9E) // CLOSED / IDLE
+    status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS -> StatusColors.Warning
+    status == ConnStatus.CONNECTED -> StatusColors.Connected
+    status == ConnStatus.CONNECTING || status == ConnStatus.AUTH -> StatusColors.Warning
+    status == ConnStatus.ERROR -> StatusColors.Error
+    else -> StatusColors.Neutral // CLOSED / IDLE
 }

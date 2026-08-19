@@ -376,7 +376,7 @@ internal class SessionConnector(
             // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
             doConnectMosh(
                 existingSession = s,
-                bootstrapExtra = " -- $herdrBin",
+                bootstrapExtra = " -- ${shSingleQuote(herdrBin)}",
                 onDegraded = { ssh ->
                     // 降级（无 mosh-server）：SSH + exec+pty 直接跑 herdr TUI（无回显）
                     startHerdrExec(ssh, herdrBin)
@@ -463,7 +463,7 @@ internal class SessionConnector(
                 c.herdrSuppressShellOutput = true
                 doConnectMosh(
                     existingSession = s,
-                    bootstrapExtra = " -- ${probed.bin}",
+                    bootstrapExtra = " -- ${shSingleQuote(probed.bin)}",
                     onDegraded = { ssh -> startHerdrExec(ssh, probed.bin) },
                 )
                 c.herdrSuppressShellOutput = false
@@ -617,7 +617,8 @@ internal class SessionConnector(
     /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显），
      *  EOF = 工作台关闭（正常结束，关闭整个会话）。 */
     private suspend fun startHerdrExec(s: SshSession, herdrBin: String) {
-        val exec = s.startExec(herdrBin, c.lastCols, c.lastRows)
+        // bin 路径转义后拼远端 shell（探测来源多样，统一在此处转义）
+        val exec = s.startExec(shSingleQuote(herdrBin), c.lastCols, c.lastRows)
         if (exec != null) {
             c.herdrExec = exec
             // 状态收尾：CONNECTED + 保活 + 免疫期（此前漏掉——会话实际可用

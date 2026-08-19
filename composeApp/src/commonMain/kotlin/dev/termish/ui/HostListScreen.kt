@@ -80,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.ssh.SftpSession
+import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.host_centos
 import dev.termish.generated.resources.host_linux
@@ -457,13 +458,13 @@ private fun HostCard(
     val statsText = if (sessionStats) {
         buildAnnotatedString {
             if (connectedCount > 0) {
-                withStyle(SpanStyle(color = Color(0xFF34C759))) {
+                withStyle(SpanStyle(color = StatusColors.Connected)) {
                     append("$connectedCount ${s.hostsConnected}")
                 }
             }
             if (connectingCount > 0) {
                 if (connectedCount > 0) append(", ")
-                withStyle(SpanStyle(color = Color(0xFFFFA726))) {
+                withStyle(SpanStyle(color = StatusColors.Warning)) {
                     append("$connectingCount ${s.connStatusConnecting}")
                 }
             }
@@ -636,11 +637,11 @@ private fun SessionCountMenu(
                 }
                 val statusColor = when (item) {
                     is HostSessionItem.Terminal -> when (item.controller.status) {
-                        ConnStatus.CONNECTED -> Color(0xFF34C759)
-                        ConnStatus.CONNECTING, ConnStatus.AUTH -> Color(0xFFFFA726)
-                        else -> Color(0xFF9E9E9E)
+                        ConnStatus.CONNECTED -> StatusColors.Connected
+                        ConnStatus.CONNECTING, ConnStatus.AUTH -> StatusColors.Warning
+                        else -> StatusColors.Neutral
                     }
-                    is HostSessionItem.Sftp -> Color(0xFF34C759)
+                    is HostSessionItem.Sftp -> StatusColors.Connected
                 }
                 when (item) {
                     is HostSessionItem.Terminal -> DropdownMenuItem(
