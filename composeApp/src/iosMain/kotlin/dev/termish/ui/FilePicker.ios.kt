@@ -10,7 +10,6 @@ import kotlinx.cinterop.usePinned
 import platform.Foundation.NSFileCoordinator
 import platform.Foundation.NSFileCoordinatorReadingForUploading
 import platform.Foundation.NSFileManager
-import platform.Foundation.NSObject
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.UniformTypeIdentifiers.UTTypeData
@@ -21,6 +20,7 @@ import platform.UIKit.UIViewController
 import platform.UIKit.UIWindow
 import platform.UIKit.UIWindowScene
 import platform.UIKit.UISceneActivationStateForegroundActive
+import platform.darwin.NSObject
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
 import platform.posix.O_RDONLY
@@ -57,35 +57,41 @@ actual fun rememberFilePicker(
             val url = didPickDocumentsAtURLs.filterIsInstance<NSURL>().firstOrNull() ?: return
             val name = url.lastPathComponent ?: "file"
             val coordinator = NSFileCoordinator()
-            // 协调读取（Files/iCloud/三方 App 的安全作用域 URL 必须经协调访问；
-            // reading-for-uploading 语义下被占用中的文件也可读）。
-            coordinator.coordinateReadingItemAtURL(url, NSFileCoordinatorReadingForUploading) { error ->
-                if (error != null) return@coordinateReadingItemAtURL
-                val tmp = NSTemporaryDirectory() ?: return@coordinateReadingItemAtURL
-                val dst = "${tmp}termish-upload-$name"
-                NSFileManager.defaultManager.removeItemAtPath(dst, null)
-                if (!NSFileManager.defaultManager.copyItemAtURL(url, NSURL.fileURLWithPath(dst), null)) {
-                    return@coordinateReadingItemAtURL
-                }
-                var size = 0L
-                memScoped {
-                    val st = alloc<stat>()
-                    if (stat(dst, st.ptr) == 0) size = st.st_size
-                }
-                val fd = open(dst, O_RDONLY)
-                if (fd < 0) return@coordinateReadingItemAtURL
-                onPicked(name, size) {
-                    val buf = ByteArray(CHUNK)
-                    val n = buf.usePinned { pinned ->
-                        read(fd, pinned.addressOf(0), CHUNK.toULong())
+            // 安全作用域 URL：document picker 返回的 URL 必须先申请访问权，
+            // 再经 NSFileCoordinator 协调拷贝（reading-for-uploading 语义下
+            // 被占用中的文件也可读）；访问权与拷贝完成成对释放。
+            val scoped = url.startAccessingSecurityScopedResource()
+            try {
+                coordinator.coordinateReadingItemAtURL(url, NSFileCoordinatorReadingForUploading, null) { newUrl ->
+                    val src = newUrl ?: return@coordinateReadingItemAtURL
+                    val tmp = NSTemporaryDirectory() ?: return@coordinateReadingItemAtURL
+                    val dst = "${tmp}termish-upload-$name"
+                    NSFileManager.defaultManager.removeItemAtPath(dst, null)
+                    if (!NSFileManager.defaultManager.copyItemAtURL(src, NSURL.fileURLWithPath(dst), null)) {
+                        return@coordinateReadingItemAtURL
                     }
-                    if (n <= 0L) {
-                        close(fd)
-                        null
-                    } else {
-                        buf.copyOf(n.toInt())
+                    var size = 0L
+                    memScoped {
+                        val st = alloc<stat>()
+                        if (stat(dst, st.ptr) == 0) size = st.st_size
+                    }
+                    val fd = open(dst, O_RDONLY)
+                    if (fd < 0) return@coordinateReadingItemAtURL
+                    onPicked(name, size) {
+                        val buf = ByteArray(CHUNK)
+                        val n = buf.usePinned { pinned ->
+                            read(fd, pinned.addressOf(0), CHUNK.toULong())
+                        }
+                        if (n <= 0L) {
+                            close(fd)
+                            null
+                        } else {
+                            buf.copyOf(n.toInt())
+                        }
                     }
                 }
+            } finally {
+                if (scoped) url.stopAccessingSecurityScopedResource()
             }
         }
     }
