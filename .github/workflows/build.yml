@@ -213,12 +213,17 @@ jobs:
       # gh release create --generate-notes 需要 git 上下文，必须 checkout
       - uses: actions/checkout@v4
 
-      # 只取签名 release 产物与桌面包（debug APK 仅留档，不进 Release）
+      # 只取签名 release 产物与桌面包（debug APK 仅留档，不进 Release）。
+      # pattern 不能写成多行块：YAML 块标量会带入换行符，匹配不到任何
+      # artifact → dist 目录不创建（v1.0.1 发版失败的根因）。分两步各自单行
       - uses: actions/download-artifact@v4
         with:
-          pattern: |
-            android-release
-            desktop-*
+          name: android-release
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
           path: dist
           merge-multiple: true
 
