@@ -569,7 +569,7 @@ class TerminalControllerTest {
 
     @Test
     fun herdrProbeResolvesHomeCandidateToAbsolutePath() {
-        // 真机踩坑（[REDACTED]）：sshd 非交互 exec PATH 不含 ~/.local/bin →
+        // 真机踩坑（远端 Linux 服务器）：sshd 非交互 exec PATH 不含 ~/.local/bin →
         // 裸 herdr 探测失败、$HOME 候选命中（经远端 shell 展开）；但下游
         // mosh 引导 `-- '<bin>'` 单引号不展开、mosh-server 子进程直接 execvp
         // 不过 shell，字面 $HOME 报

@@ -15,3 +15,12 @@ Termish 第三方组件声明
 | BouncyCastle | MIT-style | JVM 端加密 | LICENSES/BouncyCastle-MIT.txt |
 | libssh2 | BSD-3-Clause | iOS 端 SSH 引擎 | LICENSES/libssh2-BSD.txt |
 | OpenSSL | Apache-2.0 | iOS 端 TLS/加密（静态链接） | LICENSES/Apache-2.0.txt |
+| Kotlin | Apache-2.0 | 编程语言与标准库 | LICENSES/Apache-2.0.txt |
+| Jetpack Compose / Compose Multiplatform | Apache-2.0 | 声明式 UI 框架 | LICENSES/Apache-2.0.txt |
+| Kotlin Gradle Plugin / Compose Compiler | Apache-2.0 | 构建插件 | LICENSES/Apache-2.0.txt |
+| kotlinx-coroutines | Apache-2.0 | 协程 | LICENSES/Apache-2.0.txt |
+| kotlinx-serialization | Apache-2.0 | JSON 序列化 | LICENSES/Apache-2.0.txt |
+| kotlinx-datetime | Apache-2.0 | 日期时间 | LICENSES/Apache-2.0.txt |
+| multiplatform-settings | Apache-2.0 | KMP 键值存储 | LICENSES/Apache-2.0.txt |
+| AndroidX (Activity, DocumentFile, Lifecycle) | Apache-2.0 | Android 平台组件 | LICENSES/Apache-2.0.txt |
+| slf4j | MIT | 日志 facade（sshj 传递依赖，用 nop 抑制） | LICENSES/MIT.txt |
