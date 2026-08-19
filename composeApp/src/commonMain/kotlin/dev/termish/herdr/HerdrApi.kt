@@ -18,8 +18,10 @@ object HerdrApi {
      * /usr/local/bin、/opt/homebrew 等常见安装位置——失败时逐个尝试）。
      * $HOME 由远端 /bin/sh -c 展开（ssh exec 通道的标准执行方式）。
      *
-     * 探测命中后必须复用全路径（mosh 引导 `-- <bin>`、exec 降级 startExec）——
-     * 裸 `herdr` 在非默认 PATH 场景探测能过但启动必败。
+     * 探测命中后 [HerdrProbe] 会把 $HOME 前缀候选解析成绝对路径再返回，
+     * 下游必须复用该绝对路径（mosh 引导 `-- <bin>` 时 mosh-server 直接
+     * execvp 不过 shell、startExec 单引号均不展开 $HOME）——裸 `herdr` 或
+     * 字面 `$HOME/...` 在非默认 PATH 场景探测能过但启动必败。
      */
     val BIN_CANDIDATES = listOf(
         "herdr",

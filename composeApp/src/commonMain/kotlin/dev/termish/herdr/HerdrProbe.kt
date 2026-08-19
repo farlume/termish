@@ -30,8 +30,27 @@ object HerdrProbe {
             val raw = runCommand("$bin api snapshot") ?: continue
             val snapshot = parseHerdrSnapshot(raw) ?: continue
             TermLog.d("herdr") { "probe hit bin=$bin" }
-            return Result(bin, snapshot)
+            return Result(resolveHome(bin, runCommand), snapshot)
         }
         return null
+    }
+
+    /**
+     * `$HOME` 前缀候选 → 绝对路径。
+     *
+     * 探测命令经远端 shell 执行（runCommand → sshd → 用户 shell），$HOME 会被
+     * 展开，所以字面候选能命中；但下游拿到字面路径必失败——mosh 引导
+     * `-- '<bin>'` 的单引号阻止 shell 展开，而 mosh-server 子进程对 `--` 后的
+     * 参数是直接 execvp（不过 shell，见 mosh-server.cc run_command），字面
+     * `$HOME/...` 会报 `execvp: $HOME/...: No such file or directory`；
+     * 降级 exec 通道（startExec）的单引号同理不展开。命中结果必须先解析成
+     * 绝对路径再贯穿下游。
+     *
+     * echo 失败的异常环境退回原样（尽力而为：探测至少证明该路径可用）。
+     */
+    private fun resolveHome(bin: String, runCommand: (String) -> String?): String {
+        if (!bin.startsWith("\$HOME")) return bin
+        val home = runCommand("echo \$HOME")?.trim()?.takeIf { it.startsWith("/") }
+        return home?.let { bin.replaceFirst("\$HOME", it) } ?: bin
     }
 }

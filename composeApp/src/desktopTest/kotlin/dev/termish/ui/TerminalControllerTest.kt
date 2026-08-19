@@ -568,6 +568,74 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun herdrProbeResolvesHomeCandidateToAbsolutePath() {
+        // 真机踩坑（[REDACTED]）：sshd 非交互 exec PATH 不含 ~/.local/bin →
+        // 裸 herdr 探测失败、$HOME 候选命中（经远端 shell 展开）；但下游
+        // mosh 引导 `-- '<bin>'` 单引号不展开、mosh-server 子进程直接 execvp
+        // 不过 shell，字面 $HOME 报
+        // `execvp: $HOME/.local/bin/herdr: No such file or directory`。
+        // 断言：命中后解析成绝对路径（echo $HOME），降级 exec 拿到转义后的绝对路径
+        val commands = mutableListOf<String>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                commands += cmd
+                when (cmd) {
+                    "herdr api snapshot" -> null
+                    "\$HOME/.local/bin/herdr api snapshot" -> snapshotJson
+                    "echo \$HOME" -> "/root"
+                    else -> null
+                }
+            },
+            execFactory = { FakeExec() },
+        )
+        val (c, f) = herdrController(fake)
+        c.moshDegradedToSsh = true // 降级条目直走 exec（跳过 mosh 引导）
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertTrue(commands.contains("echo \$HOME"), "命中 \$HOME 候选后应解析绝对路径")
+        assertEquals(listOf(shSingleQuote("/root/.local/bin/herdr")), f.execCommands)
+        c.destroy()
+    }
+
+    @Test
+    fun herdrMoshBootstrapUsesResolvedAbsolutePath() {
+        // mosh 引导命令必须带解析后的绝对路径：mosh-server 对 `--` 后参数直接
+        // execvp（不过 shell），字面 $HOME 必失败（见上）。Main 换 Unconfined：
+        // doConnectMosh 在引导解析后经 withContext(Main) 做主题准备，测试默认
+        // 的 StandardTestDispatcher 不会自跑，会把连接协程挂死在那
+        val bootstraps = mutableListOf<String>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> {
+                        bootstraps += cmd
+                        // key 必须 22 字符规范 base64：客户端构造会校验，
+                        // 非法 key 抛异常走 ERROR 分支到不了本断言
+                        "MOSH CONNECT 60000 AAAAAAAAAAAAAAAAAAAAAA"
+                    }
+                    // exec PATH 无 ~/.local/bin：裸 herdr 失败，$HOME 候选命中
+                    cmd == "herdr api snapshot" -> null
+                    cmd == "\$HOME/.local/bin/herdr api snapshot" -> snapshotJson
+                    cmd == "echo \$HOME" -> "/root"
+                    else -> null
+                }
+            },
+            execFactory = { FakeExec() },
+        )
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        // 等引导命令发出即断言（不等 UDP 首包确认：那是 5s 超时路径，与本断言无关）
+        runBlocking { withTimeout(5_000) { while (bootstraps.isEmpty()) delay(10) } }
+        assertTrue(
+            bootstraps[0].contains("-- ${shSingleQuote("/root/.local/bin/herdr")}"),
+            "mosh 引导必须是解析后的绝对路径（非字面 \$HOME）: ${bootstraps[0]}",
+        )
+        c.destroy()
+    }
+
+    @Test
     fun herdrInstallMoshReGuidesWithHerdrArg() {
         // HERDR + mosh 未装 → 引导安装；安装完成后重新引导必须带 -- 'herdr'
         //（mosh 会话直接跑 herdr）。此处模拟装后 PATH 未刷新仍 not found →
