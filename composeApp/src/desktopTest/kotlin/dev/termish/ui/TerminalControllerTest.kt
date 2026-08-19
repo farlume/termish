@@ -161,7 +161,12 @@ class TerminalControllerTest {
 
     private fun awaitStatus(c: TerminalController, expected: ConnStatus) = runBlocking {
         withTimeout(5_000) {
-            while (c.status != expected) delay(10)
+            while (c.status != expected) {
+                delay(10)
+                // 泵主线程消费者：fake exec 的读循环热转产空块会把 256 容量
+                // 输出队列灌满，不排干则读循环卡在背压上、后续状态永远等不到
+                scheduler.advanceUntilIdle()
+            }
         }
     }
 
@@ -307,13 +312,13 @@ class TerminalControllerTest {
     @Test
     fun installHerdrReProbesAndContinues() {
         // 首次探测无 herdr → 引导安装；安装脚本执行后重新探测成功 → 继续 HERDR
-        // 连接（mosh 引导失败 → 降级 exec+pty 跑 herdr）
+        // 连接（mosh 缺 → mosh 引导卡片；降级 SSH → exec+pty 跑 herdr）
         var installed = false
         val fake = FakeSsh(
             commandHandler = { cmd ->
                 when {
                     cmd.contains("api snapshot") -> if (installed) snapshotJson else null
-                    else -> "no mosh-server here"
+                    else -> "mosh: command not found"
                 }
             },
             execFactory = { cmd ->
@@ -328,11 +333,15 @@ class TerminalControllerTest {
         assertTrue(c.herdrNeedsInstall)
 
         c.installHerdr()
-        // 安装成功后继续连接：降级 exec 跑 herdr（execCommands 末尾为转义后的 'herdr'）
+        // 安装成功后继续连接：mosh-server 仍缺 → mosh 引导卡片（不再静默降级）；
+        // 用户点「降级 SSH」后 exec 跑 herdr（execCommands 末尾为转义后的 'herdr'）
         val quotedHerdr = shSingleQuote("herdr")
+        runBlocking { withTimeout(5_000) { while (!(!c.herdrInstalling && !c.herdrNeedsInstall && c.moshNeedsInstall)) delay(10) } }
+        c.degradeMoshToSsh()
         runBlocking { withTimeout(5_000) { while (f.execCommands.none { it == quotedHerdr }) delay(10) } }
 
         assertTrue(!c.herdrNeedsInstall, "安装成功应退出待安装状态")
+        assertTrue(!c.moshNeedsInstall, "降级后应退出 mosh 引导卡片")
         assertTrue(!c.herdrInstalling)
         assertTrue(f.execCommands.any { it.contains("install.sh") }, "应执行安装脚本")
         assertEquals(quotedHerdr, f.execCommands.last())
@@ -362,14 +371,15 @@ class TerminalControllerTest {
     }
 
     @Test
-    fun herdrBootstrapFailureDegradesToExecAndConnected() {
-        // snapshot 有效但 mosh 引导无 MOSH CONNECT → 降级 exec+pty；状态必须置
-        // CONNECTED（回归：此前状态停在 CONNECTING，banner 常驻「连接中…」）
+    fun herdrMoshMissingShowsInstallGuide() {
+        // HERDR 模式：herdr 在但 mosh-server 未装 → mosh 引导安装卡片（非静默
+        // 降级——装上 mosh 才有漫游能力）；状态必须置 CONNECTED（回归：此前
+        // 状态停在 CONNECTING，banner 常驻「连接中…」）
         val fake = FakeSsh(
             commandHandler = { cmd ->
                 when {
                     cmd.contains("api snapshot") -> snapshotJson
-                    else -> "no mosh-server here"
+                    else -> "mosh: command not found"
                 }
             },
             execFactory = { FakeExec() },
@@ -378,7 +388,9 @@ class TerminalControllerTest {
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
 
-        assertEquals(listOf(shSingleQuote("herdr")), f.execCommands)
+        assertTrue(c.moshNeedsInstall, "应进入 mosh 引导安装状态")
+        assertTrue(f.execCommands.isEmpty(), "未装 mosh-server 不应静默降级跑 herdr exec")
+        assertTrue(!f.closed, "SSH 引导通道应保留（安装在其上执行）")
         c.destroy()
     }
 
@@ -392,10 +404,136 @@ class TerminalControllerTest {
             execFactory = { null },
         )
         val (c, f) = herdrController(fake)
+        // 已降级条目直走 exec 路径：startExec 不可用（iOS 现状）→ shell 命令兑底
+        c.moshDegradedToSsh = true
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
 
         assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "应经 shell 发送 herdr 命令")
+        c.destroy()
+    }
+
+    /** 可控死亡的 exec 通道：dead=true 后 read 返回 null（EOF，模拟引擎吞异常）；
+     *  failRead=true 后 read 抛异常（模拟引擎直接报错）。 */
+    private class KillableExec : SshExecChannel {
+        @Volatile var dead = false
+        @Volatile var failRead = false
+        var closed = false
+
+        override fun read(): ByteArray? = when {
+            closed -> null
+            failRead -> throw java.io.IOException("connection reset")
+            dead -> null
+            else -> ByteArray(0)
+        }
+
+        override fun write(data: ByteArray) {}
+
+        override fun close() {
+            closed = true
+        }
+    }
+
+    @Test
+    fun herdrExecConnectionLossAutoReconnects() {
+        // 降级 exec 跑 herdr 时连接死亡（exec EOF 且底层 session 已 inactive）：
+        // 按意外断开处理（自动重连），而非 c.close() 直接置灰不重连
+        //（回归：切到其他 app 回来 tab 变灰、需手动重连）
+        var bootstrapCount = 0
+        val created = mutableListOf<KillableExec>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> { bootstrapCount++; null }
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> null
+                }
+            },
+            execFactory = { KillableExec().also(created::add) },
+        )
+        val c = TerminalController(herdrHost(), "pw", null, repo(), true) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        // UDP 不通降级过的会话条目：连接直走 herdr exec（跳过 mosh 引导）
+        c.moshDegradedToSsh = true
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertEquals(1, created.size, "应直走 exec 跑 herdr")
+
+        // 模拟断链：底层会话死亡（isActive=false）+ exec 通道 EOF
+        fake.closed = true
+        created[0].dead = true
+
+        // 旧实现：无条件 c.close() → CLOSED；新实现：宽限判定后按意外断开重连
+        awaitStatus(c, ConnStatus.CONNECTING)
+        assertEquals(1, c.reconnectCount, "应排程第 1 次自动重连")
+        // 重连退避（2s）后重建：再次降级 exec 跑 herdr → 回到 CONNECTED
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(created.size >= 2, "重连后应重新 exec herdr，实际次数: ${created.size}")
+        assertTrue(c.herdrExec != null, "重连后应有新的 exec 通道")
+        assertEquals(0, bootstrapCount, "降级过的会话重连不应再引导 mosh-server")
+        c.destroy()
+    }
+
+    @Test
+    fun herdrExecReadErrorAutoReconnects() {
+        // exec 读异常（引擎未吞成 EOF 的场景）：不经宽限直接按意外断开重连，不置灰
+        val created = mutableListOf<KillableExec>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> null
+                }
+            },
+            execFactory = { KillableExec().also(created::add) },
+        )
+        val c = TerminalController(herdrHost(), "pw", null, repo(), true) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        c.moshDegradedToSsh = true // 降级条目直走 exec（跳过 mosh 引导）
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertEquals(1, created.size)
+
+        // 连接死亡且引擎读直接报错（非 EOF）
+        fake.closed = true
+        created[0].failRead = true
+
+        awaitStatus(c, ConnStatus.CONNECTING)
+        assertEquals(1, c.reconnectCount)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(created.size >= 2)
+        c.destroy()
+    }
+
+    @Test
+    fun herdrExecNormalExitStillClosesSession() {
+        // herdr 自己退出（EOF 且底层连接仍活）：工作台关闭——正常结束不重连
+        val exec = KillableExec()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> "no mosh-server here"
+                }
+            },
+            execFactory = { exec },
+        )
+        val c = TerminalController(herdrHost(), "pw", null, repo(), true) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        c.moshDegradedToSsh = true // 降级条目直走 exec（跳过 mosh 引导）
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        exec.dead = true // herdr 退出，但 fake.closed=false（连接仍活）
+
+        awaitStatus(c, ConnStatus.CLOSED)
+        assertEquals(0, c.reconnectCount, "正常退出不应触发重连")
         c.destroy()
     }
 
@@ -415,6 +553,7 @@ class TerminalControllerTest {
             execFactory = { FakeExec() },
         )
         val (c, f) = herdrController(fake)
+        c.moshDegradedToSsh = true // 降级条目直走 exec（跳过 mosh 引导）
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
 
@@ -425,6 +564,117 @@ class TerminalControllerTest {
         assertTrue(probed[2].startsWith("/usr/local/bin/herdr "))
         // 命中路径贯穿降级 exec（非裸 herdr，单引号转义）
         assertEquals(listOf(shSingleQuote("/usr/local/bin/herdr")), f.execCommands)
+        c.destroy()
+    }
+
+    @Test
+    fun herdrInstallMoshReGuidesWithHerdrArg() {
+        // HERDR + mosh 未装 → 引导安装；安装完成后重新引导必须带 -- 'herdr'
+        //（mosh 会话直接跑 herdr）。此处模拟装后 PATH 未刷新仍 not found →
+        // 回到引导卡片，但引导命令必须已带上 herdr 参数
+        var installed = false
+        val bootstraps = mutableListOf<String>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> {
+                        bootstraps += cmd
+                        "mosh: command not found"
+                    }
+                    cmd.contains("command -v mosh-server") -> if (installed) "/usr/bin/mosh-server" else null
+                    cmd.contains("os-release") -> "ID=ubuntu"
+                    cmd.contains("id -u") -> "0"
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> null
+                }
+            },
+            execFactory = { cmd ->
+                if (cmd.contains("apt-get install -y mosh")) installed = true
+                FakeExec(eof = true)
+            },
+        )
+        val (c, f) = herdrController(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(c.moshNeedsInstall)
+
+        c.installMosh()
+        // 终态：安装完成 + 重引导仍 not found → 回到引导卡片（已带 herdr 参数）
+        runBlocking {
+            withTimeout(5_000) { while (!(!c.moshInstalling && c.moshNeedsInstall && bootstraps.size >= 2)) delay(10) }
+        }
+
+        assertEquals(2, bootstraps.size, "安装后应重新引导，实际: $bootstraps")
+        assertTrue(bootstraps[1].contains("mosh-server new"), "引导命令: ${bootstraps[1]}")
+        assertTrue(bootstraps[1].contains("-- ${shSingleQuote("herdr")}"), "HERDR 引导应带 -- herdr: ${bootstraps[1]}")
+        c.destroy()
+    }
+
+    @Test
+    fun herdrDegradeButtonRunsHerdrExecAndSticksForReconnect() {
+        // HERDR + mosh 未装 → 卡片「降级 SSH」= exec+pty 跑 herdr；用户明确选择
+        // 后置 sticky 标记，断链重连直走 herdr exec，不再引导 mosh
+        var bootstrapCount = 0
+        val created = mutableListOf<KillableExec>()
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                when {
+                    cmd.contains("mosh-server new") -> {
+                        bootstrapCount++
+                        "mosh: command not found"
+                    }
+                    cmd.contains("api snapshot") -> snapshotJson
+                    else -> null
+                }
+            },
+            execFactory = { KillableExec().also(created::add) },
+        )
+        val c = TerminalController(herdrHost(), "pw", null, repo(), true) { _, cb ->
+            fake.callbacks = cb
+            fake
+        }
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        assertTrue(c.moshNeedsInstall)
+
+        // 用户点「降级 SSH」：直接 exec 跑 herdr
+        c.degradeMoshToSsh()
+        runBlocking { withTimeout(5_000) { while (created.isEmpty()) delay(10) } }
+        assertEquals(listOf(shSingleQuote("herdr")), fake.execCommands)
+        assertTrue(c.moshDegradedToSsh, "降级应置 sticky 标记")
+
+        // 断链（连接死亡 + exec EOF）→ 自动重连 → 直走 herdr exec（无 mosh 引导）
+        fake.closed = true
+        created[0].dead = true
+        awaitStatus(c, ConnStatus.CONNECTING)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertEquals(1, bootstrapCount, "重连不应再次引导 mosh-server（首次引导除外）")
+        assertTrue(created.size >= 2, "重连后应重建 herdr exec 通道")
+        c.destroy()
+    }
+
+    @Test
+    fun moshDegradedReconnectUsesPlainShell() {
+        // MOSH 模式同样遵守 sticky 降级：重连不再引导 mosh-server，直接 SSH shell
+        var bootstrapCount = 0
+        val fake = FakeSsh(
+            commandHandler = { cmd ->
+                if (cmd.contains("mosh-server new")) {
+                    bootstrapCount++
+                    "MOSH CONNECT 60000 key"
+                } else {
+                    null
+                }
+            },
+        )
+        val (c, _) = moshController(fake)
+        c.moshDegradedToSsh = true
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        assertEquals(0, bootstrapCount, "降级过的会话不应再引导 mosh-server")
+        assertTrue(c.moshSession == null, "不应创建 mosh 会话")
         c.destroy()
     }
 

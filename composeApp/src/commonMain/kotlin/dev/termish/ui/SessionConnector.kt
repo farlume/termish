@@ -9,6 +9,7 @@ import dev.termish.notify.NotificationEvent
 import dev.termish.ssh.MoshSession
 import dev.termish.ssh.SYSTEM_PROBE_COMMAND
 import dev.termish.ssh.SshConnection
+import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import dev.termish.ssh.createKmpMoshSession
 import dev.termish.ssh.detectSystemFromOutput
@@ -57,6 +58,10 @@ internal class SessionConnector(
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
         /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
+        /** herdr exec 通道 EOF 后的判定宽限：JVM 引擎把读异常吞成 null（EOF 双义），
+         *  连接级死亡时 shell 侧 onClosed 会在毫秒级随之而来；等一小段再按
+         *  isActive 区分「herdr 正常退出」与「断链」。 */
+        private const val HERDR_EOF_GRACE_MS = 500L
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
         private const val HERDR_INSTALL_TIMEOUT_MS = 180_000L
         /** mosh 安装超时：包管理器下载 + 依赖，给足时间。 */
@@ -207,6 +212,15 @@ internal class SessionConnector(
                 info.hostKey?.let { c.repository.touchConnected(c.host.id, it.fingerprintSha256) }
             }
 
+            // UDP 不通降级过的会话条目（moshDegradedToSsh）：不再重试 mosh 引导
+            //（UDP 阻断不会因重连自愈，重试只会每次多耗一次引导 + 5s UDP 确认等待），
+            // 直接走降级显示通道：HERDR = exec+pty 跑 herdr；MOSH = 普通 shell
+            if (c.moshDegradedToSsh) {
+                TermLog.i("mosh") { "mosh degraded earlier ${c.host.name}——重连直走 ssh（跳过 mosh 引导）" }
+                if (onDegraded != null) onDegraded(s) else finishConnected(s)
+                return
+            }
+
             // 2. 同连接引导 mosh-server（runCommand 复用已认证连接；探测输出跟在
             //    MOSH CONNECT 之后，不影响 parseMoshConnect，自动识别系统）
             val moshColors = if (c.repository.loadSettings().terminalType == "xterm-256color") "256" else "8"
@@ -239,10 +253,10 @@ internal class SessionConnector(
                     missing -> strings().moshServerMissing
                     else -> strings().moshBootstrapFailed(rawTrimmed)
                 }
-                // Mosh 模式（非 HERDR 复用）：远端未装 mosh-server → 引导安装
-                //（SSH 显示通道保留，卡片可选「安装」或「降级 SSH」；HERDR 复用
-                // 路径保持原样：直接降级到 herdr exec）
-                if (missing && onDegraded == null) {
+                // 远端未装 mosh-server → 引导安装（SSH 显示通道保留，卡片可选
+                //「安装」或「降级 SSH」）；HERDR 模式同样引导——装上 mosh 才有
+                // 漫游能力，静默降级用户永远不知道少了什么
+                if (missing) {
                     TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
                     // 先置引导态再置 CONNECTED（同 herdr 分支：消除状态中间帧）
                     c.moshNeedsInstall = true
@@ -307,6 +321,9 @@ internal class SessionConnector(
                 TermLog.w("mosh") { "mosh UDP unconfirmed ${c.host.name} ${MOSH_UDP_CONFIRM_MS}ms——降级 SSH" }
                 c.moshSession?.close()
                 c.moshSession = null
+                // UDP 不通是环境性阻断：标记本会话条目后续重连直走 SSH，
+                // 不再重试 mosh（新开会话才会重新尝试）
+                c.moshDegradedToSsh = true
                 if (onDegraded != null) {
                     onDegraded(s)
                 } else {
@@ -374,6 +391,7 @@ internal class SessionConnector(
                 return
             }
             val herdrBin = probed.bin
+            c.herdrBin = herdrBin
             TermLog.i("herdr") { "HERDR probe ok ${c.host.name} bin=$herdrBin" }
 
             // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
@@ -461,6 +479,7 @@ internal class SessionConnector(
                     return@launch
                 }
                 TermLog.i("herdr") { "herdr installed ${c.host.name} bin=${probed.bin}" }
+                c.herdrBin = probed.bin
                 c.herdrInstalling = false
                 c.herdrNeedsInstall = false
                 c.herdrSuppressShellOutput = true
@@ -584,7 +603,20 @@ internal class SessionConnector(
                 c.moshInstalling = false
                 c.moshNeedsSudoPassword = false
                 c.moshNeedsInstall = false
-                doConnectMosh(existingSession = s)
+                // HERDR 模式：带上 herdr 路径重新引导（mosh 会话直接跑 herdr；
+                // 降级路径 = exec+pty 跑 herdr），与 doConnectHerdr 的引导一致
+                val herdrPath = c.herdrBin
+                if (c.host.connectionMode == ConnectionMode.HERDR && herdrPath != null) {
+                    c.herdrSuppressShellOutput = true
+                    doConnectMosh(
+                        existingSession = s,
+                        bootstrapExtra = " -- ${shSingleQuote(herdrPath)}",
+                        onDegraded = { ssh -> startHerdrExec(ssh, herdrPath) },
+                    )
+                    c.herdrSuppressShellOutput = false
+                } else {
+                    doConnectMosh(existingSession = s)
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -594,12 +626,24 @@ internal class SessionConnector(
         }
     }
 
-    /** 引导卡片上的「降级 SSH」：放弃安装，当前 SSH 显示通道转正（补发启动命令）。 */
+    /** 引导卡片上的「降级 SSH」：放弃安装，当前 SSH 显示通道转正。
+     *  用户明确选择 SSH → 标记本会话条目后续重连不再重试 mosh。
+     *  HERDR 模式：降级显示通道 = exec+pty 跑 herdr（无 shell 回显）。 */
     fun degradeMoshToSsh() {
         if (!c.moshNeedsInstall) return
         TermLog.i("mosh") { "mosh install skipped ${c.host.name}——降级 SSH" }
         c.moshNeedsInstall = false
         c.moshNeedsSudoPassword = false
+        c.moshDegradedToSsh = true
+        if (c.host.connectionMode == ConnectionMode.HERDR) {
+            val bin = c.herdrBin
+            val s = c.session
+            if (bin != null && s != null) {
+                c.scope.launch { startHerdrExec(s, bin) }
+                return
+            }
+            // bin/session 缺失（异常路径）：落到下面的 shell 兑底
+        }
         if (c.host.startupCommand.isNotBlank()) {
             c.session?.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
         }
@@ -617,8 +661,10 @@ internal class SessionConnector(
         else -> null
     }
 
-    /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显），
-     *  EOF = 工作台关闭（正常结束，关闭整个会话）。 */
+    /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显）。
+     *  通道结束的两种语义：EOF 且底层连接仍活 = herdr 自己退出（工作台关闭，
+     *  正常结束整个会话）；读异常 / EOF 时连接已死 = 连接级死亡，按意外断开
+     *  处理（自动重连 + 耗尽通知，与 shell 会话 onClosed 路径一致）。 */
     private suspend fun startHerdrExec(s: SshSession, herdrBin: String) {
         // bin 路径转义后拼远端 shell（探测来源多样，统一在此处转义）
         val exec = s.startExec(shSingleQuote(herdrBin), c.lastCols, c.lastRows)
@@ -629,23 +675,58 @@ internal class SessionConnector(
             finishConnected(s, sendStartup = false)
             val execRef = exec
             c.scope.launch {
+                var readError: Exception? = null
                 try {
                     while (true) {
                         val chunk = execRef.read() ?: break
                         c.enqueueOutput(chunk)
                     }
-                    if (c.status != ConnStatus.CLOSED) {
-                        TermLog.i("herdr") { "herdr exec exited ${c.host.name}（工作台关闭）" }
-                        c.close()
-                    }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    if (c.status != ConnStatus.CLOSED) {
-                        TermLog.w("herdr") { "herdr exec read error ${c.host.name}: ${e.message}" }
-                        c.close()
+                    readError = e
+                }
+                // 用户已主动关闭：无事可做
+                if (c.status == ConnStatus.CLOSED) return@launch
+                // EOF 双义（JVM 引擎把读异常也吞成 null）：herdr 正常退出时底层
+                // 连接仍活跃，连接级死亡时 shell 侧 onClosed 毫秒级随之而来。
+                // 宽限后再按 isActive 判定，避免把断链误判成「工作台关闭」。
+                if (readError == null && c.status == ConnStatus.CONNECTED) {
+                    delay(HERDR_EOF_GRACE_MS)
+                    when {
+                        // 宽限期间重连流程已接管（onClosed → 意外断开重连排程）
+                        c.status != ConnStatus.CONNECTED && c.status != ConnStatus.AUTH -> {
+                            cleanupHerdrExec(execRef)
+                            return@launch
+                        }
+                        // 连接仍活：herdr 自己退出（工作台关闭）——正常结束
+                        s.isActive() -> {
+                            TermLog.i("herdr") { "herdr exec exited ${c.host.name}（工作台关闭）" }
+                            c.close()
+                            return@launch
+                        }
+                        // 连接已死：落入意外断开路径
                     }
                 }
+                // 连接级死亡（read 异常 / EOF 时连接已死）：按意外断开处理——
+                // 自动重连、耗尽置 CLOSED + 后台通知，与 shell 会话 onClosed
+                // 路径一致。此前无条件 c.close() 会吞掉/取消 onUnexpectedClose
+                // 排程的重连（切后台断链回前台 tab 变灰且不自动重连的根因）。
+                if (c.status != ConnStatus.CONNECTED && c.status != ConnStatus.AUTH) {
+                    cleanupHerdrExec(execRef) // 重连/关闭流程已接管：仅清引用防泄漏
+                    return@launch
+                }
+                cleanupHerdrExec(execRef)
+                TermLog.w("herdr") {
+                    "herdr exec died ${c.host.name}（连接断开${readError?.let { ": ${it.message}" } ?: ""}）——按意外断开处理"
+                }
+                // 主动关掉已死会话（吞掉 close 触发的 onClosed，避免与
+                // onUnexpectedClose 双触发），再走统一的意外断开路径
+                c.swallowClosed = true
+                try { s.close() } catch (_: Exception) { }
+                c.session = null
+                c.swallowClosed = false
+                onUnexpectedClose("herdr: connection lost")
             }
             TermLog.i("herdr") { "HERDR degraded to ssh-exec ${c.host.name}" }
         } else {
@@ -654,6 +735,12 @@ internal class SessionConnector(
             finishConnected(s, sendStartup = false)
             TermLog.i("herdr") { "HERDR degraded to ssh-shell ${c.host.name}" }
         }
+    }
+
+    /** 清理 herdr exec 通道引用并关闭（幂等；重连/关闭流程接管时防泄漏用）。 */
+    private fun cleanupHerdrExec(exec: SshExecChannel) {
+        if (c.herdrExec === exec) c.herdrExec = null
+        try { exec.close() } catch (_: Exception) { }
     }
 
     /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
