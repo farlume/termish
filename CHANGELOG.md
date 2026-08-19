@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-08-20
+
+### 新增
+
+- **终端工具栏重排 + 新键位**：ESC 左上、CTRL/ALT 左下（同实体键盘底行）；
+  新增 ⇧⇥（Shift+Tab，TUI 菜单反选 / Claude Code 模式切换）与 ⌃\
+  （长按 ⌃C/⌃D 触发，杀连 ⌃C 都不响应的顽固进程）；方向键按住连发
+  （400ms 后 60ms/次）；ESC 长按双发；⌃E 换成 /，两行 8+8 等宽、↑↓ 对齐
+
+### 修复
+
+- **工具栏重排引入的两处回归**：方向键丢失 ESC 字节（发出 "[A" 而非
+  "ESC[A"，打字面字符、光标不动）；尾随 lambda 误绑长按回调（普通键单击
+  失灵、方向键无响应）
+- **覆盖层系统返回穿透**：主机编辑片段页 / 片段管理二级页 / 终端片段面板
+  打开时手势返回直接退首页，连带丢弃正在编辑的表单；现在先关最上层覆盖层
+- **表单页软键盘遮挡**：主机编辑 / 片段编辑 / 标签管理页 imePadding 顶起
+  被盖住的底部字段；标签输入支持 IME Done 提交（原来只有硬件回车生效）
 ## [1.1.4] - 2026-08-19
 
 ### 修复
@@ -177,7 +195,10 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.5...HEAD
+[1.1.5]: https://github.com/ttermish/termish/compare/v1.1.4...v1.1.5
+[1.1.4]: https://github.com/ttermish/termish/compare/v1.1.3...v1.1.4
+[1.1.3]: https://github.com/ttermish/termish/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/ttermish/termish/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/ttermish/termish/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/ttermish/termish/compare/v1.0.1...v1.1.0
