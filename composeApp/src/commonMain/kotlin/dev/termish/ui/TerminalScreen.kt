@@ -926,7 +926,7 @@ private fun MoshInstallGuide(controller: TerminalController, bottomInset: Dp) {
     }
 }
 
-/** 顶部浮层错误/状态 banner：圆角卡片盖在画布上（不占布局空间、不把画布顶下来）。 */
+/** 顶部浮层错误/状态 banner：直角横幅盖在画布上（不占布局空间、不把画布顶下来）。 */
 @Composable
 private fun ErrorBanner(
     message: String,
@@ -941,9 +941,8 @@ private fun ErrorBanner(
         modifier
             .fillMaxWidth()
             .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
             .background(color.copy(alpha = 0.16f))
-            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(12.dp))
+            .border(1.dp, color.copy(alpha = 0.35f))
             .padding(start = 12.dp, end = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
