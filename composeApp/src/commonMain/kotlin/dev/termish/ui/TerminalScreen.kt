@@ -568,6 +568,20 @@ private fun TerminalTabBar(
         }
     }
 
+    // 当前 tab 变化（从首页进入 / 切换 / 新会话选中）时自动滚到正中：
+    // chip 布局与滚动范围都是异步测量（onGloballyPositioned / horizontalScroll），
+    // 首帧可能还没量到，轮询等几帧全部就绪后再滚（等不到就放弃，不阻塞）
+    LaunchedEffect(current.id) {
+        var attempts = 0
+        while (attempts < 20 &&
+            (chipLayout[current.id] == null || containerWidth.value <= 0f || scroll.maxValue <= 0)
+        ) {
+            delay(16)
+            attempts++
+        }
+        scrollToCenter(current.id)
+    }
+
     Column(Modifier.fillMaxWidth().background(barBackground)) {
         Row(
             Modifier
@@ -582,16 +596,21 @@ private fun TerminalTabBar(
                     tint = barForeground,
                 )
             }
-            // 会话 tab：水平滑动
-            Row(
+            // 会话 tab：水平滑动。可视宽度由外层 Box 测量（horizontalScroll 的
+            // Row 会按内容无限宽测量，onSizeChanged 拿到的是内容总宽而非视口宽，
+            // 居中公式会被撑爆）
+            Box(
                 Modifier
                     .weight(1f)
-                    .horizontalScroll(scroll)
-                    .onSizeChanged { containerWidth.value = it.width.toFloat() }
-                    .onGloballyPositioned { containerX.value = it.positionInRoot().x },
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .onSizeChanged { containerWidth.value = it.width.toFloat() },
             ) {
+                Row(
+                    Modifier
+                        .horizontalScroll(scroll)
+                        .onGloballyPositioned { containerX.value = it.positionInRoot().x },
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
                 tabs.forEach { tab ->
                     val host = when (tab) {
                         is SessionTab.Terminal -> tab.controller.host
@@ -611,13 +630,11 @@ private fun TerminalTabBar(
                         inactive = inactive,
                         selected = tab.id == current.id,
                         foreground = barForeground,
-                        onClick = {
-                            onSwitch(tab)
-                            scrollToCenter(tab.id)
-                        },
+                        onClick = { onSwitch(tab) },
                         onClose = { onClose(tab) },
                         onPositioned = { x, w -> chipLayout[tab.id] = x to w },
                     )
+                }
                 }
             }
             Box {

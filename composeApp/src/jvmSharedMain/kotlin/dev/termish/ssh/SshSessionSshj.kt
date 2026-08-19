@@ -9,10 +9,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.Buffer
+import net.schmizz.sshj.common.DisconnectReason
 import net.schmizz.sshj.common.KeyType
 import net.schmizz.sshj.connection.channel.AbstractChannel
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.connection.channel.direct.SessionChannel
+import net.schmizz.sshj.transport.DisconnectListener
 import net.schmizz.sshj.transport.verification.HostKeyVerifier
 import net.schmizz.sshj.userauth.keyprovider.FileKeyProvider
 import net.schmizz.sshj.userauth.keyprovider.PKCS8KeyFile
@@ -65,14 +67,6 @@ class SshSessionSshj(
         shell = sh
         callbacks.onTraceStep("shell")
 
-        // 空闲保活：按设置间隔发送 keepalive（<=0 关闭）
-        try {
-            if (connection.keepAliveSeconds > 0) {
-                client.connection.keepAlive.setKeepAliveInterval(connection.keepAliveSeconds)
-            }
-        } catch (_: Exception) {
-        }
-
         startReaders(sh)
         return SessionInfo(
             serverVersion = serverVersion,
@@ -106,6 +100,28 @@ class SshSessionSshj(
         serverVersion = client.transport.serverVersion
         authenticate()
         callbacks.onTraceStep("auth")
+
+        // 空闲保活（<=0 关闭）：统一放这里，所有连接路径生效
+        //（此前只在终端 shell 路径设置，SFTP 连接无保活、断线完全无感知）
+        try {
+            if (connection.keepAliveSeconds > 0) {
+                client.connection.keepAlive.setKeepAliveInterval(connection.keepAliveSeconds)
+            }
+        } catch (_: Exception) {
+        }
+
+        // 传输层断开（对端关闭/FIN/RST/keepalive 失败）→ 转发 onClosed：
+        // 终端路径有 startReaders 的通道 join 兜底，SFTP 等无 shell 的会话
+        // 此前没有注册任何监听，断线后 UI 无感知（只能靠下次操作失败暴露）
+        try {
+            client.transport.setDisconnectListener(object : DisconnectListener {
+                override fun notifyDisconnect(reason: DisconnectReason, message: String) {
+                    TermLog.w("ssh") { "transport disconnect $reason: $message" }
+                    handleClosed()
+                }
+            })
+        } catch (_: Exception) {
+        }
     }
 
     override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {

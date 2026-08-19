@@ -109,6 +109,9 @@ class SftpUiState {
     var path by mutableStateOf("")
     var entries by mutableStateOf<List<SftpEntry>?>(null)
     var loadError by mutableStateOf<String?>(null)
+    /** 底层连接已断开（onClosed 主动推送）：banner 立即显示，可手动重连。
+     *  此前断开无感知（onClosed 空实现），只能靠切 tab 重组后 reload 失败才暴露。 */
+    var disconnected by mutableStateOf(false)
     /** 断线重连中：顶部显示琥珀色「重新连接中…」banner（同终端重连样式）。 */
     var reconnecting by mutableStateOf(false)
     /** 断线自动重连是否已尝试：跨重组保留，整个会话生命周期只自动一次（防循环）。 */
@@ -259,7 +262,7 @@ fun SftpContent(
     // 标记放 uiState：tab 重组（重连成功后替换 session）会重置 remember，
     // 放 uiState 才能保证整个会话生命周期只自动重连一次，防循环。
     LaunchedEffect(Unit) {
-        if ((loadError != null || session == null) && !state.autoReconnectAttempted) {
+        if ((loadError != null || session == null || state.disconnected) && !state.autoReconnectAttempted) {
             state.autoReconnectAttempted = true
             state.reconnecting = true
             onReconnect()
@@ -420,7 +423,7 @@ fun SftpContent(
             // 断线 banner：样式与终端页对齐（红色=断开 + 重连按钮 / 琥珀=重连中）
             val bannerText = when {
                 state.reconnecting -> s.sftpReconnecting
-                loadError != null -> s.sftpDisconnected
+                state.disconnected || loadError != null -> s.sftpDisconnected
                 else -> null
             }
             if (bannerText != null) {

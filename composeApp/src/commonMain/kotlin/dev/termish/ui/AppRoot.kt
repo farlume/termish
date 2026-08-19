@@ -155,7 +155,19 @@ fun AppRoot(repository: HostRepository) {
             override suspend fun onOutput(data: ByteArray) {}
             override suspend fun onStderr(data: ByteArray) {}
             override fun onExitStatus(status: Int) {}
-            override fun onClosed(reason: String?) {}
+            override fun onClosed(reason: String?) {
+                // SFTP 断开主动推送：立即置 disconnected（banner 红条 + 重连入口）。
+                // 此前空实现：断开无感知，只能靠切 tab 重组后 reload 失败才暴露
+                //（条目可能已被移除：正常关闭不误标）
+                val entry = sessionManager.sftpSessions
+                    .firstOrNull { it.host.id == host.id && it.session != null }
+                if (entry != null) {
+                    scope.launch {
+                        TermLog.w("sftp") { "sftp closed ${host.name}: ${reason ?: "unknown"}" }
+                        entry.uiState.disconnected = true
+                    }
+                }
+            }
             override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
                 val req = AuthPromptRequest(prompt)
                 sftpAuth = req
@@ -594,8 +606,9 @@ fun AppRoot(repository: HostRepository) {
                                         establishSftp(tab.host) { newSession ->
                                             entry?.let { sessionManager.reconnectSftp(it, newSession) }
                                             currentTab = SessionTab.Sftp(tab.host, newSession, tab.uiState)
-                                            // 重连成功：清除重连中状态，SftpContent 继续用原路径浏览
+                                            // 重连成功：清除重连中/断开状态，SftpContent 继续用原路径浏览
                                             tab.uiState.reconnecting = false
+                                            tab.uiState.disconnected = false
                                         }
                                     } catch (e: Exception) {
                                         // 重连失败：保持 banner，用户可点按钮重试
