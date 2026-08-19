@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
-  # 注意：公开仓库 + self-hosted runner = RCE 风险（PR 可提交任意代码到 NAS 执行），
-  # 故开源后禁用 pull_request 触发；如需 PR CI，改用 GitHub hosted runner 再恢复
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -18,6 +18,7 @@ permissions:
 jobs:
   # ---------------------------------------------------------------------------
   # Android：单测 + lint 始终跑；debug/release 产物全部上传 artifact 留档
+  #（PR 只跑检查，不打包省额度）
   #
   # release 签名是可选的：仓库配置好下面 4 个 Secrets 后自动签名，
   # 未配置时产出未签名 APK/AAB（仅用于自测）。
@@ -28,15 +29,12 @@ jobs:
   # ---------------------------------------------------------------------------
   android:
     name: Android (APK + AAB)
-    # Android 构建跑自托管 runner（NAS）：GitHub hosted 分钟数额度已耗尽
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      # self-hosted（NAS）已预装 JDK17（.env 的 JAVA_HOME），跳过下载避免网络超时
       - uses: actions/setup-java@v4
-        if: runner.environment == 'github-hosted'
         with:
           distribution: temurin
           java-version: "17"
@@ -71,6 +69,7 @@ jobs:
             :composeApp:lintRelease
 
       - name: Build debug APK
+        if: github.event_name != 'pull_request'
         run: ./gradlew :composeApp:assembleDebug
 
       # release 签名：secrets 以环境变量注入，build.gradle.kts 直接读取并解码 base64，
@@ -88,6 +87,7 @@ jobs:
             :composeApp:bundleRelease
 
       - name: Upload debug APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: android-debug
@@ -105,52 +105,33 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 桌面端：DMG (macOS) / DEB (Linux) / MSI (Windows)，三平台并行打包；
-  # PR 只跑 Linux 单测，不打包
+  # 桌面（Linux）：单测 + 集成测试（自启动测试 sshd）+ DEB 打包；
+  # PR 只跑测试不打包。macOS/Windows 打包在 desktop-extra（仅 tag 发版时跑，
+  # macOS 计费 10x 分钟，日常 main push 不烧额度）
   # ---------------------------------------------------------------------------
   desktop:
-    name: Desktop (${{ matrix.platform }})
-    # 注意：job 级 if 不可用 matrix context（GitHub 限制）
-    # macOS/Windows 暂从 matrix 移除：hosted 额度被暂停（账单问题），
-    # NAS 只能打 Linux 包；账单恢复后加回（见 git 历史中的原配置）
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: Linux
-            os: ubuntu-latest
-            # Linux 桌面包跑自托管 runner（NAS）：hosted 额度已耗尽
-            runner: [self-hosted, Linux, X64]
-            task: packageDeb
-            artifact_path: composeApp/build/compose/binaries/main/deb/*.deb
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    name: Desktop (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      # self-hosted（NAS）已预装 JDK17，跳过下载避免网络超时
       - uses: actions/setup-java@v4
-        if: runner.environment == 'github-hosted'
         with:
           distribution: temurin
           java-version: "17"
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # 测试在 Linux 上跑一次即可（commonTest 与 JVM 逻辑跨平台一致），
-      # 失败则本平台不打包。集成测试需要本地 sshd：
-      # 先安装并启动测试 sshd，desktopTest 会按 22222 端口可用性自动跑或 SKIP
+      # openssh-server/netcat-openbsd：desktopTest 集成测试自启动 sshd(22222)
+      # binutils(objcopy)：jlink 生成运行时镜像时剥离原生库调试符号，
+      #   最小化 Debian 不自带，缺失会报 "Cannot run program objcopy" 导致 createRuntimeImage 失败
       - name: Install sshd + binutils for tests/package
-        if: matrix.platform == 'Linux'
-        # openssh-server/netcat-openbsd：desktopTest 集成测试自启动 sshd(22222)
-        # binutils(objcopy)：jlink 生成运行时镜像时剥离原生库调试符号，
-        #   最小化 Debian 不自带，缺失会报 "Cannot run program objcopy" 导致 createRuntimeImage 失败
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd binutils
 
       - name: Start test sshd
-        if: matrix.platform == 'Linux'
         # Ubuntu 需要特权分离目录 /run/sshd（root 创建一次）；
         # sshd 必须以非 root 运行：root sshd 会拒绝锁定账号（GitHub runner
         # 用户无密码被锁），且 root 属主的 authorized_keys 对非 root 认证
@@ -160,16 +141,57 @@ jobs:
           bash scripts/test-sshd.sh
 
       - name: Run desktop tests
-        if: matrix.platform == 'Linux'
         # 集成测试按 sshd(22222) 可用性自我探测，无需 TERMISH_TEST_RUN
         run: ./gradlew :composeApp:desktopTest
 
-      - name: Package (${{ matrix.platform }})
+      - name: Package (Linux)
         if: github.event_name != 'pull_request'
-        run: ./gradlew :composeApp:${{ matrix.task }}
+        run: ./gradlew :composeApp:packageDeb
 
       - name: Upload artifact
         if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-Linux
+          path: composeApp/build/compose/binaries/main/deb/*.deb
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 桌面（macOS/Windows）：仅 tag 发版时打包 DMG/MSI（10x/2x 计费，不日常跑）；
+  # 单测已由 Linux job 覆盖（commonTest 与 JVM 逻辑跨平台一致），这里只打包
+  # ---------------------------------------------------------------------------
+  desktop-extra:
+    name: Desktop (${{ matrix.platform }})
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS
+            os: macos-14
+            task: packageDmg
+            artifact_path: composeApp/build/compose/binaries/main/dmg/*.dmg
+          - platform: Windows
+            os: windows-latest
+            task: packageMsi
+            artifact_path: composeApp/build/compose/binaries/main/msi/*.msi
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Package (${{ matrix.platform }})
+        run: ./gradlew :composeApp:${{ matrix.task }}
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}
@@ -182,9 +204,8 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop]
-    # 也走自托管（NAS 有 gh CLI，GH_TOKEN 由 Actions 注入，无需本地登录）
-    runs-on: [self-hosted, Linux, X64]
+    needs: [android, desktop, desktop-extra]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -217,6 +238,7 @@ jobs:
               mv "$f" "Termish-$VER-$name"
             fi
           done
+          # DMG/MSI 由 jpackage 命名（自带版本号）且单文件上传后已在顶层，原样保留
           rm -rf apk bundle deb
           ls -l
 
