@@ -7,9 +7,16 @@ import java.net.Socket
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
+import org.junit.Rule
+import org.junit.rules.Timeout
 
 /** sshj SFTP 集成测试：连本地测试 sshd，验证列目录 / 建目录 / 上传。 */
 class SftpIntegrationTest {
+
+    /** 护栏：任何用例挂死 90s 必失败而非拖死 CI（曾因 sshj 无限等回包挂死）。 */
+    @get:Rule
+    @JvmField
+    val timeout = Timeout(90_000)
 
     private fun env(key: String, default: String): String = System.getenv(key) ?: default
 
@@ -53,7 +60,12 @@ class SftpIntegrationTest {
 
             val dir = "$base/sftp_test_${System.currentTimeMillis()}"
             session.mkdir(dir)
-            session.upload("$dir/hello.txt", "hello sftp".encodeToByteArray())
+            val payload = "hello sftp".encodeToByteArray()
+            var served = false
+            session.upload("$dir/hello.txt", payload.size.toLong()) {
+                // 必须返回一次后送 null（EOF）：nextChunk 永不返 null = 无限上传（曾致挂死 6.6 亿包）
+                if (served) null else { served = true; payload }
+            }
 
             val listed = session.list(dir)
             val file = listed.firstOrNull { it.name == "hello.txt" }
@@ -76,9 +88,11 @@ class SftpIntegrationTest {
         try {
             val dir = "/tmp/termish_test/sftp_bin_${System.currentTimeMillis()}"
             session.mkdir(dir)
-            // 覆盖 0x00-0xFF 全部字节值（非 UTF-8 文本），验证 upload/download 字节无损
+            // 覆盖 0x00-0xFF 全部字节值（非 UTF-8 文本），验证 upload/download 字节无损；
+            // 分块回调模拟流式源（8KB 块 × 多块），验证多块路径与大块内存不驻留
             val data = ByteArray(256 * 257) { (it % 256).toByte() }
-            session.upload("$dir/bin.dat", data)
+            val chunks = data.toList().chunked(8 * 1024).map { it.toByteArray() }.iterator()
+            session.upload("$dir/bin.dat", data.size.toLong()) { if (chunks.hasNext()) chunks.next() else null }
 
             val out = ByteArrayOutputStream()
             session.download("$dir/bin.dat") { chunk -> out.write(chunk) }

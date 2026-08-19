@@ -244,8 +244,9 @@ internal class SessionConnector(
                 // 路径保持原样：直接降级到 herdr exec）
                 if (missing && onDegraded == null) {
                     TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
-                    finishConnected(s, sendStartup = false)
+                    // 先置引导态再置 CONNECTED（同 herdr 分支：消除状态中间帧）
                     c.moshNeedsInstall = true
+                    finishConnected(s, sendStartup = false)
                     return
                 }
                 TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——降级" }
@@ -366,8 +367,10 @@ internal class SessionConnector(
                 //（banner 显示安装按钮，点击后自动装并继续 HERDR 连接）
                 TermLog.w("herdr") { "HERDR not found ${c.host.name}: 引导安装" }
                 c.herdrSuppressShellOutput = false
-                finishConnected(s, sendStartup = false)
+                // 先置引导态再置 CONNECTED：awaitStatus(CONNECTED) 后立即断言
+                // herdrNeedsInstall 的测试/竞态不会看到中间帧（反序则有一帧窗口）
                 c.herdrNeedsInstall = true
+                finishConnected(s, sendStartup = false)
                 return
             }
             val herdrBin = probed.bin

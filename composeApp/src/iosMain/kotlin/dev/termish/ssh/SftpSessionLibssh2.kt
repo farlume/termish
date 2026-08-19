@@ -196,24 +196,30 @@ private class SftpSessionLibssh2(
         }
     }
 
-    override fun upload(remotePath: String, content: ByteArray) {
+    override fun upload(
+        remotePath: String,
+        totalSize: Long,
+        onProgress: (sent: Long, total: Long) -> Unit,
+        nextChunk: () -> ByteArray?,
+    ) {
         val s = sftpOrThrow()
         val flags = (LIBSSH2_FXF_WRITE or LIBSSH2_FXF_CREAT or LIBSSH2_FXF_TRUNC).toULong()
         val h = libssh2_sftp_open_ex(s, remotePath, remotePath.length.toUInt(), flags, 0x1A4L, 0)
             ?: throw SshException("SFTP 打开文件失败: $remotePath")
         try {
-            // 字节分块写入：避免把二进制解码成文本导致内容损坏
-            val chunk = 32 * 1024
-            var off = 0
-            while (off < content.size) {
-                val len = minOf(chunk, content.size - off)
-                content.usePinned { pinned ->
+            // 拉取分块逐块写：内存峰值 = 单块大小，与 download 对称
+            var sent = 0L
+            while (true) {
+                // 防御：声明了 totalSize 的源不得超发（同 JVM 实现）
+                if (totalSize > 0 && sent >= totalSize) break
+                val chunk = nextChunk() ?: break
+                chunk.usePinned { pinned ->
                     var written = 0
-                    while (written < len) {
+                    while (written < chunk.size) {
                         var guard = 0
                         while (true) {
                             val n = termish_sftp_write(
-                                h, pinned.addressOf(off + written).reinterpret(), (len - written).toULong(),
+                                h, pinned.addressOf(written).reinterpret(), (chunk.size - written).toULong(),
                             )
                             if (n > 0) {
                                 written += n.toInt()
@@ -227,7 +233,8 @@ private class SftpSessionLibssh2(
                         }
                     }
                 }
-                off += len
+                sent += chunk.size
+                onProgress(sent, totalSize)
             }
         } finally {
             libssh2_sftp_close_handle(h)

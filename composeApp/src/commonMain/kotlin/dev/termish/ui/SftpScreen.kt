@@ -276,16 +276,32 @@ fun SftpContent(
         onReconnect()
     }
 
-    val pickFile = rememberFilePicker { name, bytes ->
+    val pickFile = rememberFilePicker { name, size, readChunk ->
         val sc = session ?: return@rememberFilePicker
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    sc.upload(joinPath(path, name), bytes)
+                    var lastEmitted = 0L
+                    sc.upload(
+                        joinPath(path, name),
+                        size,
+                        onProgress = { sent, total ->
+                            // 节流同下载：每 1%（或 64KB，total 未知时）更新一次
+                            val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
+                            if (sent - lastEmitted >= step || (total > 0 && sent >= total)) {
+                                lastEmitted = sent
+                                scope.launch(Dispatchers.Main) {
+                                    downloadProgress = DownloadProgress(name, sent, total)
+                                }
+                            }
+                        },
+                    ) { readChunk() }
                 }
+                downloadProgress = null
                 snackbar.showSnackbar(s.sftpUploaded)
                 reload()
             } catch (e: Exception) {
+                downloadProgress = null
                 snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "upload"))
             }
         }

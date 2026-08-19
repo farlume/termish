@@ -107,7 +107,13 @@ class SessionManagerTest {
             override fun list(path: String) = emptyList<SftpEntry>()
             override fun mkdir(path: String) {}
             override fun home() = "/home/root"
-            override fun upload(remotePath: String, content: ByteArray) {}
+            override fun upload(
+                remotePath: String,
+                totalSize: Long,
+                onProgress: (sent: Long, total: Long) -> Unit,
+                nextChunk: () -> ByteArray?,
+            ) {
+            }
             override fun download(
                 remotePath: String,
                 onProgress: (loaded: Long, total: Long) -> Unit,
@@ -179,7 +185,13 @@ class SessionManagerTest {
             override fun list(path: String) = emptyList<SftpEntry>()
             override fun mkdir(path: String) {}
             override fun home() = "/home/root"
-            override fun upload(remotePath: String, content: ByteArray) {}
+            override fun upload(
+                remotePath: String,
+                totalSize: Long,
+                onProgress: (sent: Long, total: Long) -> Unit,
+                nextChunk: () -> ByteArray?,
+            ) {
+            }
             override fun download(
                 remotePath: String,
                 onProgress: (loaded: Long, total: Long) -> Unit,

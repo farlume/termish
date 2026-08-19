@@ -37,6 +37,10 @@ import java.util.Base64
 class SshSessionSshj(
     private val connection: SshConnection,
     private val callbacks: SshCallbacks,
+    /** socket 读超时（毫秒，0 = 不限时）。终端 shell 传 0（交互流不能限时）；
+     *  SFTP 等请求-响应式通道传有限值（如 30s）：单次请求超时必是连接异常，
+     *  否则 write/list 挂在无线等待上，断线后 UI 永远“传输中”。 */
+    private val readTimeoutMs: Long = 0L,
 ) : SshSession {
 
     private val client = SSHClient()
@@ -92,7 +96,7 @@ class SshSessionSshj(
         })
 
         client.setConnectTimeout(connection.connectTimeoutMillis.toInt())
-        client.setTimeout(0) // 交互会话不设读超时
+        client.setTimeout(readTimeoutMs.toInt()) // 交互 shell=0 不限时；SFTP 请求-响应式限时
 
         client.connect(connection.host, connection.port)
         // sshj 的 connect() 阻塞到 KEX 完成：TCP 与 KEX 合并为一个阶段

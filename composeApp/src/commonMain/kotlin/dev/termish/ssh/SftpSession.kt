@@ -29,8 +29,17 @@ interface SftpSession {
      */
     fun home(): String
 
-    /** 上传字节内容到远端路径。 */
-    fun upload(remotePath: String, content: ByteArray)
+    /**
+     * 流式上传：反复回调 [nextChunk] 取下一块（返回 null = EOF），逐块写远端，
+     * 任意大小文件都不在内存里整体驻留（与 [download] 的分块回调对称）。
+     * [totalSize] 用于进度显示（未知传 0）；[onProgress] 回调已传/总字节数。
+     */
+    fun upload(
+        remotePath: String,
+        totalSize: Long,
+        onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+        nextChunk: () -> ByteArray?,
+    )
 
     /**
      * 下载远端文件到本地：以 64KB 左右的分块回调 [onChunk]（阻塞调用）。

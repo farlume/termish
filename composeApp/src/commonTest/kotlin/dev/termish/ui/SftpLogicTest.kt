@@ -113,7 +113,13 @@ class SftpLogicTest {
         override fun list(path: String): List<SftpEntry> = tree[path] ?: emptyList()
         override fun mkdir(path: String) {}
         override fun home(): String = "/"
-        override fun upload(remotePath: String, content: ByteArray) {}
+        override fun upload(
+            remotePath: String,
+            totalSize: Long,
+            onProgress: (sent: Long, total: Long) -> Unit,
+            nextChunk: () -> ByteArray?,
+        ) {
+        }
         override fun download(
             remotePath: String,
             onProgress: (loaded: Long, total: Long) -> Unit,

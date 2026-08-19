@@ -482,7 +482,9 @@ class TerminalControllerTest {
         assertTrue(c.moshNeedsInstall)
 
         c.installMosh()
-        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+        // 等组合终态而非仅 !moshInstalling：安装完会重引导（失败才回置
+        // moshNeedsInstall），单等标志会抢在重引导完成前断言（flaky 根因）
+        runBlocking { withTimeout(5_000) { while (!(!c.moshInstalling && c.moshNeedsInstall)) delay(10) } }
 
         assertTrue(installed, "应执行包管理器安装命令")
         assertTrue(f.execCommands.any { it.contains("sudo -n apt-get") }, "非 root 免密 sudo 前缀")
@@ -520,15 +522,16 @@ class TerminalControllerTest {
         awaitStatus(c, ConnStatus.CONNECTED)
         assertTrue(c.moshNeedsInstall)
 
-        // 首次点击（无密码）：探测发现需要 sudo 密码 → 卡片提示输入
+        // 首次点击（无密码）：探测发现需要 sudo 密码 → 卡片提示输入（终态 =
+        // !moshInstalling && moshNeedsSudoPassword）
         c.installMosh()
-        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+        runBlocking { withTimeout(5_000) { while (!(!c.moshInstalling && c.moshNeedsSudoPassword)) delay(10) } }
         assertTrue(c.moshNeedsSudoPassword, "应提示输入 sudo 密码")
         assertTrue(!f.execCommands.any { it.contains("sudo -S") }, "无密码时不应执行安装")
 
-        // 输入密码后重试：sudo -S 经 exec stdin 收密码
+        // 输入密码后重试：sudo -S 经 exec stdin 收密码（终态 = 安装全链路结束）
         c.installMosh("p@ss'w0rd")
-        runBlocking { withTimeout(5_000) { while (c.moshInstalling) delay(10) } }
+        runBlocking { withTimeout(5_000) { while (!(!c.moshInstalling && !c.moshNeedsSudoPassword)) delay(10) } }
 
         assertTrue(f.execCommands.any { it.contains("sudo -S -p '' sh -c") }, "应走 sudo -S 非交互")
         assertEquals("p@ss'w0rd\n", passwordSeen, "密码经 stdin 送达，不进命令字符串")

@@ -1,10 +1,8 @@
 package dev.termish.ssh
 
-import java.io.ByteArrayInputStream
 import net.schmizz.sshj.sftp.FileMode
+import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.SFTPClient
-import net.schmizz.sshj.xfer.LocalFileFilter
-import net.schmizz.sshj.xfer.LocalSourceFile
 import net.schmizz.sshj.xfer.FilePermission
 
 actual fun createSftpSession(connection: SshConnection, callbacks: SshCallbacks): SftpSession =
@@ -19,7 +17,9 @@ class SftpSessionSshj(
     private val connection: SshConnection,
     private val callbacks: SshCallbacks,
 ) : SftpSession {
-    private val ssh = SshSessionSshj(connection, callbacks)
+    // SFTP 是请求-响应式（open/read/write/close 每个都等回包）：30s 无响应必是
+    // 断链/异常，限时失败才能被 UI 捕获提示，否则无线挂死（连接被掐后 write 等不到回包）
+    private val ssh = SshSessionSshj(connection, callbacks, readTimeoutMs = 30_000L)
     private var client: SFTPClient? = null
 
     private fun clientOrThrow(): SFTPClient =
@@ -46,21 +46,36 @@ class SftpSessionSshj(
 
     override fun home(): String = clientOrThrow().canonicalize(".")
 
-    override fun upload(remotePath: String, content: ByteArray) {
+    override fun upload(
+        remotePath: String,
+        totalSize: Long,
+        onProgress: (sent: Long, total: Long) -> Unit,
+        nextChunk: () -> ByteArray?,
+    ) {
         val c = clientOrThrow()
-        val source = object : LocalSourceFile {
-            override fun getName(): String = remotePath.substringAfterLast('/')
-            override fun getLength(): Long = content.size.toLong()
-            override fun getInputStream(): java.io.InputStream = ByteArrayInputStream(content)
-            override fun getPermissions(): Int = 0x1A4 // 0644
-            override fun isFile(): Boolean = true
-            override fun isDirectory(): Boolean = false
-            override fun getChildren(filter: LocalFileFilter?): Iterable<LocalSourceFile> = emptyList()
-            override fun providesAtimeMtime(): Boolean = false
-            override fun getLastAccessTime(): Long = 0L
-            override fun getLastModifiedTime(): Long = 0L
+        // 新建/截断写入（权限走服务器默认 umask，与远端 shell 重定向一致）；
+        // 分块推流：内存峰值 = 单块大小，与 download 对称
+        val remote = c.open(remotePath, setOf(OpenMode.CREAT, OpenMode.WRITE, OpenMode.TRUNC))
+        try {
+            val buf = ByteArray(64 * 1024)
+            var sent = 0L
+            while (true) {
+                // 防御：声明了 totalSize 的源不得超发（无限 nextChunk 会把远端磁盘灌爆/连接永不停）
+                if (totalSize > 0 && sent >= totalSize) break
+                val chunk = nextChunk() ?: break
+                var off = 0
+                while (off < chunk.size) {
+                    val n = minOf(buf.size, chunk.size - off)
+                    chunk.copyInto(buf, 0, off, off + n)
+                    remote.write(sent, buf, 0, n)
+                    off += n
+                    sent += n
+                    onProgress(sent, totalSize)
+                }
+            }
+        } finally {
+            remote.close()
         }
-        c.put(source, remotePath)
     }
 
     override fun download(
