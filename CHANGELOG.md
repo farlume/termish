@@ -3,6 +3,19 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+## [1.0.1] - 2026-08-19
+
+### 修复
+
+- **HERDR 模式进不了工作台**：sshd 非交互 exec 的 PATH 不含
+  `~/.local/bin` 时，探测命中 `$HOME` 前缀候选，但下游 mosh 引导
+  `-- '$HOME/...'` 的单引号不展开、mosh-server 直接 execvp 不过 shell，
+  报 `execvp: $HOME/.local/bin/herdr: No such file or directory`。
+  探测命中后先解析成绝对路径（`echo $HOME`）再贯穿引导/降级/重连全链路
+- 终端顶部状态飘条（连接中/重连中/失联/错误）改直角，贴合全宽终端视觉
+
 ## [1.0.0] - 2026-08-17
 
 首个正式版（versionCode 3）。此前所有构建均为内部测试，未公开分发；
@@ -106,5 +119,7 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[1.0.0]: https://github.com/ttermish/termish/releases/tag/v1.0.0
-[0.2.0]: https://github.com/ttermish/termish/releases
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/ttermish/termish/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/ttermish/termish/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/ttermish/termish/releases/tag/v0.2.0
