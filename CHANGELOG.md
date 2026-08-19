@@ -5,6 +5,26 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-19
+
+### 新增
+
+- **iOS App Store 上架准备**：隐私清单（PrivacyInfo.xcprivacy）、
+  中英双语 InfoPlist.strings、加密合规声明（标准协议豁免）、
+  iPhone-only 目标机型；提审材料草稿见 docs/appstore/submission.md
+
+### 修复
+
+- **iOS 项目文件损坏**：双语 InfoPlist.strings 的构建条目 isa 误写为
+  PBXVariantGroup，Xcode 解析项目即崩（unrecognized selector），
+  CI/Xcode Cloud 干净检出无法打开工程
+- **iOS 编译修复一批**：FilePicker 编译错误（NSObject import 错位 +
+  协调读取回调误用）；libssh2 长度参数从字符数改为字节数（UTF-8 多字节
+  路径下 SFTP 下载失败）；SFTP 上传补齐与断线防挂死；kbiHandler 泄漏；
+  herdr 引导重复探测去重
+- **CI 构建溯源**：main 分支测试包文件名带版本 + run 号 + 短 SHA，
+  下载后可溯源是哪次构建
+
 ## [1.0.1] - 2026-08-19
 
 ### 修复
@@ -119,7 +139,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/ttermish/termish/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/ttermish/termish/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/ttermish/termish/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/ttermish/termish/releases/tag/v0.2.0
