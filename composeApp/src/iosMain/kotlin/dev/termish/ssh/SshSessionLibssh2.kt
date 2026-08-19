@@ -186,8 +186,10 @@ class SshSessionLibssh2(
             ?: run { cleanup(); throw SshException("打开会话通道失败") }
         channel = ch
         val term = connection.terminalType
+        // cinterop 的 String 参数按 UTF-8 编码：长度必须传字节数（同 authenticate 的 username 约定）
+        val termLen = term.encodeToByteArray().size
         if (retryUntilSuccess {
-                libssh2_channel_request_pty_ex(ch, term, term.length.toUInt(), null, 0u, columns, rows, 0, 0)
+                libssh2_channel_request_pty_ex(ch, term, termLen.toUInt(), null, 0u, columns, rows, 0, 0)
             } != 0
         ) {
             cleanup()
@@ -272,12 +274,18 @@ class SshSessionLibssh2(
             }
         }
         // KBI 兜底（含二次验证场景）。kbiHandler 为全局单例，加互斥避免并发会话串话。
+        // 用完置空：staticCFunction 不能捕获变量导致全局持有 callbacks（→ controller
+        // → 10k 行 buffer），不清空则会话关闭后一直无法回收，直到下一次 KBI 覆盖
         val kbiOk = runBlocking {
             kbiMutex.withLock {
                 kbiHandler = callbacks::onPrompt
-                libssh2_userauth_keyboard_interactive_ex(
-                    s, connection.username, usernameBytes.size.toUInt(), kbiCallback,
-                ) == 0
+                try {
+                    libssh2_userauth_keyboard_interactive_ex(
+                        s, connection.username, usernameBytes.size.toUInt(), kbiCallback,
+                    ) == 0
+                } finally {
+                    kbiHandler = null
+                }
             }
         }
         if (kbiOk) return true
@@ -435,10 +443,14 @@ class SshSessionLibssh2(
             libssh2_session_set_blocking(s, 0)
             val ch = openChannel(s)
                 ?: throw SshException("打开 exec 通道失败")
-            if (libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()).let {
+            // 命令可能含非 ASCII（文件名等）：长度传字节数，否则 UTF-8 截断
+            val cmdLen = command.encodeToByteArray().size
+            fun startExec(): Int =
+                libssh2_channel_process_startup(ch, "exec", 4u, command, cmdLen.toUInt())
+            if (startExec().let {
                     var rc = it
                     var guard = 0
-                    while (rc == LIBSSH2_ERROR_EAGAIN && guard++ < 300) { usleep(30_000u); rc = libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt()) }
+                    while (rc == LIBSSH2_ERROR_EAGAIN && guard++ < 300) { usleep(30_000u); rc = startExec() }
                     rc
                 } != 0
             ) {
@@ -493,9 +505,11 @@ class SshSessionLibssh2(
         val s = session ?: return null
         if (closed || channel == null) return null
         val ch = openChannel(s) ?: return null
+        // 命令可能含非 ASCII：长度传字节数（UTF-8 截断会让远端拿到半个字符）
+        val cmdLen = command.encodeToByteArray().size
         return try {
             if (retryUntilSuccess {
-                    libssh2_channel_process_startup(ch, "exec", 4u, command, command.length.toUInt())
+                    libssh2_channel_process_startup(ch, "exec", 4u, command, cmdLen.toUInt())
                 } != 0
             ) {
                 return null
