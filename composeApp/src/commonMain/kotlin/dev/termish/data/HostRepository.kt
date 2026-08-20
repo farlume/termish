@@ -46,20 +46,27 @@ class HostRepository(
     }
 
     fun touchConnected(id: String, fingerprint: String?) {
-        val hosts = listHosts().map { h ->
-            if (h.id == id) h.copy(
+        patchHost(id) {
+            it.copy(
                 lastConnectedAt = currentTimeMillis(),
-                knownHostFingerprint = fingerprint ?: h.knownHostFingerprint,
-            ) else h
+                knownHostFingerprint = fingerprint ?: it.knownHostFingerprint,
+            )
         }
-        saveHosts(hosts)
     }
 
     /** 仅记录主机密钥指纹（TOFU 弹窗点信任后立即调用，与后续认证成败解耦）。 */
     fun recordHostKey(id: String, fingerprint: String) {
-        val hosts = listHosts().map { h ->
-            if (h.id == id) h.copy(knownHostFingerprint = fingerprint) else h
-        }
+        patchHost(id) { it.copy(knownHostFingerprint = fingerprint) }
+    }
+
+    /**
+     * 部分字段更新：以仓库最新值为基础变换，不整条覆盖——控制器持有的
+     * host 是创建时快照，连接期间其它字段可能已更新（TOFU 指纹、
+     * lastConnectedAt），用快照 upsert 会把它们抹掉（新主机指纹丢失
+     * → 每次重连重复弹确认窗的根因）。
+     */
+    fun patchHost(id: String, transform: (Host) -> Host) {
+        val hosts = listHosts().map { h -> if (h.id == id) transform(h) else h }
         saveHosts(hosts)
     }
 

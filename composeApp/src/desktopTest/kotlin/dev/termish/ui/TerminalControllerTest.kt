@@ -208,6 +208,29 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun systemProbeDoesNotEraseFingerprint() {
+        // 回归：连接成功后系统探测用 c.host 创建时快照整条 upsert，把
+        // touchConnected/TOFU 刚记录的指纹抹掉 → 每次重连/新会话/SFTP
+        // 都重复弹确认窗（新主机 system 必为空，探测必触发）
+        val (c, _, r) = controller(
+            FakeSsh(commandHandler = { cmd ->
+                if (cmd.contains("os-release")) "ID=ubuntu" else null
+            }),
+        )
+        r.upsertHost(host())
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        // 等探测完成（system 落盘）后断言指纹仍在：两者共存
+        runBlocking {
+            withTimeout(5_000) { while (r.getHost("h1")?.system.isNullOrBlank()) delay(10) }
+        }
+        assertEquals("ubuntu", r.getHost("h1")!!.system)
+        assertEquals("SHA256:test", r.getHost("h1")!!.knownHostFingerprint, "系统探测不应抹掉已记录指纹")
+        c.destroy()
+    }
+
+    @Test
     fun connectSendsStartupCommand() {
         val (c, fake, _) = controller(FakeSsh(), startup = "tmux new -A -s main")
         c.connect(80, 24)

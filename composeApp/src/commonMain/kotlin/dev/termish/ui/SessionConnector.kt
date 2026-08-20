@@ -243,9 +243,10 @@ internal class SessionConnector(
             val parsed = raw?.let { parseMoshConnect(it) }
             detectSystemFromOutput(raw ?: "")?.takeIf { it.isNotBlank() }?.let { detected ->
                 if (c.host.system.isBlank()) {
-                    val updated = c.host.copy(system = detected)
-                    c.repository.upsertHost(updated)
-                    c.onSystemDetected?.invoke(updated)
+                    // 只更新 system 字段（基于仓库最新值）：c.host 是创建时快照，
+                    // 整条 upsert 会抹掉刚记录的 TOFU 指纹（新主机重连重复弹窗）
+                    c.repository.patchHost(c.host.id) { it.copy(system = detected) }
+                    c.onSystemDetected?.invoke(c.host.copy(system = detected))
                 }
             }
             if (parsed == null) {
@@ -615,9 +616,10 @@ internal class SessionConnector(
                 TermLog.d("ssh") { "probeSystem ${c.host.name}: ${raw?.take(60) ?: "null"}" }
                 val detected = raw?.let { detectSystemFromOutput(it) }
                 if (detected != null && detected.isNotBlank() && c.status == ConnStatus.CONNECTED) {
-                    val updated = c.host.copy(system = detected)
-                    c.repository.upsertHost(updated)
-                    c.onSystemDetected?.invoke(updated)
+                    // 只更新 system 字段（基于仓库最新值）：c.host 是创建时快照，
+                    // 整条 upsert 会抹掉刚记录的 TOFU 指纹（新主机重连重复弹窗）
+                    c.repository.patchHost(c.host.id) { it.copy(system = detected) }
+                    c.onSystemDetected?.invoke(c.host.copy(system = detected))
                 }
             }
         }
