@@ -11,6 +11,12 @@ mosh 官方客户端是 GPLv3，与本项目 MIT 许可冲突。`dev.termish.mos
 实现（SSP 协议 + AES-128-OCB + zlib 分片 + UDP 直连），不需要任何 GPL 原生二进制。
 实现基于公开的协议行为规格与线上报文格式，与官方客户端保持线上兼容。
 
+## 实现依据
+
+独立 Kotlin 重写：SSP 线上协议（wire format 与 proto 字段号是互操作所必需）、
+AES-128-OCB（RFC 7253，配套 RFC 向量测试）、zlib（RFC 1950/1951）。
+代码中标注的 mosh 引用均为行为对照（线上兼容约束），非代码复制。
+
 ## 分层与独立性
 
 mosh 分两层，边界刻意保持干净：

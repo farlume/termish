@@ -250,7 +250,7 @@ class KmpMoshSession(
                 return
             }
             // 正常关闭路径：对端 ack 了我们的 shutdown，或我们已确认对端 shutdown——
-            // 都算干净退出（mosh client.cc 的 shutdown_acknowledged /
+            // 都算干净退出（SSP 关闭握手语义：shutdown_acknowledged /
             // counterparty_shutdown_ack_sent）
             if ((transport.shutdownInProgress && transport.shutdownAcknowledged()) ||
                 transport.counterpartyShutdownAckSent()

@@ -2,7 +2,7 @@ package dev.termish.mosh
 
 /**
  * SSP 分片层：Fragment 线上格式 = 8B instruction id || 2B (final<<15 | num) || 内容。
- * 与 mosh transportfragment.cc 一一对应。
+ * 线上格式与 mosh 的 SSP 分片协议一致（互操作所必需），实现为独立 Kotlin 重写。
  */
 internal class Fragment(
     val id: ULong,
@@ -98,7 +98,7 @@ internal class Fragmenter {
     fun makeFragments(inst: TransportInstruction, mtu: Int): List<Fragment> {
         val usable = mtu - Fragment.HEADER_LEN
         val last = lastInstruction
-        // mosh transportfragment.cc：old/new 相同则 diff 必须一致（防重发内容漂移）
+        // SSP 语义：同 old/new 的重发必须携带相同 diff（防重发内容漂移）
         if (last != null && inst.oldNum == last.oldNum && inst.newNum == last.newNum) {
             check(inst.diff.contentEquals(last.diff)) { "同 old/new 的 diff 不一致" }
         }

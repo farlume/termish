@@ -423,7 +423,7 @@ internal class MoshTransport(
     private val prng = kotlin.random.Random.Default
 
     companion object {
-        /** uint16 环绕安全的差值（network.cc timestamp_diff）。 */
+        /** uint16 环绕安全的差值（SSP 时间戳语义，与 mosh 行为一致）。 */
         fun timestampDiff(newer: Int, older: Int): Int = ((newer - older) + 65536) % 65536
     }
 }
