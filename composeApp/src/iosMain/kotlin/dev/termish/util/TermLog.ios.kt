@@ -2,6 +2,9 @@
 
 package dev.termish.util
 
+import kotlinx.cinterop.cstr
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
 import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSLog
@@ -14,8 +17,11 @@ import platform.UIKit.UIApplication
 actual val termLogEnabled: Boolean = kotlin.native.Platform.isDebugBinary
 
 actual fun platformLog(level: Char, tag: String, msg: String) {
-    // 变参不支持 Char（不对应 C 类型），转 String
-    NSLog("[%s/%s] %@", level.toString(), tag, msg)
+    // K/N 的 NSLog vararg 不会把 Kotlin String 桥接为 NSString：%@ 会拿到字符串内部数据指针并崩溃。
+    // 用 %s + C 字符串指针，避开 ObjC 对象桥接。
+    memScoped {
+        NSLog("[%s/%s] %s", level.toString().cstr.ptr, tag.cstr.ptr, msg.cstr.ptr)
+    }
 }
 
 /** 日志目录：Documents/logs（iTunes 文件共享可见，方便导出）。 */
