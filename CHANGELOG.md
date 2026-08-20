@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-08-20
+
+### 变更
+
+- **herdr 从连接模式降为连接选项**：herdr 是远端应用而非传输协议，与
+  SSH/Mosh 同层单选属分层错位。改为「连接后启动 herdr 工作台」勾选项
+ （与传输层正交）：Mosh 下引导 `mosh-server new -- herdr` 直接跑 TUI；
+  SSH / 降级路径改为连接后注入 herdr 命令（退出回 shell，不再断开整个
+  会话）；删除专用 exec+pty 通道整套机制，连接编排净减 259 行
+
+### 修复
+
+- **新主机多次弹「确认服务器身份」**：连接成功后的系统探测用主机快照
+  整条覆盖，把刚记录的 TOFU 指纹抹回空——此后每次重连/新开会话/SFTP
+  都重复弹窗。改为基于仓库最新值的部分字段更新
+
 ## [1.1.5] - 2026-08-20
 
 ### 新增
@@ -195,7 +211,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.5...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.6...HEAD
+[1.1.6]: https://github.com/ttermish/termish/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/ttermish/termish/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/ttermish/termish/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/ttermish/termish/compare/v1.1.2...v1.1.3
