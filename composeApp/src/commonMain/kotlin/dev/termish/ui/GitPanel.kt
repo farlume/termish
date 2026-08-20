@@ -87,31 +87,37 @@ private const val DIFF_MAX_LINES = 600
 private val PROMPT_CWD_REGEX = Regex("""^[^\s@]+@[^\s:]+:([^\s$#]*)[$#]\s*$""")
 
 /**
- * 工作目录探测脚本（经 exec 通道执行，不碰交互终端）：
+ * 工作目录探测脚本（经 exec 通道执行，不碰交互终端；POSIX sh 兼容）：
  * 1. tmux 焦点 pane 路径（tmux 守护进程可查）
- * 2. agent 进程（pi/codex/claude）的 /proc cwd——全屏 TUI 运行时 shell 的
+ * 2. agent 进程（pi/codex/claude）的 cwd——全屏 TUI 运行时 shell 的
  *    cwd 就是 agent 启动前的项目目录（agent 是 shell 子进程，shell cwd 不变）
- * 3. 交互 shell（bash/zsh/fish）的 /proc cwd
+ * 3. 交互 shell（bash/zsh/fish）的 cwd
  * 候选 cwd 必须 `git rev-parse` 验证为仓库才返回（多个 shell 会话时取
  * 真正的工作区）；不用 tail -1（进程退出竞态会拿到死 pid）。
  * 4. 免验证兜底：任何交互 shell 的 cwd——无仓库时让面板给出「非 git
  *    仓库 / git 未安装」的准确错误，而不是探测失败回退到注入终端
+ *
+ * cwd 获取跨平台（cwd_of）：Linux 走 /proc/<pid>/cwd（毫秒级），无 /proc
+ * 的 macOS/BSD 退 lsof（`lsof -a -p <pid> -d cwd -Fn` 的 n<path> 行）——
+ * 此前只走 /proc，macOS 远端必然探测失败（面板报「无法确定远端工作目录」）。
  */
 private const val WORKDIR_PROBE_SCRIPT =
-    "tmux display-message -p '#{pane_current_path}' 2>/dev/null; " +
+    "cwd_of() { " +
+        "c=\$(readlink /proc/\$1/cwd 2>/dev/null); " +
+        "[ -n \"\$c\" ] || " +
+        "c=\$(lsof -a -p \$1 -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1); " +
+        "printf '%s' \"\$c\"; }; " +
+        "probe() { " +
+        "c=\$(cwd_of \$1); " +
+        "[ -n \"\$c\" ] && git -C \"\$c\" rev-parse --git-dir >/dev/null 2>&1 && { echo \"\$c\"; exit 0; }; }; " +
+        "tmux display-message -p '#{pane_current_path}' 2>/dev/null; " +
         "for p in pi pi-coding-agent codex claude; do " +
-        "for pid in \$(pgrep -u \$(id -u) -x \$p 2>/dev/null); do " +
-        "c=\$(readlink /proc/\$pid/cwd 2>/dev/null); " +
-        "[ -n \"\$c\" ] && git -C \"\$c\" rev-parse --git-dir >/dev/null 2>&1 && { echo \"\$c\"; exit 0; }; " +
-        "done; done; " +
+        "for pid in \$(pgrep -u \$(id -u) -x \$p 2>/dev/null); do probe \$pid; done; done; " +
+        "for s in bash zsh fish; do " +
+        "for pid in \$(pgrep -u \$(id -u) -x \$s 2>/dev/null); do probe \$pid; done; done; " +
         "for s in bash zsh fish; do " +
         "for pid in \$(pgrep -u \$(id -u) -x \$s 2>/dev/null); do " +
-        "c=\$(readlink /proc/\$pid/cwd 2>/dev/null); " +
-        "[ -n \"\$c\" ] && git -C \"\$c\" rev-parse --git-dir >/dev/null 2>&1 && { echo \"\$c\"; exit 0; }; " +
-        "done; done; " +
-        "for s in bash zsh fish; do " +
-        "for pid in \$(pgrep -u \$(id -u) -x \$s 2>/dev/null); do " +
-        "c=\$(readlink /proc/\$pid/cwd 2>/dev/null); " +
+        "c=\$(cwd_of \$pid); " +
         "[ -n \"\$c\" ] && { echo \"\$c\"; exit 0; }; " +
         "done; done; echo ''"
 
