@@ -64,7 +64,8 @@ class TerminalControllerTest {
         host().copy(connectionMode = ConnectionMode.MOSH, launchHerdr = true)
 
     /** 最小合法 herdr 快照（HerdrSessionSnapshot 字段全有默认值）。 */
-    private val snapshotJson = """{"id":"x","result":{"snapshot":{}}}"""
+    // herdr --version 输出（探测判「已安装」用；snapshot 判 daemon 运行用）
+    private val versionOutput = "herdr 0.8.0"
 
     private class FakeExec(
         val onWrite: (ByteArray) -> Unit = {},
@@ -181,6 +182,19 @@ class TerminalControllerTest {
                 delay(10)
                 // 泵主线程消费者：fake exec 的读循环热转产空块会把 256 容量
                 // 输出队列灌满，不排干则读循环卡在背压上、后续状态永远等不到
+                scheduler.advanceUntilIdle()
+            }
+        }
+    }
+
+    /** 等待 shell 发送内容包含目标命令（带超时）。
+     *  finishConnected 先置 CONNECTED 再 sendData（UI 先亮连接态再注入启动命令，
+     *  有意顺序）：awaitStatus 返回后注入可能尚未落地，直接断言 f.sent 会撞
+     *  窗口——CI 慢机器上必现 flaky（v1.1.7 tag run 即此）。轮询等注入到达。 */
+    private fun awaitSent(f: FakeSsh, expected: String) = runBlocking {
+        withTimeout(5_000) {
+            while (f.sent.none { it.decodeToString() == expected }) {
+                delay(10)
                 scheduler.advanceUntilIdle()
             }
         }
@@ -356,7 +370,7 @@ class TerminalControllerTest {
         val fake = FakeSsh(
             commandHandler = { cmd ->
                 when {
-                    cmd.contains("api snapshot") -> if (installed) snapshotJson else null
+                    cmd.contains("--version") -> if (installed) versionOutput else null
                     else -> null
                 }
             },
@@ -412,7 +426,7 @@ class TerminalControllerTest {
         val fake = FakeSsh(
             commandHandler = { cmd ->
                 when {
-                    cmd.contains("api snapshot") -> snapshotJson
+                    cmd.contains("--version") -> versionOutput
                     else -> "mosh: command not found"
                 }
             },
@@ -433,7 +447,7 @@ class TerminalControllerTest {
         // herdr 命令（herdr 是 shell 子进程，退出后回到 shell）
         val fake = FakeSsh(
             commandHandler = { cmd ->
-                if (cmd.contains("api snapshot")) snapshotJson else null
+                if (cmd.contains("--version")) versionOutput else null
             },
             execFactory = { null },
         )
@@ -441,6 +455,7 @@ class TerminalControllerTest {
         c.moshDegradedToSsh = true
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
+        awaitSent(f, "herdr\n")
 
         assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "应经 shell 注入 herdr 命令")
         c.destroy()
@@ -452,9 +467,9 @@ class TerminalControllerTest {
         val probed = mutableListOf<String>()
         val fake = FakeSsh(
             commandHandler = { cmd ->
-                if (cmd.contains("api snapshot")) {
+                if (cmd.contains("--version")) {
                     probed += cmd
-                    if (cmd.startsWith("/usr/local/bin/herdr")) snapshotJson else null
+                    if (cmd.startsWith("/usr/local/bin/herdr")) versionOutput else null
                 } else {
                     null
                 }
@@ -492,8 +507,8 @@ class TerminalControllerTest {
             commandHandler = { cmd ->
                 commands += cmd
                 when (cmd) {
-                    "herdr api snapshot" -> null
-                    "\$HOME/.local/bin/herdr api snapshot" -> snapshotJson
+                    "herdr --version" -> null
+                    "\$HOME/.local/bin/herdr --version" -> versionOutput
                     "echo \$HOME" -> "/root"
                     else -> null
                 }
@@ -506,6 +521,7 @@ class TerminalControllerTest {
         awaitStatus(c, ConnStatus.CONNECTED)
 
         assertTrue(commands.contains("echo \$HOME"), "命中 \$HOME 候选后应解析绝对路径")
+        awaitSent(f, "/root/.local/bin/herdr\n")
         assertTrue(
             f.sent.any { it.decodeToString() == "/root/.local/bin/herdr\n" },
             "应注入解析后的绝对路径，实际: ${f.sent.map { it.decodeToString() }}",
@@ -530,8 +546,8 @@ class TerminalControllerTest {
                         "MOSH CONNECT 60000 AAAAAAAAAAAAAAAAAAAAAA"
                     }
                     // exec PATH 无 ~/.local/bin：裸 herdr 失败，$HOME 候选命中
-                    cmd == "herdr api snapshot" -> null
-                    cmd == "\$HOME/.local/bin/herdr api snapshot" -> snapshotJson
+                    cmd == "herdr --version" -> null
+                    cmd == "\$HOME/.local/bin/herdr --version" -> versionOutput
                     cmd == "echo \$HOME" -> "/root"
                     else -> null
                 }
@@ -567,7 +583,7 @@ class TerminalControllerTest {
                     cmd.contains("command -v mosh-server") -> if (installed) "/usr/bin/mosh-server" else null
                     cmd.contains("os-release") -> "ID=ubuntu"
                     cmd.contains("id -u") -> "0"
-                    cmd.contains("api snapshot") -> snapshotJson
+                    cmd.contains("--version") -> versionOutput
                     else -> null
                 }
             },
@@ -606,7 +622,7 @@ class TerminalControllerTest {
                         bootstrapCount++
                         "mosh: command not found"
                     }
-                    cmd.contains("api snapshot") -> snapshotJson
+                    cmd.contains("--version") -> versionOutput
                     else -> null
                 }
             },
@@ -619,6 +635,7 @@ class TerminalControllerTest {
 
         // 用户点「降级 SSH」：注入 herdr（探到的裸命令）
         c.degradeMoshToSsh()
+        awaitSent(f, "herdr\n")
         assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "降级应注入 herdr 命令，实际: ${f.sent.map { it.decodeToString() }}")
         assertTrue(c.moshDegradedToSsh, "降级应置 sticky 标记")
 

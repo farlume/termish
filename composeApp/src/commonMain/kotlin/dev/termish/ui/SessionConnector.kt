@@ -413,17 +413,18 @@ internal class SessionConnector(
                         c.herdrInstallLog = log.toString()
                     }
                 }
-                // 探测：install.sh 输出解析的实际路径 → $home/.local/bin → HerdrProbe 候选
+                // 探测：install.sh 输出解析的实际路径 → $home/.local/bin → HerdrProbe 候选。
+                // 用 --version（判安装）：刚装完 daemon 必然未运行，api snapshot 会
+                // server_not_running 报错——此前装完仍报失败正是这个误判
                 val probed = withContext(ioDispatcher()) {
                     val candidates = buildList {
                         parseInstallPath(log.toString())?.let(::add)
                         home?.let { add("$it/.local/bin/herdr") }
                     }.distinct()
                     val explicit = candidates.firstNotNullOfOrNull { path ->
-                        val raw = s.runCommand("${shSingleQuote(path)} api snapshot", 5_000)
-                        raw?.let { snap ->
-                            parseHerdrSnapshot(snap)?.let { HerdrProbe.Result(path, it) }
-                        }
+                        val raw = s.runCommand("${shSingleQuote(path)} --version", 5_000)
+                        raw?.takeIf { HerdrProbe.isVersionOutput(it) }
+                            ?.let { HerdrProbe.Result(path) }
                     }
                     explicit ?: HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
                 }
