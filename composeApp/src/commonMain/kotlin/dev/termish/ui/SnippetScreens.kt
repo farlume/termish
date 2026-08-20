@@ -54,6 +54,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,6 +74,7 @@ import dev.termish.data.Snippet
 import dev.termish.data.TagGroup
 import dev.termish.data.newId
 import dev.termish.ui.theme.Spacing
+import dev.termish.ui.theme.TerminalTheme
 import dev.termish.util.monospaceFontFamily
 import kotlinx.datetime.Clock
 
@@ -556,6 +558,8 @@ fun TagManagePage(
 @Composable
 fun SnippetInsertSheet(
     repository: HostRepository,
+    /** 终端主题：面板浮在终端画布上，配色跟随（与 Git 面板一致，不用应用主题）。 */
+    theme: TerminalTheme,
     /** content = 片段内容，run = true 表示直接执行（带回车）。 */
     onUse: (content: String, run: Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -576,7 +580,11 @@ fun SnippetInsertSheet(
         }
         .sortedByDescending { it.updatedAt }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = theme.background(),
+        contentColor = theme.foreground(),
+    ) {
         Column(
             Modifier
                 .fillMaxWidth()
@@ -591,22 +599,31 @@ fun SnippetInsertSheet(
                 s.snippetInsertTitle,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = theme.foreground(),
             )
             Text(
                 s.snippetInsertHint,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                color = theme.foreground().copy(alpha = 0.5f),
                 modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
             )
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(s.snippetsSearch) },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                placeholder = { Text(s.snippetsSearch, color = theme.foreground().copy(alpha = 0.45f)) },
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null, tint = theme.foreground().copy(alpha = 0.6f))
+                },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = theme.foreground(),
+                    unfocusedTextColor = theme.foreground(),
+                    focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                    unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                    cursorColor = theme.cursor(),
+                ),
             )
             if (tags.isNotEmpty()) {
                 Row(
@@ -638,7 +655,7 @@ fun SnippetInsertSheet(
                     Text(
                         s.snippetsEmpty,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        color = theme.foreground().copy(alpha = 0.4f),
                     )
                 }
             } else if (filtered.isEmpty()) {
@@ -649,7 +666,7 @@ fun SnippetInsertSheet(
                     Text(
                         s.hostsNoMatch,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        color = theme.foreground().copy(alpha = 0.4f),
                     )
                 }
             } else {
@@ -668,7 +685,7 @@ fun SnippetInsertSheet(
                             Text(
                                 snippet.name,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                                color = theme.foreground().copy(alpha = 0.5f),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -676,7 +693,7 @@ fun SnippetInsertSheet(
                                 snippet.content.replace("\n", " ⏎ "),
                                 style = MaterialTheme.typography.bodySmall,
                                 fontFamily = monospaceFontFamily(),
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = theme.foreground(),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = Spacing.Xs),
@@ -691,17 +708,17 @@ fun SnippetInsertSheet(
                                         Text(
                                             name,
                                             style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary,
+                                            color = theme.foreground(),
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(6.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                                .background(theme.foreground().copy(alpha = 0.12f))
                                                 .padding(horizontal = 6.dp, vertical = 2.dp),
                                         )
                                     }
                                 }
                             }
                         }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+                        HorizontalDivider(color = theme.foreground().copy(alpha = 0.1f))
                     }
                 }
             }

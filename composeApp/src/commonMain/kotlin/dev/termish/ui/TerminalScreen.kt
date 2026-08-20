@@ -471,6 +471,7 @@ private fun TerminalBody(
                 if (snippetOpen) {
                     SnippetInsertSheet(
                         repository = repository,
+                        theme = theme,
                         onUse = { content, run ->
                             controller.sendText(if (run) content + "\n" else content)
                             snippetOpen = false
