@@ -146,19 +146,48 @@ fun KeyToolbar(
     /** 行 3/4 展开状态（上提：画布按常驻高度布局，展开行覆盖画布不 resize）。 */
     expanded: Boolean = false,
     onExpandedChange: (Boolean) -> Unit = {},
-    /** 常驻两行高度回调（px；展开不改变）——画布 bottom padding 的依据。 */
+    /** 常驻两行高度回调（px；展开不改变）——建连门槛（画布尺寸稳定）用。 */
     onBaseHeightChanged: (Int) -> Unit = {},
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // 常驻两行单独包一层量高度（不受展开影响）：画布布局/建连门槛用它；
-        // 内层也要 spacedBy——间距丢了会两行贴死（外层的只作用于内层块整体）
+        // 行 3/4（▾ 展开）：低频键一步直达；每行保持 8 键等宽。
+        // 必须放在常驻块【上方】：常驻块贴工具栏底边（位置固定），展开行从
+        // 画布底边向上覆盖画布（不压缩画布、不 resize、TUI 不重排）——放下方
+        // 会让工具栏整体变高、常驻两行被顶进画布区域盖住终端内容（v1.1.7 回归）
+        if (expanded) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(top = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                KeyButton("PST", false, theme) { onPaste() }
+                KeyButton("⇧⇥", false, theme) { onKey(SpecialKey.SHIFT_TAB) }
+                KeyButton("DEL", false, theme) { onKey(SpecialKey.DEL) }
+                KeyButton("HOME", false, theme) { onKey(SpecialKey.HOME) }
+                KeyButton("END", false, theme) { onKey(SpecialKey.END) }
+                KeyButton("PGUP", false, theme) { onKey(SpecialKey.PGUP) }
+                KeyButton("PGDN", false, theme) { onKey(SpecialKey.PGDN) }
+                KeyButton("⌃\\", false, theme) { onKey(SpecialKey.CTRL_BACKSLASH) }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                KeyButton("F1", false, theme) { onKey(SpecialKey.F1) }
+                KeyButton("F2", false, theme) { onKey(SpecialKey.F2) }
+                KeyButton("F3", false, theme) { onKey(SpecialKey.F3) }
+                KeyButton("F4", false, theme) { onKey(SpecialKey.F4) }
+                KeyButton("F5", false, theme) { onKey(SpecialKey.F5) }
+                KeyButton("F6", false, theme) { onKey(SpecialKey.F6) }
+                KeyButton("F7", false, theme) { onKey(SpecialKey.F7) }
+                // Git 面板入口（画布 FAB 的备用入口；F8–F12 极低频不占位）
+                KeyButton("⎇", false, theme) { onGit() }
+            }
+        }
+        // 常驻块：行 1/2 贴工具栏底边（位置固定，展开不改变）
         Column(
-            Modifier.onSizeChanged { onBaseHeightChanged(it.height) },
+            Modifier
+                .onSizeChanged { onBaseHeightChanged(it.height) }
+                .padding(horizontal = 4.dp)
+                .padding(top = 2.dp, bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
         // 行 1：ESC 左上（实体键盘位置直觉）；TAB 常驻（shell 补全高频，长按 = ⇧⇥）；
@@ -197,31 +226,7 @@ fun KeyToolbar(
             KeyButton("→", false, theme, repeat = true) { onKey(SpecialKey.RIGHT) }
             KeyButton("ENT", false, theme) { onKey(SpecialKey.ENTER) }
         }
-        } // 常驻两行高度量测结束（行 3/4 在外层，不计入 onBaseHeightChanged）
-        // 行 3/4（▾ 展开）：低频键一步直达，不遮挡画布；每行保持 8 键等宽
-        if (expanded) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                KeyButton("PST", false, theme) { onPaste() }
-                KeyButton("⇧⇥", false, theme) { onKey(SpecialKey.SHIFT_TAB) }
-                KeyButton("DEL", false, theme) { onKey(SpecialKey.DEL) }
-                KeyButton("HOME", false, theme) { onKey(SpecialKey.HOME) }
-                KeyButton("END", false, theme) { onKey(SpecialKey.END) }
-                KeyButton("PGUP", false, theme) { onKey(SpecialKey.PGUP) }
-                KeyButton("PGDN", false, theme) { onKey(SpecialKey.PGDN) }
-                KeyButton("⌃\\", false, theme) { onKey(SpecialKey.CTRL_BACKSLASH) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                KeyButton("F1", false, theme) { onKey(SpecialKey.F1) }
-                KeyButton("F2", false, theme) { onKey(SpecialKey.F2) }
-                KeyButton("F3", false, theme) { onKey(SpecialKey.F3) }
-                KeyButton("F4", false, theme) { onKey(SpecialKey.F4) }
-                KeyButton("F5", false, theme) { onKey(SpecialKey.F5) }
-                KeyButton("F6", false, theme) { onKey(SpecialKey.F6) }
-                KeyButton("F7", false, theme) { onKey(SpecialKey.F7) }
-                // Git 面板入口（画布 FAB 的备用入口；F8–F12 极低频不占位）
-                KeyButton("⎇", false, theme) { onGit() }
-            }
-        }
+        } // 常驻块量测结束（行 3/4 在上方，不计入 onBaseHeightChanged）
     }
 }
 

@@ -106,7 +106,6 @@ import dev.termish.util.monospaceFontFamily
 import dev.termish.util.hapticTick
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import org.jetbrains.compose.resources.painterResource
 
 /** 终端页会话 tab：SSH/Mosh 终端 或 SFTP 文件浏览器。 */
 sealed interface SessionTab {
@@ -242,6 +241,7 @@ private fun TerminalBody(
     // 面板打开时拦截系统返回：先关面板，不直接退回首页
     PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
+    // （键盘弹起时展开行的覆盖增量）
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
     // 工具栏常驻两行高度（不含展开行 3/4）：画布布局只按它算——展开/收起
     // 不改画布尺寸，也就不触发 PTY resize（TUI 整体重排闪屏）；展开行覆盖画布
@@ -333,14 +333,21 @@ private fun TerminalBody(
             controller.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS
         val bannerReconnectable = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
 
-        // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
-        // 画布只按「常驻两行」高度布局：展开行 3/4 覆盖画布而非压缩画布——
-        // 不触发 PTY resize，herdr 等 TUI 不重排不闪屏。
+        // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不被工具栏盖住）。
+        // 画布按「常驻两行」高度布局（[toolbarBaseHeightPx]）：展开行 3/4 覆盖
+        // 画布底部而非压缩画布——不触发 PTY resize，herdr 等 TUI 不重排不闪屏。
         // 键盘弹起时不挤压画布（adjustNothing），工具栏上移会遮住画布底部，
         // 由 TerminalView 向上平移保证光标可见；平移量除键盘外也计入展开行
         // 覆盖高度（键盘收起即归位，顶部 herdr 菜单等始终可见）。
         // 末尾 12dp 是画布与工具栏之间的视觉间距余量。
         val density = LocalDensity.current
+        // 导航条高度（px，键盘收起时的值）：工具栏被 navigationBarsPadding 抬高，
+        // 而 TerminalView 的让位基于 Box 底（延伸到屏底）——不补 nav 会重叠
+        // nav-9dp（手势导航约 25dp → 终端底行被盖住大半）。remember 固定首次
+        // 值：键盘弹起时 navigationBars inset 可能变化（报 0），固定值防止画布
+        // 随键盘 resize（TUI 重排闪屏）
+        val navInsets = WindowInsets.navigationBars
+        val navBarsBottomPx = remember { navInsets.getBottom(density) }
         val coveredBottomPx = WindowInsets.ime.getBottom(density).toFloat() +
             with(density) { 12.dp.toPx() } +
             // 展开行 3/4 的覆盖高度（展开时 >0；仅键盘弹起时平移生效）
@@ -350,10 +357,10 @@ private fun TerminalBody(
             when {
                 controller.herdrNeedsInstall || controller.herdrInstalling -> {
                     // 底部让出工具栏高度：卡片在「画布−工具栏」区域内居中，视觉重心不上偏
-                    HerdrInstallGuide(controller, with(density) { toolbarHeightPx.toDp() })
+                    HerdrInstallGuide(controller, with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() })
                 }
                 controller.moshNeedsInstall || controller.moshInstalling -> {
-                    MoshInstallGuide(controller, with(density) { toolbarHeightPx.toDp() })
+                    MoshInstallGuide(controller, with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() })
                 }
                 else -> {
                     TerminalView(
@@ -381,8 +388,10 @@ private fun TerminalBody(
                         modifier = Modifier.fillMaxSize()
                             .padding(horizontal = 6.dp, vertical = 4.dp)
                             // 只让出常驻两行高度：展开行 3/4 覆盖画布（不压缩、
-                            // 不 resize、不重排），展开收起零闪屏
-                            .padding(bottom = with(density) { toolbarBaseHeightPx.toDp() + 12.dp }),
+                            // 不 resize、不重排），展开收起零闪屏。
+                            // 让位补导航条：工具栏被 navigationBarsPadding 抬高，
+                            // 不补则终端底行被工具栏盖住（见 navBarsBottomPx）
+                            .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 12.dp }),
                     )
                 }
             }
@@ -424,7 +433,7 @@ private fun TerminalBody(
                 theme = theme,
                 open = gitPanelOpen,
                 onOpenChange = { gitPanelOpen = it },
-                bottomInset = with(density) { toolbarHeightPx.toDp() + 12.dp },
+                bottomInset = with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() + 12.dp },
                 onToast = { msg -> scope.launch { snackbar.showSnackbar(msg) } },
                 modifier = Modifier.align(Alignment.Center).fillMaxSize(),
             )
@@ -454,6 +463,8 @@ private fun TerminalBody(
                         applicationCursorKeys = appCursorKeys,
                         expanded = toolbarExpanded,
                         onExpandedChange = { toolbarExpanded = it },
+                        // 回报高度必须含 KeyToolbar 全部自身 padding（含底部 10dp）
+                        // ——画布按它让位，缺了哪层 padding 就会「害羞」地盖住终端底行
                         onBaseHeightChanged = { toolbarBaseHeightPx = it.toFloat() },
                         onKey = { key ->
                             if (settings.hapticFeedback) hapticTick()
@@ -491,7 +502,6 @@ private fun TerminalBody(
                         },
                         onChar = { text -> controller.sendBytes(text.encodeToByteArray()) },
                         theme = theme,
-                        modifier = Modifier.padding(bottom = 8.dp),
                     )
                 // 命令片段插入面板（键盘工具栏「{}」触发）
                 if (snippetOpen) {
@@ -754,12 +764,7 @@ private fun SessionTabChip(
             Modifier.size(18.dp).clip(RoundedCornerShape(5.dp)).background(systemColor(sys)),
             contentAlignment = Alignment.Center,
         ) {
-            val svg = systemSvg(sys)
-            if (svg != null) {
-                Icon(painterResource(svg), null, tint = Color.White, modifier = Modifier.size(11.dp))
-            } else {
-                Icon(systemIcon(sys), null, tint = Color.White, modifier = Modifier.size(11.dp))
-            }
+            SystemAvatarIcon(sys, 11.dp)
         }
         Spacer(Modifier.size(6.dp))
         Text(
