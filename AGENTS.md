@@ -24,10 +24,10 @@ make ios-framework       # Kotlin framework (simulator + device debug)
 ```
 
 Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:22222, generates ephemeral ed25519 keys).
-Demo server (screenshots / herdr+pi): Docker container `termish-demo`,
-`termish@127.0.0.1:2223` (password `termish-demo`, fixed UDP 60100 for mosh).
-Android emulator reaches it at `10.0.2.2:2223`; iOS simulator (shares host
-network) at `127.0.0.1:2223` — never `10.0.2.2` on iOS.
+Demo server (screenshots / herdr+pi): Docker container `termish-demo` on the dev
+machine — credentials & ports are kept in local test assets (`.aiadb/`, gitignored),
+not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
+(shares host network) at `127.0.0.1` — never `10.0.2.2` on iOS.
 
 ## Architecture & conventions
 
@@ -111,7 +111,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - 技能：`ai-adb-gen`（生成用例）+ `ai-adb-run`（执行用例）
   （项目级 `.agents/skills/` 跟随仓库、克隆即得；不再安装用户级副本）
-- 资产：`.aiadb/cases/`（自然语言用例，ai-adb-gen 产出）
+- 资产：`.aiadb/cases/`（自然语言用例，ai-adb-gen 产出；**本地 gitignored 资产，不随仓库分发**）
 - 连接/会话/通知/网络相关改动后：触发 ai-adb-run（A+B 全量，C/D/E 按影响面）；
   新增页面/功能后：ai-adb-gen 补用例
 - 每场景独立报告 PASS/FAIL/SKIP；失败先区分应用 bug 与操作问题

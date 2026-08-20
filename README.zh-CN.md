@@ -271,9 +271,10 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   配合 `tmux`/Mosh 做服务端连续性
 - **桌面端密钥**存放在 `~/.termish` 下的明文 properties 文件
   （仅开发/测试 harness——移动端构建用 Keystore/Keychain）
-- **iOS 不进 CI**：iOS 原生依赖（OpenSSL/libssh2）由
-  [build-ios-native.sh](scripts/build-ios-native.sh) 构建且被 gitignore，
-  CI 只覆盖 Android + desktop；iOS 改动必须本地验证
+- **iOS 构建**走维护者私有的 Xcode Cloud（见
+  `iosApp/ci_scripts/ci_post_clone.sh`）；公开 GitHub Actions CI 只覆盖
+  Android + desktop。贡献者本地验证：`make ios-native && make ios-framework`，
+  再用 Xcode 构建运行
 
 ## 路线图
 

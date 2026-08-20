@@ -300,9 +300,10 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
   auto-reconnect on return — pair with `tmux`/Mosh for server-side continuity
 - **Desktop secrets** live in a plaintext properties file under `~/.termish`
   (dev/test harness only — mobile builds use Keystore/Keychain)
-- **iOS is not built in CI**: the iOS native deps (OpenSSL/libssh2) are built by
-  [build-ios-native.sh](scripts/build-ios-native.sh) and are git-ignored, so CI
-  only covers Android + desktop; iOS changes must be verified locally
+- **iOS builds** run on the maintainer's private Xcode Cloud (see
+  `iosApp/ci_scripts/ci_post_clone.sh`); the public GitHub Actions CI only
+  covers Android + desktop. Contributors verify iOS changes locally:
+  `make ios-native && make ios-framework`, then build & run from Xcode
 
 ## Roadmap
 
