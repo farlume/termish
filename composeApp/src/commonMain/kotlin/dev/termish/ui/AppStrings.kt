@@ -70,6 +70,19 @@ data class AppStrings(
     val sftpDownloadComplete: String,
     val sftpDownloadFailed: (String) -> String,
     val sftpLoadFailed: (String) -> String,
+    /** SFTP 文本预览（md/txt/log 等）。 */
+    val sftpPreview: String,
+    val sftpPreviewFailed: (String) -> String,
+    /** 二进制文件无法预览。 */
+    val sftpPreviewBinary: String,
+    /** 预览截断提示（参数：显示的字节数，已格式化）。 */
+    val sftpPreviewTruncated: (String) -> String,
+    /** 预览内容已复制。 */
+    val sftpPreviewCopied: String,
+    /** 图片过大，无法预览。 */
+    val sftpPreviewImageTooLarge: String,
+    /** 图片预览：适配 / 原始大小切换。 */
+    val sftpPreviewZoom: String,
     /** 卡片第二行：有活跃会话时显示（Termius 风格）。 */
     val hostsActive: String,
     /** 会话状态统计：已连接。 */
@@ -383,6 +396,13 @@ private val EnStrings = AppStrings(
     sftpDownloadComplete = "Download complete",
     sftpDownloadFailed = { "Download failed: $it" },
     sftpLoadFailed = { "Failed to load: $it" },
+    sftpPreview = "Preview",
+    sftpPreviewFailed = { "Preview failed: $it" },
+    sftpPreviewBinary = "Cannot preview binary file",
+    sftpPreviewTruncated = { "File too large — showing first $it" },
+    sftpPreviewCopied = "Preview copied",
+    sftpPreviewImageTooLarge = "Image too large to preview",
+    sftpPreviewZoom = "Toggle fit / original size",
     hostsActive = "Active",
     hostsConnected = "Connected",
     hostsModeSsh = "ssh",
@@ -645,6 +665,13 @@ private val ZhStrings = AppStrings(
     sftpDownloadComplete = "下载完成",
     sftpDownloadFailed = { "下载失败：$it" },
     sftpLoadFailed = { "加载失败：$it" },
+    sftpPreview = "预览",
+    sftpPreviewFailed = { "预览失败：$it" },
+    sftpPreviewBinary = "二进制文件无法预览",
+    sftpPreviewTruncated = { "文件过大，仅显示前 $it" },
+    sftpPreviewCopied = "预览内容已复制",
+    sftpPreviewImageTooLarge = "图片过大，无法预览",
+    sftpPreviewZoom = "切换适配 / 原始大小",
     hostsActive = "Active",
     hostsConnected = "已连接",
     hostsModeSsh = "ssh",

@@ -6,7 +6,9 @@
 > `readdir` long entries, the binary-safe upload workaround, the download
 > progress callback, and how the UI layer does recursive cross-directory
 > search, streaming download (Android straight to Downloads / iOS Files
-> export / desktop chooser), and recursive folder download.
+> export / desktop chooser), recursive folder download, and **text preview**
+> (streams first 512 KB via the download chunk callback, NUL-byte binary
+> detection, truncation hint).
 
 ## 设计
 
@@ -91,6 +93,12 @@ cinterop 对 `unsigned char*` 生成指针参数，`usePinned` 拿字节地址�
   限深 8 层 / 限 500 结果）；切 tab 保持路径 / 列表状态（`SftpUiState` 随
   `SftpSessionEntry` 存活）
 - 上传：系统文件选择器（SAF / UIDocumentPicker / AWT）
+- **文本预览**（文件菜单 → 预览）：`readSftpPreview` 复用 download 分块回调，
+  只读前 512 KB（超过即抛 `SftpPreviewTooLargeException` 中断下载流，两平台
+  download 的 finally 都会关通道）；前 4 KB 含 NUL 判二进制抛
+  `SftpPreviewBinaryException`；UTF-8 解码（非法序列替换字符不崩）。
+  UI：全屏模态覆盖层（文件名 + 大小 + 关闭），LazyColumn 等宽渲染，
+  截断时顶部提示条；状态挂在 `SftpUiState`（切 tab 不丢）
 - 下载：**流式分块写本地文件**（不整文件驻留内存）+ 顶部进度横幅（文件名 /
   百分比 / 进度条）+ 下载完成系统通知（Android 点击打开文件）；Android 10+
   直接写公共 Download 目录（MediaStore，同名自动去重、不弹另存为），

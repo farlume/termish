@@ -12,27 +12,30 @@ private const val CHUNK = 64 * 1024
 
 @Composable
 actual fun rememberFilePicker(
-    onPicked: (name: String, size: Long, readChunk: () -> ByteArray?) -> Unit,
+    onPicked: (PickedFile) -> Unit,
 ): () -> Unit {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
+    // OpenMultipleDocuments：一次选择多个文件（每个 Uri 独立流式读）
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+        uris.forEach { uri ->
             val name = queryName(context, uri) ?: "file"
             // ContentResolver 流式读：选择器回调只包流，readChunk 逐块拉取，
             // 任意大小文件内存峰值 = 64KB（此前 readBytes() 全量驻堆，大文件 OOM）
             val stream = context.contentResolver.openInputStream(uri)
             if (stream != null) {
                 val size = querySize(context, uri)
-                onPicked(name, size) {
-                    val buf = ByteArray(CHUNK)
-                    val n = stream.read(buf)
-                    if (n < 0) {
-                        stream.close()
-                        null
-                    } else {
-                        buf.copyOf(n)
-                    }
-                }
+                onPicked(
+                    PickedFile(name, size) {
+                        val buf = ByteArray(CHUNK)
+                        val n = stream.read(buf)
+                        if (n < 0) {
+                            stream.close()
+                            null
+                        } else {
+                            buf.copyOf(n)
+                        }
+                    },
+                )
             }
         }
     }

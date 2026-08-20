@@ -236,4 +236,144 @@ class SftpLogicTest {
         val hits = searchRecursive(sftp, "/root", "apk")
         assertEquals(listOf("ok.apk"), hits.map { it.name })
     }
+
+    // ---------- formatSize ----------
+
+    @Test
+    fun formatSizeBytesAndZero() {
+        assertEquals("0 B", formatSize(0))
+        assertEquals("0 B", formatSize(-1))
+        assertEquals("512 B", formatSize(512))
+        assertEquals("1023 B", formatSize(1023))
+    }
+
+    @Test
+    fun formatSizeScalesUnits() {
+        assertEquals("1.0 KB", formatSize(1024))
+        assertEquals("1.5 KB", formatSize(1536))
+        assertEquals("2.3 MB", formatSize(2_412_544))
+        assertEquals("1.0 GB", formatSize(1024L * 1024 * 1024))
+    }
+
+    // ---------- readSftpPreview ----------
+
+    /** 预览专用 fake：download 按 [chunkSize] 分块输出字节流（模拟真实循环读取）；fail=true 时抛传输异常。 */
+    private class PreviewSftp(
+        private val bytes: ByteArray,
+        private val fail: Boolean = false,
+        private val chunkSize: Int = 64 * 1024,
+    ) : SftpSession {
+        override fun list(path: String): List<SftpEntry> = emptyList()
+        override fun mkdir(path: String) {}
+        override fun home(): String = "/"
+        override fun upload(
+            remotePath: String,
+            totalSize: Long,
+            onProgress: (sent: Long, total: Long) -> Unit,
+            nextChunk: () -> ByteArray?,
+        ) {
+        }
+
+        override fun download(
+            remotePath: String,
+            onProgress: (loaded: Long, total: Long) -> Unit,
+            onChunk: (ByteArray) -> Unit,
+        ) {
+            if (fail) throw IllegalStateException("download failed: $remotePath")
+            // 模拟真实实现的循环读取与 finally-close 语义：
+            // onChunk 抛异常时异常沿调用栈传播，后续块不再发送
+            var off = 0
+            while (off < bytes.size) {
+                val n = minOf(chunkSize, bytes.size - off)
+                onChunk(bytes.copyOfRange(off, off + n))
+                off += n
+            }
+            onProgress(bytes.size.toLong(), bytes.size.toLong())
+        }
+
+        override fun close() {}
+    }
+
+    @Test
+    fun previewDecodesUtf8Text() = runBlocking {
+        val bytes = "你好，Termish\nline2".encodeToByteArray()
+        val r = readSftpPreview(PreviewSftp(bytes), "/root/README.md")
+        assertEquals("你好，Termish\nline2", r.text)
+        assertFalse(r.truncated)
+    }
+
+    @Test
+    fun previewTruncatesAtLimit() = runBlocking {
+        // 超过 maxBytes 的后续块触发中断：只保留前 maxBytes 字节，并标记截断
+        val bytes = "abcdefghij".encodeToByteArray()
+        val r = readSftpPreview(PreviewSftp(bytes, chunkSize = 3), "/root/a.txt", maxBytes = 4)
+        assertEquals("abcd", r.text)
+        assertTrue(r.truncated)
+    }
+
+    @Test
+    fun previewRejectsBinaryWithNulByte() = runBlocking {
+        val bytes = byteArrayOf(1, 2, 0, 3, 4)
+        assertFailsWith<SftpPreviewBinaryException> {
+            readSftpPreview(PreviewSftp(bytes), "/root/a.bin")
+        }
+        Unit
+    }
+
+    @Test
+    fun previewPropagatesDownloadError() = runBlocking {
+        assertFailsWith<IllegalStateException> {
+            readSftpPreview(PreviewSftp(ByteArray(0), fail = true), "/root/a.txt")
+        }
+        Unit
+    }
+
+    // ---------- 文件类型识别 / 图片预览分流 ----------
+
+    @Test
+    fun extensionOfLowercases() {
+        assertEquals("png", extensionOf("PHOTO.PNG"))
+        assertEquals("md", extensionOf("README.md"))
+        assertEquals("", extensionOf("Makefile"))
+        assertEquals("gz", extensionOf("a.tar.gz"))
+    }
+
+    @Test
+    fun isImageNameMatchesPreviewableFormats() {
+        assertTrue(isImageName("a.png"))
+        assertTrue(isImageName("b.JPG"))
+        assertTrue(isImageName("c.webp"))
+        assertFalse(isImageName("a.md"))
+        assertFalse(isImageName("Makefile"))
+        assertFalse(isImageName("a.tar.gz"))
+    }
+
+    @Test
+    fun fileKindClassifiesByExtension() {
+        assertEquals(SftpFileKind.IMAGE, fileKindOf("screenshot.png"))
+        assertEquals(SftpFileKind.VIDEO, fileKindOf("clip.mp4"))
+        assertEquals(SftpFileKind.AUDIO, fileKindOf("song.mp3"))
+        assertEquals(SftpFileKind.ARCHIVE, fileKindOf("backup.tar.gz"))
+        assertEquals(SftpFileKind.CODE, fileKindOf("Main.kt"))
+        assertEquals(SftpFileKind.TEXT, fileKindOf("notes.md"))
+        assertEquals(SftpFileKind.PDF, fileKindOf("manual.pdf"))
+        assertEquals(SftpFileKind.OTHER, fileKindOf("blob.bin"))
+        assertEquals(SftpFileKind.OTHER, fileKindOf("Makefile"))
+    }
+
+    @Test
+    fun readPreviewBytesExactLimitNoThrow() = runBlocking {
+        val bytes = "abcde".encodeToByteArray()
+        val r = readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
+        assertEquals("abcde", r.decodeToString())
+    }
+
+    @Test
+    fun readPreviewBytesThrowsWhenExceedingLimit() = runBlocking {
+        val bytes = "abcdefghij".encodeToByteArray()
+        assertFailsWith<SftpPreviewTooLargeException> {
+            readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
+        }
+        Unit
+    }
 }

@@ -10,9 +10,11 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,12 +22,18 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
@@ -33,13 +41,19 @@ import androidx.compose.material.icons.filled.DataUsage
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Upload
+import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,6 +69,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -73,6 +88,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -86,8 +102,11 @@ import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
 import dev.termish.notify.showDownloadDoneNotification
+import dev.termish.util.decodeImage
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.ioDispatcher
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.foundation.Image
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -124,6 +143,18 @@ class SftpUiState {
     var newFolderDialog by mutableStateOf(false)
     /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
     var fileMenu by mutableStateOf<SftpEntry?>(null)
+    /** 正在预览的文件条目（null = 预览面板关闭）。 */
+    var previewEntry by mutableStateOf<SftpEntry?>(null)
+    /** 预览加载中。 */
+    var previewLoading by mutableStateOf(false)
+    /** 预览文本（加载完成；null = 未就绪）。 */
+    var previewText by mutableStateOf<String?>(null)
+    /** 图片预览位图（图片类文件；null = 未就绪/非图片）。 */
+    var previewImage by mutableStateOf<ImageBitmap?>(null)
+    /** 预览被截断（文件超过读取上限，只显示前一段）。 */
+    var previewTruncated by mutableStateOf(false)
+    /** 预览失败原因（null = 无错误）。 */
+    var previewError by mutableStateOf<String?>(null)
     /** 等待用户选择保存位置后开始下载的文件（保存回调异步，不能依赖 fileMenu）。 */
     var pendingDownload by mutableStateOf<SftpEntry?>(null)
     /** 面包屑 "…" 的下拉父级菜单开关。 */
@@ -186,6 +217,12 @@ fun SftpContent(
     var fileMenu by state::fileMenu
     var pendingDownload by state::pendingDownload
     var showParents by state::showParents
+    var previewEntry by state::previewEntry
+    var previewLoading by state::previewLoading
+    var previewText by state::previewText
+    var previewImage by state::previewImage
+    var previewTruncated by state::previewTruncated
+    var previewError by state::previewError
     /** 等待用户选择保存目录后开始递归下载的远端目录。 */
     var pendingDownloadDir by remember { mutableStateOf<String?>(null) }
     /** 单文件下载进度（null = 无下载中）；顶部进度条横幅数据源。 */
@@ -276,26 +313,27 @@ fun SftpContent(
         onReconnect()
     }
 
-    val pickFile = rememberFilePicker { name, size, readChunk ->
+    val pickFile = rememberFilePicker { picked ->
         val sc = session ?: return@rememberFilePicker
+        // 多选：选择器对每个选中文件回调一次，各自开上传协程（并发上传）
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
                     var lastEmitted = 0L
                     sc.upload(
-                        joinPath(path, name),
-                        size,
+                        joinPath(path, picked.name),
+                        picked.size,
                         onProgress = { sent, total ->
                             // 节流同下载：每 1%（或 64KB，total 未知时）更新一次
                             val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
                             if (sent - lastEmitted >= step || (total > 0 && sent >= total)) {
                                 lastEmitted = sent
                                 scope.launch(Dispatchers.Main) {
-                                    downloadProgress = DownloadProgress(name, sent, total)
+                                    downloadProgress = DownloadProgress(picked.name, sent, total)
                                 }
                             }
                         },
-                    ) { readChunk() }
+                    ) { picked.readChunk() }
                 }
                 downloadProgress = null
                 snackbar.showSnackbar(s.sftpUploaded)
@@ -348,6 +386,76 @@ fun SftpContent(
     fun startDownload(entry: SftpEntry) {
         pendingDownload = entry
         savePicker(entry.name)
+    }
+
+    /** 预览入口：图片类文件走位图预览，其余走文本预览；结果挂在会话级 uiState。 */
+    /** 文本预览加载：流式读取远端文件（上限 [PREVIEW_MAX_BYTES]）。 */
+    fun loadTextPreview(sc: SftpSession, entry: SftpEntry) {
+        scope.launch {
+            try {
+                val result = withContext(ioDispatcher()) {
+                    readSftpPreview(sc, joinPath(path, entry.name))
+                }
+                if (previewEntry !== entry) return@launch // 已关闭或切到别的文件：丢弃结果
+                previewText = result.text
+                previewTruncated = result.truncated
+            } catch (e: SftpPreviewBinaryException) {
+                if (previewEntry !== entry) return@launch
+                previewError = s.sftpPreviewBinary
+            } catch (e: Exception) {
+                if (previewEntry !== entry) return@launch
+                previewError = s.sftpPreviewFailed(e.message ?: "preview")
+            } finally {
+                if (previewEntry === entry) previewLoading = false
+            }
+        }
+    }
+
+    /** 预览入口：图片类文件走位图预览，其余走文本预览；结果挂在会话级 uiState。 */
+    fun startPreview(entry: SftpEntry) {
+        val sc = session ?: return
+        previewEntry = entry
+        previewText = null
+        previewImage = null
+        previewError = null
+        previewTruncated = false
+        previewLoading = true
+        if (isImageName(entry.name)) {
+            scope.launch {
+                try {
+                    val bytes = withContext(ioDispatcher()) {
+                        readSftpPreviewBytes(sc, joinPath(path, entry.name), PREVIEW_IMAGE_MAX_BYTES)
+                    }
+                    if (previewEntry !== entry) return@launch // 已关闭或切到别的文件：丢弃
+                    val bmp = withContext(ioDispatcher()) { decodeImage(bytes) }
+                    if (previewEntry !== entry) return@launch
+                    if (bmp == null) {
+                        previewError = s.sftpPreviewFailed("decode")
+                    } else {
+                        previewImage = bmp
+                    }
+                } catch (e: SftpPreviewTooLargeException) {
+                    if (previewEntry !== entry) return@launch
+                    previewError = s.sftpPreviewImageTooLarge
+                } catch (e: Exception) {
+                    if (previewEntry !== entry) return@launch
+                    previewError = s.sftpPreviewFailed(e.message ?: "image")
+                } finally {
+                    if (previewEntry === entry) previewLoading = false
+                }
+            }
+        } else {
+            loadTextPreview(sc, entry)
+        }
+    }
+
+    fun closePreview() {
+        previewEntry = null
+        previewText = null
+        previewImage = null
+        previewError = null
+        previewTruncated = false
+        previewLoading = false
     }
 
     // 选择保存目录后递归下载当前目录；取消保存则不回调
@@ -734,6 +842,14 @@ fun SftpContent(
                                         onDismissRequest = { fileMenu = null },
                                     ) {
                                         DropdownMenuItem(
+                                            text = { Text(s.sftpPreview) },
+                                            leadingIcon = { Icon(Icons.Filled.Visibility, null) },
+                                            onClick = {
+                                                fileMenu = null
+                                                startPreview(entry)
+                                            },
+                                        )
+                                        DropdownMenuItem(
                                             text = { Text(s.sftpDownload) },
                                             leadingIcon = { Icon(Icons.Filled.Download, null) },
                                             onClick = {
@@ -758,6 +874,149 @@ fun SftpContent(
                 }
             }
         }
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+
+        // 文本预览覆盖层：全屏模态盖住列表；标题栏（名称+大小+复制+关闭）+ 等宽文本滚动区。
+        // 预览状态挂在会话级 uiState：切 tab 离开再回来，预览面板原样保留。
+        previewEntry?.let { entry ->
+            val lines = remember(previewText) { previewText.orEmpty().lines() }
+            val err = previewError // delegated property 不能 smart cast，取局部值
+            // 图片预览：true=适配屏幕；false=原始像素（可滚动）
+            var imageFit by remember(entry.name) { mutableStateOf(true) }
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.fillMaxSize()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            rememberVectorPainter(Icons.AutoMirrored.Filled.InsertDriveFile),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.size(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                entry.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                formatSize(entry.size),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // 复制全部：预览文本已整段在内存，一键进剪贴板（SelectionContainer
+                        // 在 LazyColumn 上只能行内选择，长文复制靠这个按钮兜底）
+                        val previewCopyable = previewText // delegated property 不能 smart cast
+                        if (previewCopyable != null) {
+                            IconButton(
+                                onClick = {
+                                    clipboard.setText(AnnotatedString(previewCopyable))
+                                    scope.launch { snackbar.showSnackbar(s.sftpPreviewCopied) }
+                                },
+                            ) {
+                                Icon(
+                                    Icons.Filled.ContentCopy,
+                                    contentDescription = s.sftpPreviewCopied,
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                        // 图片预览：适配 / 原始大小切换（原始大小可滚动查看细节）
+                        if (previewImage != null) {
+                            IconButton(onClick = { imageFit = !imageFit }) {
+                                Icon(
+                                    if (imageFit) Icons.Filled.ZoomIn else Icons.Filled.ZoomOut,
+                                    contentDescription = s.sftpPreviewZoom,
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                        IconButton(onClick = { closePreview() }) {
+                            Icon(Icons.Filled.Close, contentDescription = s.navBack)
+                        }
+                    }
+                    HorizontalDivider()
+                    when {
+                        previewLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                        }
+                        // 图片预览：黑底居中，适配模式整图可见，原始模式可滚动查看细节
+                        previewImage != null -> Box(
+                            Modifier.fillMaxSize().background(Color.Black),
+                        ) {
+                            if (imageFit) {
+                                Image(
+                                    previewImage!!,
+                                    contentDescription = entry.name,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Fit,
+                                )
+                            } else {
+                                val hScroll = rememberScrollState()
+                                val vScroll = rememberScrollState()
+                                Box(
+                                    Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(vScroll)
+                                        .horizontalScroll(hScroll),
+                                ) {
+                                    Image(
+                                        previewImage!!,
+                                        contentDescription = entry.name,
+                                        modifier = Modifier.size(previewImage!!.width.dp, previewImage!!.height.dp),
+                                        contentScale = ContentScale.FillBounds,
+                                    )
+                                }
+                            }
+                        }
+                        err != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                err,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                            )
+                        }
+                        else -> Column(Modifier.fillMaxSize()) {
+                            if (previewTruncated) {
+                                Text(
+                                    s.sftpPreviewTruncated(formatSize(PREVIEW_MAX_BYTES.toLong())),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
+                            LazyColumn(
+                                Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            ) {
+                                items(lines.size) { i ->
+                                    SelectionContainer {
+                                        Text(
+                                            lines[i],
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = monospaceFontFamily(),
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // SnackbarHost 放预览层之后（z 序最高）：预览模式下复制成功等提示不被面板遮住
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
 
         // 首连（列表未加载）与断线重连共用同一居中胶囊（终端页同款，淡入淡出）：
@@ -888,7 +1147,7 @@ private fun SftpRowItem(
     ) {
         Icon(
             if (isDirectory) painterResource(Res.drawable.folder)
-            else rememberVectorPainter(Icons.AutoMirrored.Filled.InsertDriveFile),
+            else rememberVectorPainter(fileKindIcon(fileKindOf(name))),
             contentDescription = null,
             tint = if (isDirectory) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1033,8 +1292,7 @@ suspend fun searchRecursive(
 
 /** 递归搜索结果行：文件/目录图标 + 名称 + 相对路径（主色标注），右下角时间。 */
 @Composable
-private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {
-    Row(
+private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -1044,7 +1302,7 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {
     ) {
         Icon(
             if (hit.isDirectory) painterResource(Res.drawable.folder)
-            else rememberVectorPainter(Icons.AutoMirrored.Filled.InsertDriveFile),
+            else rememberVectorPainter(fileKindIcon(fileKindOf(hit.name))),
             contentDescription = null,
             tint = if (hit.isDirectory) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1077,4 +1335,158 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {
             )
         }
     }
+}
+
+// ---------- 文件类型识别（列表 icon + 预览分流） ----------
+
+/** SFTP 文件类型：决定列表 icon 与预览方式。 */
+enum class SftpFileKind { IMAGE, VIDEO, AUDIO, ARCHIVE, CODE, TEXT, PDF, OTHER }
+
+internal fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
+
+/** 可在线预览的图片格式（平台解码：Android BitmapFactory / iOS UIImage / 桌面 ImageIO；gif 显示首帧）。 */
+internal val PREVIEW_IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+
+/** 图片类文件：走位图预览分支（文本预览的 NUL 检测会误杀图片）。 */
+internal fun isImageName(name: String): Boolean = extensionOf(name) in PREVIEW_IMAGE_EXTENSIONS
+
+/** 按扩展名识别文件类型（列表 icon 用）；未知类型归 OTHER。 */
+internal fun fileKindOf(name: String): SftpFileKind = when (extensionOf(name)) {
+    in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "ico", "avif") -> SftpFileKind.IMAGE
+    in setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v") -> SftpFileKind.VIDEO
+    in setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "mid") -> SftpFileKind.AUDIO
+    in setOf("zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz", "zst") -> SftpFileKind.ARCHIVE
+    in setOf(
+        "kt", "kts", "java", "c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "tsx", "jsx",
+        "go", "rs", "swift", "sh", "bash", "zsh", "rb", "php", "sql", "html", "css", "scss",
+        "xml", "yml", "yaml", "json", "toml", "gradle", "properties", "ini", "conf", "cfg",
+        "dockerfile", "makefile", "lock", "patch", "diff",
+    ) -> SftpFileKind.CODE
+    in setOf("md", "markdown", "txt", "log", "csv", "tsv", "rst", "adoc", "text") -> SftpFileKind.TEXT
+    "pdf" -> SftpFileKind.PDF
+    else -> SftpFileKind.OTHER
+}
+
+/** 文件类型 icon（material-icons-extended）；目录 icon 走 painterResource(folder)。 */
+@Composable
+private fun fileKindIcon(kind: SftpFileKind): ImageVector = when (kind) {
+    SftpFileKind.IMAGE -> Icons.Filled.Image
+    SftpFileKind.VIDEO -> Icons.Filled.VideoFile
+    SftpFileKind.AUDIO -> Icons.Filled.MusicNote
+    SftpFileKind.ARCHIVE -> Icons.Filled.Archive
+    SftpFileKind.CODE -> Icons.Filled.Code
+    SftpFileKind.TEXT -> Icons.Filled.Description
+    SftpFileKind.PDF -> Icons.Filled.PictureAsPdf
+    SftpFileKind.OTHER -> Icons.AutoMirrored.Filled.InsertDriveFile
+}
+
+// ---------- 文本预览 ----------
+
+/** 预览读取上限：超过即截断（大文件不整读进内存，渲染也不卡）。 */
+const val PREVIEW_MAX_BYTES: Int = 512 * 1024
+
+/** 图片预览读取上限：解码需要完整数据，放宽到 8MB（超限提示无法预览而非截断坏图）。 */
+const val PREVIEW_IMAGE_MAX_BYTES: Int = 8 * 1024 * 1024
+
+/** 二进制采样区大小：前 4KB 内出现 NUL 字节即判定为二进制。 */
+internal const val PREVIEW_BINARY_SAMPLE = 4096
+
+/** 文本预览结果：UTF-8 解码内容 + 是否被截断。 */
+data class SftpPreviewResult(val text: String, val truncated: Boolean)
+
+/** 二进制文件（内容含 NUL），无法预览。 */
+class SftpPreviewBinaryException : Exception()
+
+/** 超过读取上限（内部信号：中断下载流，结果截断展示）。 */
+class SftpPreviewTooLargeException : Exception()
+
+/**
+ * 流式读取远端文件前 [maxBytes] 字节（图片预览用：不整读大文件）。
+ * 超过上限抛 [SftpPreviewTooLargeException]（图片截断无法解码，调用方提示超限）；
+ * 不做 NUL 检测：图片内容必然含 NUL。
+ */
+suspend fun readSftpPreviewBytes(
+    session: SftpSession,
+    remotePath: String,
+    maxBytes: Int,
+): ByteArray = withContext(ioDispatcher()) {
+    val chunks = ArrayList<ByteArray>()
+    var total = 0
+    session.download(remotePath) { chunk ->
+        val room = maxBytes - total
+        if (room <= 0) throw SftpPreviewTooLargeException()
+        val n = minOf(chunk.size, room)
+        chunks += chunk.copyOfRange(0, n)
+        total += n
+    }
+    val bytes = ByteArray(total)
+    var off = 0
+    for (c in chunks) {
+        c.copyInto(bytes, off)
+        off += c.size
+    }
+    bytes
+}
+
+/**
+ * 流式读取远端文件前 [maxBytes] 字节并解码为 UTF-8 文本：
+ * - 超过上限立即中断下载（不整读大文件），结果标记截断
+ * - 内容前 4KB 含 NUL 字节判定为二进制，抛 [SftpPreviewBinaryException]
+ * - 非法 UTF-8 序列按替换字符处理，不会崩
+ *
+ * 复用 [SftpSession.download] 的分块回调：onChunk 抛异常即中断传输
+ * （两平台实现都在 finally 关闭通道），无需额外 close 语义。
+ */
+suspend fun readSftpPreview(
+    session: SftpSession,
+    remotePath: String,
+    maxBytes: Int = PREVIEW_MAX_BYTES,
+): SftpPreviewResult = withContext(ioDispatcher()) {
+    val chunks = ArrayList<ByteArray>()
+    var total = 0
+    var truncated = false
+    var binary = false
+    try {
+        session.download(remotePath) { chunk ->
+            // 采样区检测 NUL：不依赖扩展名白名单，无扩展名文本（LICENSE/Makefile）也能预览
+            if (!binary && total < PREVIEW_BINARY_SAMPLE) {
+                val n = minOf(chunk.size, PREVIEW_BINARY_SAMPLE - total)
+                for (i in 0 until n) {
+                    if (chunk[i] == 0.toByte()) {
+                        binary = true
+                        break
+                    }
+                }
+            }
+            if (binary) throw SftpPreviewBinaryException()
+            val room = maxBytes - total
+            if (room <= 0) throw SftpPreviewTooLargeException()
+            val n = minOf(chunk.size, room)
+            chunks += chunk.copyOfRange(0, n)
+            total += n
+        }
+    } catch (e: SftpPreviewTooLargeException) {
+        truncated = true
+    }
+    val bytes = ByteArray(total)
+    var off = 0
+    for (c in chunks) {
+        c.copyInto(bytes, off)
+        off += c.size
+    }
+    // common API：decodeToString 默认 UTF-8，非法序列替换字符（与 JVM toString(Charsets.UTF_8) 一致）
+    SftpPreviewResult(bytes.decodeToString(), truncated)
+}
+
+/** 人类可读文件大小（1024 进制，KB 起保留一位小数）：如 512 B / 1.5 KB / 2.3 MB。 */
+internal fun formatSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB", "TB")
+    var v = bytes.toDouble()
+    var i = 0
+    while (v >= 1024 && i < units.lastIndex) {
+        v /= 1024
+        i++
+    }
+    return if (i == 0) "$bytes B" else "${((v * 10).toInt() / 10.0)} ${units[i]}"
 }

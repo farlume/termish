@@ -44,54 +44,59 @@ private const val CHUNK = 64 * 1024
 @OptIn(ExperimentalForeignApi::class)
 @Composable
 actual fun rememberFilePicker(
-    onPicked: (name: String, size: Long, readChunk: () -> ByteArray?) -> Unit,
+    onPicked: (PickedFile) -> Unit,
 ): () -> Unit = {
     val picker = UIDocumentPickerViewController(
         forOpeningContentTypes = listOf(UTTypeData),
     )
+    picker.allowsMultipleSelection = true
     picker.delegate = object : NSObject(), UIDocumentPickerDelegateProtocol {
         override fun documentPicker(
             controller: UIDocumentPickerViewController,
             didPickDocumentsAtURLs: List<*>,
         ) {
-            val url = didPickDocumentsAtURLs.filterIsInstance<NSURL>().firstOrNull() ?: return
-            val name = url.lastPathComponent ?: "file"
-            val coordinator = NSFileCoordinator()
-            // 安全作用域 URL：document picker 返回的 URL 必须先申请访问权，
-            // 再经 NSFileCoordinator 协调拷贝（reading-for-uploading 语义下
-            // 被占用中的文件也可读）；访问权与拷贝完成成对释放。
-            val scoped = url.startAccessingSecurityScopedResource()
-            try {
-                coordinator.coordinateReadingItemAtURL(url, NSFileCoordinatorReadingForUploading, null) { newUrl ->
-                    val src = newUrl ?: return@coordinateReadingItemAtURL
-                    val tmp = NSTemporaryDirectory() ?: return@coordinateReadingItemAtURL
-                    val dst = "${tmp}termish-upload-$name"
-                    NSFileManager.defaultManager.removeItemAtPath(dst, null)
-                    if (!NSFileManager.defaultManager.copyItemAtURL(src, NSURL.fileURLWithPath(dst), null)) {
-                        return@coordinateReadingItemAtURL
-                    }
-                    var size = 0L
-                    memScoped {
-                        val st = alloc<stat>()
-                        if (stat(dst, st.ptr) == 0) size = st.st_size
-                    }
-                    val fd = open(dst, O_RDONLY)
-                    if (fd < 0) return@coordinateReadingItemAtURL
-                    onPicked(name, size) {
-                        val buf = ByteArray(CHUNK)
-                        val n = buf.usePinned { pinned ->
-                            read(fd, pinned.addressOf(0), CHUNK.toULong())
+            // 多选：每个 URL 独立走安全作用域 + 协调拷贝 + fd 流式读，逐文件回调
+            didPickDocumentsAtURLs.filterIsInstance<NSURL>().forEach { url ->
+                val name = url.lastPathComponent ?: "file"
+                val coordinator = NSFileCoordinator()
+                // 安全作用域 URL：document picker 返回的 URL 必须先申请访问权，
+                // 再经 NSFileCoordinator 协调拷贝（reading-for-uploading 语义下
+                // 被占用中的文件也可读）；访问权与拷贝完成成对释放。
+                val scoped = url.startAccessingSecurityScopedResource()
+                try {
+                    coordinator.coordinateReadingItemAtURL(url, NSFileCoordinatorReadingForUploading, null) { newUrl ->
+                        val src = newUrl ?: return@coordinateReadingItemAtURL
+                        val tmp = NSTemporaryDirectory() ?: return@coordinateReadingItemAtURL
+                        val dst = "${tmp}termish-upload-$name"
+                        NSFileManager.defaultManager.removeItemAtPath(dst, null)
+                        if (!NSFileManager.defaultManager.copyItemAtURL(src, NSURL.fileURLWithPath(dst), null)) {
+                            return@coordinateReadingItemAtURL
                         }
-                        if (n <= 0L) {
-                            close(fd)
-                            null
-                        } else {
-                            buf.copyOf(n.toInt())
+                        var size = 0L
+                        memScoped {
+                            val st = alloc<stat>()
+                            if (stat(dst, st.ptr) == 0) size = st.st_size
                         }
+                        val fd = open(dst, O_RDONLY)
+                        if (fd < 0) return@coordinateReadingItemAtURL
+                        onPicked(
+                            PickedFile(name, size) {
+                                val buf = ByteArray(CHUNK)
+                                val n = buf.usePinned { pinned ->
+                                    read(fd, pinned.addressOf(0), CHUNK.toULong())
+                                }
+                                if (n <= 0L) {
+                                    close(fd)
+                                    null
+                                } else {
+                                    buf.copyOf(n.toInt())
+                                }
+                            },
+                        )
                     }
+                } finally {
+                    if (scoped) url.stopAccessingSecurityScopedResource()
                 }
-            } finally {
-                if (scoped) url.stopAccessingSecurityScopedResource()
             }
         }
     }
