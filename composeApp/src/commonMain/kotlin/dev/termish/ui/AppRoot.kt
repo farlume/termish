@@ -148,7 +148,11 @@ fun AppRoot(repository: HostRepository) {
      * suspend：createSftpSession 是阻塞连接，必须切 IO 线程（调用方在 Main scope，
      * 否则重连按钮点击后 UI 冻结几秒——「点了没反应」）。
      */
-    suspend fun establishSftp(host: Host, onEstablished: (SftpSession) -> Unit) {
+    suspend fun establishSftp(host: Host, onEstablished: (SftpSession, Any) -> Unit) {
+        // 本次连接的身份代次标识：onClosed 凭此区分「本代连接意外断开」与
+        // 「重连/换新时旧连接被主动关闭」（close 会同步触发旧回调，
+        // 不比对代次就会把断开 banner 误标回刚重连成功的会话）
+        val connectionToken = Any()
         val (pw, key) = resolveCredentials(host)
         val callbacks = object : SshCallbacks {
             override suspend fun onOutput(data: ByteArray) {}
@@ -156,15 +160,14 @@ fun AppRoot(repository: HostRepository) {
             override fun onExitStatus(status: Int) {}
             override fun onClosed(reason: String?) {
                 // SFTP 断开主动推送：立即置 disconnected（banner 红条 + 重连入口）。
-                // 此前空实现：断开无感知，只能靠切 tab 重组后 reload 失败才暴露
-                //（条目可能已被移除：正常关闭不误标）
+                // 代次比对：重连/换新/移除时被 close 的旧连接回调仍会触发，
+                // 但条目已登记新代次（或已移除）→ 忽略，不误标
                 val entry = sessionManager.sftpSessions
                     .firstOrNull { it.host.id == host.id && it.session != null }
-                if (entry != null) {
-                    scope.launch {
-                        TermLog.w("sftp") { "sftp closed ${host.name}: ${reason ?: "unknown"}" }
-                        entry.uiState.disconnected = true
-                    }
+                if (entry == null || entry.connectionToken !== connectionToken) return
+                scope.launch {
+                    TermLog.w("sftp") { "sftp closed ${host.name}: ${reason ?: "unknown"}" }
+                    entry.uiState.disconnected = true
                 }
             }
             override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
@@ -204,7 +207,7 @@ fun AppRoot(repository: HostRepository) {
         )
         val session = withContext(ioDispatcher()) { createSftpSession(conn, callbacks) }
         TermLog.i("sftp") { "connected ${host.name} ${host.hostname}:${host.port}" }
-        onEstablished(session)
+        onEstablished(session, connectionToken)
     }
 
     // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）
@@ -212,8 +215,8 @@ fun AppRoot(repository: HostRepository) {
         sftpPickerVisible = false
         scope.launch {
             try {
-                establishSftp(host) { session ->
-                    val entry = sessionManager.addSftp(host, session)
+                establishSftp(host) { session, token ->
+                    val entry = sessionManager.addSftp(host, session, token)
                     // 与 entry 共用同一 uiState：浏览路径变化能反映到持久化（退后台保存）
                     currentTab = SessionTab.Sftp(host, session, entry.uiState)
                     screen = Screen.Terminal
@@ -609,8 +612,8 @@ fun AppRoot(repository: HostRepository) {
                                 }
                                 scope.launch {
                                     try {
-                                        establishSftp(tab.host) { newSession ->
-                                            entry?.let { sessionManager.reconnectSftp(it, newSession) }
+                                        establishSftp(tab.host) { newSession, token ->
+                                            entry?.let { sessionManager.reconnectSftp(it, newSession, token) }
                                             currentTab = SessionTab.Sftp(tab.host, newSession, tab.uiState)
                                             // 重连成功：清除重连中/断开状态，SftpContent 继续用原路径浏览
                                             tab.uiState.reconnecting = false

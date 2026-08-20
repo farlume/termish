@@ -127,7 +127,7 @@ class SessionManagerTest {
                 closed = true
             }
         }
-        m.addSftp(h, fake)
+        m.addSftp(h, fake, Any())
         assertEquals(1, m.sftpSessions.size)
 
         m.closeAllForHost(h.id)
@@ -205,7 +205,7 @@ class SessionManagerTest {
             }
             override fun close() {}
         }
-        val entry = m.addSftp(h, fake)
+        val entry = m.addSftp(h, fake, Any())
 
         assertEquals(1, m.sftpSessions.size)
         assertEquals(fake, m.sftpSessions[0].session)

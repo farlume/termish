@@ -21,6 +21,11 @@ data class SftpSessionEntry(
     val session: SftpSession?,
     /** 浏览状态（路径/列表/排序等）：随条目存活，切 tab 不重置。 */
     val uiState: SftpUiState = SftpUiState(),
+    /** 当前 [session] 所属连接的身份标识（establishSftp 每次生成）。
+     *  close() 会同步触发 onClosed：重连/换新/移除时被关闭的旧连接回调仍在，
+     *  必须凭代次区分「本代连接意外断开」与「旧连接被主动关闭」，
+     *  否则旧回调会把 uiState.disconnected 误标回 true（断开 banner 永不消失）。 */
+    val connectionToken: Any = Any(),
 )
 
 /**
@@ -149,17 +154,21 @@ class SessionManager(
      * 每主机单会话：已有条目则替换（保留浏览状态，重连语义一致）——
      * 否则进程恢复条目 + 新连接会并存两个同主机条目。
      */
-    fun addSftp(host: Host, session: SftpSession): SftpSessionEntry {
+    fun addSftp(host: Host, session: SftpSession, connectionToken: Any): SftpSessionEntry {
         val existing = sftpSessions.firstOrNull { it.host.id == host.id }
+        val entry = SftpSessionEntry(host, session, existing?.uiState ?: SftpUiState(), connectionToken)
+        // 先摘除旧条目（登记新代次）再 close 旧连接：close 同步触发旧连接的
+        // onClosed，届时代次已不匹配，不会把共享 uiState 误标 disconnected
         if (existing != null) {
-            try {
-                existing.session?.close()
-            } catch (_: Exception) {
-            }
             sftpSessions.remove(existing)
         }
-        val entry = SftpSessionEntry(host, session, existing?.uiState ?: SftpUiState())
         sftpSessions.add(entry)
+        existing?.session?.let { old ->
+            try {
+                old.close()
+            } catch (_: Exception) {
+            }
+        }
         persist()
         return entry
     }
@@ -168,25 +177,28 @@ class SessionManager(
      * SFTP 断线重连：替换条目中的 session（uiState 保留，浏览路径/列表不丢）。
      * 旧 session 先 close 释放连接；重连失败由调用方负责提示。
      */
-    fun reconnectSftp(entry: SftpSessionEntry, newSession: SftpSession) {
+    fun reconnectSftp(entry: SftpSessionEntry, newSession: SftpSession, connectionToken: Any) {
         TermLog.i("sftp") { "reconnect ${entry.host.name}" }
         val idx = sftpSessions.indexOf(entry)
         if (idx >= 0) {
-            try {
-                entry.session?.close()
-            } catch (_: Exception) {
+            val old = entry.session
+            // 先替换（新代次立即生效）再关旧连接：旧连接 close 同步触发 onClosed，
+            // 代次已不匹配 → 不误标 disconnected（否则重连成功 banner 也不消失）
+            sftpSessions[idx] = SftpSessionEntry(entry.host, newSession, entry.uiState, connectionToken)
+            old?.let {
+                try {
+                    it.close()
+                } catch (_: Exception) {
+                }
             }
-            sftpSessions[idx] = SftpSessionEntry(entry.host, newSession, entry.uiState)
         }
     }
 
     /** 关闭并移除 SFTP 会话。 */
     /** 断开 SFTP 会话但保留条目（与终端会话同语义：灰点可重连，浏览状态保留）。 */
 fun disconnectSftp(entry: SftpSessionEntry) {
-    try {
-        entry.session?.close()
-    } catch (_: Exception) {
-    }
+    // 先置空 session 再 close：close 同步触发 onClosed，此时条目已无 session，
+    // 回调查不到可标记对象（disconnected 由这里主动置位，不受旧回调干扰）
     val idx = sftpSessions.indexOf(entry)
     if (idx >= 0) {
         sftpSessions[idx] = SftpSessionEntry(entry.host, null, entry.uiState)
@@ -195,15 +207,21 @@ fun disconnectSftp(entry: SftpSessionEntry) {
         // 意外断链（onClosed 路径）仍保留自动重连一次
         entry.uiState.autoReconnectAttempted = true
     }
+    try {
+        entry.session?.close()
+    } catch (_: Exception) {
+    }
     persist()
 }
 
 fun closeSftp(entry: SftpSessionEntry) {
+        // 先移除再 close：close 同步触发 onClosed，届时条目已不在列表，
+        // 不会误标/误日志
+        sftpSessions.remove(entry)
         try {
             entry.session?.close()
         } catch (_: Exception) {
         }
-        sftpSessions.remove(entry)
         persist()
     }
 

@@ -643,9 +643,9 @@ fun SftpContent(
                 }
             }
             when {
-                entries == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.sftpConnecting, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                // 首连/目录加载中（entries 未就绪）：不在列表区画提示，
+                // 统一走外层 ConnectingIndicator 胶囊（与终端页同款）
+                entries == null -> Box(Modifier.fillMaxSize())
                 // 断开/加载失败：主提示在顶部 banner（红色+重连按钮，同终端样式），
                 // 内容区只留中性副提示，不重复红色错误文字
                 loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -760,10 +760,11 @@ fun SftpContent(
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
 
-        // 重连中：页面主状态不可用，居中指示器（终端页同款，淡入淡出）
+        // 首连（列表未加载）与断线重连共用同一居中胶囊（终端页同款，淡入淡出）：
+        // 同页不再出现裸文本「连接中…」，两页连接态视觉完全统一
         ConnectingIndicator(
-            visible = state.reconnecting,
-            text = s.sftpReconnecting,
+            visible = state.reconnecting || entries == null,
+            text = if (state.reconnecting) s.sftpReconnecting else s.sftpConnecting,
             modifier = Modifier.align(Alignment.Center),
         )
     }

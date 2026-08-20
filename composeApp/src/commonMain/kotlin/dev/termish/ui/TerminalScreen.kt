@@ -243,6 +243,12 @@ private fun TerminalBody(
     PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
+    // 工具栏常驻两行高度（不含展开行 3/4）：画布布局只按它算——展开/收起
+    // 不改画布尺寸，也就不触发 PTY resize（TUI 整体重排闪屏）；展开行覆盖画布
+    var toolbarBaseHeightPx by remember { mutableFloatStateOf(0f) }
+    // 工具栏整体遮盖高度（含导航条/键盘 padding）：连接指示器据此在
+    // 「画布−工具栏」可见区域内居中，视觉重心不上偏（同 HerdrInstallGuide）
+    var toolbarOverlayPx by remember { mutableFloatStateOf(0f) }
     val inputFocusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     // 键盘是否弹出：ime inset 高于导航条即认为弹出（跨平台，isImeVisible 仅 Android 有）
@@ -306,6 +312,9 @@ private fun TerminalBody(
             // 让 herdr 等远端复用器附着瞬间按错误窗口尺寸布局。
             // 放 key 块内：每个会话独立，切换/新建 tab 都会重新建连。
             var connectSent by remember { mutableStateOf(false) }
+            // 工具栏展开行 3/4（会话内保持）：状态上提至调用方，画布按常驻高度
+            // 布局、展开行覆盖画布（不 resize 不闪）；记忆在 key 块内随会话独立
+            var toolbarExpanded by remember { mutableStateOf(false) }
 
         // 顶部 banner 文案：错误/断开/失联（连接中走画布居中指示器，见下）
         val bannerText = when {
@@ -325,12 +334,17 @@ private fun TerminalBody(
         val bannerReconnectable = controller.status == ConnStatus.ERROR || controller.status == ConnStatus.CLOSED
 
         // 终端画布 + 悬浮工具栏：画布底边与工具栏顶边对齐（不再被工具栏盖住）。
+        // 画布只按「常驻两行」高度布局：展开行 3/4 覆盖画布而非压缩画布——
+        // 不触发 PTY resize，herdr 等 TUI 不重排不闪屏。
         // 键盘弹起时不挤压画布（adjustNothing），工具栏上移会遮住画布底部，
-        // 由 TerminalView 向上平移保证光标可见；键盘收起即归位，顶部（herdr
-        // 菜单等）始终可见。末尾 12dp 是画布与工具栏之间的视觉间距余量。
+        // 由 TerminalView 向上平移保证光标可见；平移量除键盘外也计入展开行
+        // 覆盖高度（键盘收起即归位，顶部 herdr 菜单等始终可见）。
+        // 末尾 12dp 是画布与工具栏之间的视觉间距余量。
         val density = LocalDensity.current
-        val coveredBottomPx =
-            WindowInsets.ime.getBottom(density).toFloat() + with(density) { 12.dp.toPx() }
+        val coveredBottomPx = WindowInsets.ime.getBottom(density).toFloat() +
+            with(density) { 12.dp.toPx() } +
+            // 展开行 3/4 的覆盖高度（展开时 >0；仅键盘弹起时平移生效）
+            (toolbarHeightPx - toolbarBaseHeightPx)
         // 画布四周留出小间距，文字不贴屏幕边缘；行列按内缩后宽度自动重算
         Box(Modifier.weight(1f).clipToBounds().background(theme.background())) {
             when {
@@ -352,27 +366,30 @@ private fun TerminalBody(
                         onReady = { cols, rows ->
                             // 等工具栏高度量到后（sizeStable）建连：画布尺寸已扣除工具栏区域，
                             // 避免先用"含被盖住区域"的错误行数起 PTY
-                            if (!connectSent && toolbarHeightPx > 0f) {
+                            if (!connectSent && toolbarBaseHeightPx > 0f) {
                                 connectSent = true
                                 controller.connect(cols, rows)
                             }
                         },
                         // 首帧工具栏未量到时画布偏高是中间尺寸：跳过 resize/onReady，
                         // 避免错误行数起 PTY 后再 resize（TUI 整体重排跳动）
-                        sizeStable = toolbarHeightPx > 0f,
+                        sizeStable = toolbarBaseHeightPx > 0f,
                         onCopy = { text ->
                             clipboard.setText(AnnotatedString(text))
                             scope.launch { snackbar.showSnackbar(s.terminalCopied) }
                         },
                         modifier = Modifier.fillMaxSize()
                             .padding(horizontal = 6.dp, vertical = 4.dp)
-                            .padding(bottom = with(density) { toolbarHeightPx.toDp() + 12.dp }),
+                            // 只让出常驻两行高度：展开行 3/4 覆盖画布（不压缩、
+                            // 不 resize、不重排），展开收起零闪屏
+                            .padding(bottom = with(density) { toolbarBaseHeightPx.toDp() + 12.dp }),
                     )
                 }
             }
 
-            // 连接中：画布居中指示器（首连/重连共用），淡入淡出——连接完成
-            // 平滑消失，不留顶部浮层痕迹（错误/断开/失联仍走顶部 banner）
+            // 连接中：可见画布内居中指示器（首连/重连共用），淡入淡出——连接完成
+            // 平滑消失，不留顶部浮层痕迹（错误/断开/失联仍走顶部 banner）。
+            // 颜色随终端主题：应用浅色主题时不在深色画布上浮出亮色胶囊
             ConnectingIndicator(
                 visible = controller.status == ConnStatus.CONNECTING,
                 text = if (controller.reconnectCount > 0) {
@@ -380,6 +397,9 @@ private fun TerminalBody(
                 } else {
                     s.terminalConnecting
                 },
+                bottomOverlay = with(density) { toolbarOverlayPx.toDp() },
+                containerColor = theme.background(),
+                contentColor = theme.foreground(),
                 modifier = Modifier.align(Alignment.Center),
             )
 
@@ -417,7 +437,10 @@ private fun TerminalBody(
                     .fillMaxWidth()
                     .background(theme.background())
                     .navigationBarsPadding()
-                    .imePadding(),
+                    .imePadding()
+                    // 测整体遮盖高度（含 padding；键盘弹起时工具栏随 imePadding
+                    // 上移，遮盖高度随之增大，指示器居中区自动收缩到键盘之上）
+                    .onSizeChanged { toolbarOverlayPx = it.height.toFloat() },
             ) {
                 Column(Modifier.onSizeChanged { toolbarHeightPx = it.height.toFloat() }) {
                     HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
@@ -429,6 +452,9 @@ private fun TerminalBody(
                         onToggleCtrl = { ctrlActive = !ctrlActive },
                         onToggleAlt = { altActive = !altActive },
                         applicationCursorKeys = appCursorKeys,
+                        expanded = toolbarExpanded,
+                        onExpandedChange = { toolbarExpanded = it },
+                        onBaseHeightChanged = { toolbarBaseHeightPx = it.toFloat() },
                         onKey = { key ->
                             if (settings.hapticFeedback) hapticTick()
                             controller.sendBytes(specialKeyBytes(key, appCursorKeys))

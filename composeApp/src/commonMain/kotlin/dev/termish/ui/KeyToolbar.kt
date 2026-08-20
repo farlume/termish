@@ -11,9 +11,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,7 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.termish.ui.theme.TerminalTheme
 import kotlinx.coroutines.CancellationException
@@ -113,6 +122,10 @@ private const val REPEAT_INTERVAL_MS = 60L
  *   **⌃C/⌃D → ⌃\\**（SIGQUIT 杀顽固进程）
  * - 粘性 CTRL/ALT + 系统键盘字母即可敲出 ⌃A/⌃E/⌃R 等组合（不占键位）
  * - 符号键由系统键盘提供；画布惯性滚动替代 PgUp/PgDn（展开行提供实体键）
+ *
+ * 展开状态上提至调用方（[expanded]/[onExpandedChange]），常驻两行高度经
+ * [onBaseHeightChanged] 回调：画布只按常驻高度布局，展开行 3/4 覆盖画布
+ * 而非压缩画布——不触发 PTY resize，TUI 不重排不闪屏。
  */
 @Composable
 fun KeyToolbar(
@@ -130,15 +143,24 @@ fun KeyToolbar(
     onGit: () -> Unit = {},
     /** 普通字符键（如 /），直接作为终端输入发送。 */
     onChar: (String) -> Unit = {},
+    /** 行 3/4 展开状态（上提：画布按常驻高度布局，展开行覆盖画布不 resize）。 */
+    expanded: Boolean = false,
+    onExpandedChange: (Boolean) -> Unit = {},
+    /** 常驻两行高度回调（px；展开不改变）——画布 bottom padding 的依据。 */
+    onBaseHeightChanged: (Int) -> Unit = {},
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
 ) {
-    // 展开行 3/4：▾ 切换，会话内保持（键盘工具栏常驻组件，remember 不随重组丢失）
-    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        // 常驻两行单独包一层量高度（不受展开影响）：画布布局/建连门槛用它；
+        // 内层也要 spacedBy——间距丢了会两行贴死（外层的只作用于内层块整体）
+        Column(
+            Modifier.onSizeChanged { onBaseHeightChanged(it.height) },
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
         // 行 1：ESC 左上（实体键盘位置直觉）；TAB 常驻（shell 补全高频，长按 = ⇧⇥）；
         // {} 片段 / ⌨ / ▾ 展开靠右（拇指区）
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -155,7 +177,12 @@ fun KeyToolbar(
             // ↑ 保持第 6 列与行 2 的 ↓ 上下对齐（原设计约束）
             KeyButton("↑", false, theme, repeat = true) { onKey(SpecialKey.UP) }
             KeyButton("⌨", false, theme) { onToggleKeyboard() }
-            KeyButton(if (expanded) "▴" else "▾", expanded, theme) { expanded = !expanded }
+            // 展开/收起：Material 箭头图标（22dp：48dp 触控目标配 24dp 图标的
+            // 规范内取值，比原文字符号大而清晰、又不像 30dp 那样撑满键）
+            KeyButton("", expanded, theme,
+                icon = if (expanded) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                iconSize = 22.dp,
+            ) { onExpandedChange(!expanded) }
         }
         // 行 2：CTRL/ALT 左下（同实体键盘底行）；↑/↓ 第 6 列上下对齐；ENT 右下
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -170,6 +197,7 @@ fun KeyToolbar(
             KeyButton("→", false, theme, repeat = true) { onKey(SpecialKey.RIGHT) }
             KeyButton("ENT", false, theme) { onKey(SpecialKey.ENTER) }
         }
+        } // 常驻两行高度量测结束（行 3/4 在外层，不计入 onBaseHeightChanged）
         // 行 3/4（▾ 展开）：低频键一步直达，不遮挡画布；每行保持 8 键等宽
         if (expanded) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -209,6 +237,9 @@ private fun RowScope.KeyButton(
     active: Boolean,
     theme: TerminalTheme,
     repeat: Boolean = false,
+    /** 图标键（如展开箭头）：渲染大号 Material 图标而非文字。 */
+    icon: ImageVector? = null,
+    iconSize: Dp = 24.dp,
     // 注意参数顺序：onTap 必须是最后一个参数（调用处大量使用尾随 lambda），
     // 误放 onLongPress 在末尾会让尾随 lambda 绑到长按回调——单击失灵、方向键全废
     onLongPress: (() -> Unit)? = null,
@@ -236,7 +267,10 @@ private fun RowScope.KeyButton(
     Box(
         Modifier
             .weight(1f)
-            .height(40.dp)
+            // 正方形键：高随宽（weight 均分），上限 48dp（Android 触控目标上限，
+            // 防 desktop 宽窗口键变成巨块）；写死高度会出现 44×40 的长方形
+            .heightIn(max = 48.dp)
+            .aspectRatio(1f)
             .clip(MaterialTheme.shapes.small)
             .background(bg)
             .border(1.dp, fg.copy(alpha = 0.45f), MaterialTheme.shapes.small)
@@ -273,7 +307,23 @@ private fun RowScope.KeyButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = fg, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(iconSize))
+        } else {
+            Text(
+                label,
+                color = fg,
+                // 两级字号保持视觉一致：符号键（↑↓←→ ⌨ / ⎇）与 22dp 图标
+                // 同档（≈14sp 视觉）；多字符文字键（ESC/CTRL/F1…）11sp。
+                // 简单按长度分档：单字符=符号，其余=文字标签
+                style = if (label.length == 1) {
+                    MaterialTheme.typography.labelLarge
+                } else {
+                    MaterialTheme.typography.labelSmall
+                },
+                maxLines = 1,
+            )
+        }
     }
 }
 

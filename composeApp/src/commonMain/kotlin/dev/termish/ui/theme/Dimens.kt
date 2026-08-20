@@ -28,8 +28,6 @@ object Corners {
 object Sizes {
     /** 紧凑页头内容高度（不含状态栏避让）。 */
     val HeaderCompact = 48.dp
-    /** 功能键按钮高度。 */
-    val KeyButton = 40.dp
     /** 列表项状态圆点。 */
     val StatusDot = 10.dp
     /** 设置页头像。 */
