@@ -35,17 +35,24 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
 /** 特殊键。CTRL/ALT 为粘性修饰键，仅影响后续输入。
- *  低频键（F1–F12 / HOM / END / PGUP / PGDN / DEL / ⌫ / ⌃Z）随固定两行工具栏
- *  设计移除（17d8db2），如需重新暴露，转义映射见该 commit 之前的展开层实现。 */
+ *  低频键（F1–F12 / HOME / END / PGUP / PGDN / DEL / ⌃Z 等）收纳在
+ *  工具栏「⋯」溢出面板（MoreKeySheet），不再占常驻键位；
+ *  转义映射见下方 specialKeyBytes。 */
 enum class SpecialKey(val label: String) {
     ESC("ESC"), TAB("TAB"), CTRL("CTRL"), ALT("ALT"),
     UP("↑"), DOWN("↓"), LEFT("←"), RIGHT("→"),
     CTRL_C("⌃C"), CTRL_D("⌃D"), CTRL_L("⌃L"), CTRL_E("⌃E"),
     ENTER("ENT"),
-    /** Shift+Tab（ESC[Z）：TUI 菜单反选；Claude Code 模式切换刚需（软键盘打不出）。 */
+    /** Shift+Tab（ESC[Z）：TUI 菜单反选；Claude Code 模式切换刚需（软键盘打不出）。
+     *  常驻 Tab 长按触发。 */
     SHIFT_TAB("⇧⇥"),
     /** ⌃\（SIGQUIT）：长按 ⌃C/⌃D 触发，杀连 ⌃C 都不响应的顽固进程。 */
     CTRL_BACKSLASH("⌃\\"),
+    // ---- 溢出面板键（⋯ 展开） ----
+    CTRL_R("⌃R"), CTRL_Z("⌃Z"),
+    DEL("DEL"), HOME("HOME"), END("END"), PGUP("PGUP"), PGDN("PGDN"),
+    F1("F1"), F2("F2"), F3("F3"), F4("F4"), F5("F5"), F6("F6"),
+    F7("F7"), F8("F8"), F9("F9"), F10("F10"), F11("F11"), F12("F12"),
 }
 
 fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray = when (key) {
@@ -59,9 +66,28 @@ fun specialKeyBytes(key: SpecialKey, applicationCursorKeys: Boolean): ByteArray 
     SpecialKey.CTRL_D -> byteArrayOf(0x04)
     SpecialKey.CTRL_L -> byteArrayOf(0x0c)
     SpecialKey.CTRL_E -> byteArrayOf(0x05)
+    SpecialKey.CTRL_R -> byteArrayOf(0x12)
+    SpecialKey.CTRL_Z -> byteArrayOf(0x1a)
     SpecialKey.ENTER -> byteArrayOf(0x0d)
     SpecialKey.SHIFT_TAB -> byteArrayOf(0x1b, 0x5b, 0x5a) // ESC [ Z
     SpecialKey.CTRL_BACKSLASH -> byteArrayOf(0x1c) // SIGQUIT
+    SpecialKey.DEL -> byteArrayOf(0x7f)
+    SpecialKey.HOME -> escapeSeq(if (applicationCursorKeys) "OH" else "H")
+    SpecialKey.END -> escapeSeq(if (applicationCursorKeys) "OF" else "F")
+    SpecialKey.PGUP -> escapeSeq("5~")
+    SpecialKey.PGDN -> escapeSeq("6~")
+    SpecialKey.F1 -> byteArrayOf(0x1b, 0x4f, 0x50) // ESC O P
+    SpecialKey.F2 -> byteArrayOf(0x1b, 0x4f, 0x51) // ESC O Q
+    SpecialKey.F3 -> byteArrayOf(0x1b, 0x4f, 0x52) // ESC O R
+    SpecialKey.F4 -> byteArrayOf(0x1b, 0x4f, 0x53) // ESC O S
+    SpecialKey.F5 -> byteArrayOf(0x1b, 0x5b, 0x31, 0x35, 0x7e) // ESC [15~
+    SpecialKey.F6 -> byteArrayOf(0x1b, 0x5b, 0x31, 0x37, 0x7e) // ESC [17~
+    SpecialKey.F7 -> byteArrayOf(0x1b, 0x5b, 0x31, 0x38, 0x7e) // ESC [18~
+    SpecialKey.F8 -> byteArrayOf(0x1b, 0x5b, 0x31, 0x39, 0x7e) // ESC [19~
+    SpecialKey.F9 -> byteArrayOf(0x1b, 0x5b, 0x32, 0x30, 0x7e) // ESC [20~
+    SpecialKey.F10 -> byteArrayOf(0x1b, 0x5b, 0x32, 0x31, 0x7e) // ESC [21~
+    SpecialKey.F11 -> byteArrayOf(0x1b, 0x5b, 0x32, 0x33, 0x7e) // ESC [23~
+    SpecialKey.F12 -> byteArrayOf(0x1b, 0x5b, 0x32, 0x34, 0x7e) // ESC [24~
     SpecialKey.CTRL, SpecialKey.ALT -> ByteArray(0)
 }
 
@@ -72,17 +98,21 @@ private const val REPEAT_INITIAL_DELAY_MS = 400L
 private const val REPEAT_INTERVAL_MS = 60L
 
 /**
- * 终端功能键工具栏：固定两行（无展开层）。
+ * 终端功能键工具栏：固定两行 + 可展开到四行。
  *
- * 行 1（控制）：ESC ⇧⇥ ⌃C ⌃L PST ↑ {} ⌨（ESC 左上、⌨ 右上拇指区）。
+ * 行 1（控制）：ESC TAB ⌃C ⌃L {} ↑ ⌨ ▾（ESC 左上、⌨ 右上拇指区；
+ * ▾ 展开/收起行 3/4，会话内保持；↑ 第 6 列与行 2 的 ↓ 上下对齐）。
  * 行 2（修饰/编辑）：CTRL ALT ⌃D / ← ↓ → ENT（CTRL/ALT 左下，同实体键盘
  * 底行；↑/↓ 第 6 列上下对齐；/ 由 onChar 直接发送）。
- * 两行均 8 列等宽。
+ * 行 3（展开）：PST ⇧⇥ DEL HOME END PGUP PGDN ⌃\\
+ * 行 4（展开）：F1–F7 + ⎇（Git 面板；F8–F12 极低频不占位）。
+ * 每行均 8 列等宽正方形键。
  *
  * - 方向键/⌫ 类支持**按住连发**（400ms 后 60ms/次）
- * - 长按宏：**ESC 双发**（Claude Code 编辑历史）；**⌃C → ⌃\\**（SIGQUIT 杀顽固进程）
- * - 粘性 CTRL/ALT + 系统键盘字母即可敲出 ⌃A/⌃E/⌃R 等组合
- * - 符号键由系统键盘提供；画布惯性滚动替代 PgUp/PgDn
+ * - 长按宏：**ESC 双发**（Claude Code 编辑历史）；**TAB → ⇧⇥**（TUI 反选/模式切换）；
+ *   **⌃C/⌃D → ⌃\\**（SIGQUIT 杀顽固进程）
+ * - 粘性 CTRL/ALT + 系统键盘字母即可敲出 ⌃A/⌃E/⌃R 等组合（不占键位）
+ * - 符号键由系统键盘提供；画布惯性滚动替代 PgUp/PgDn（展开行提供实体键）
  */
 @Composable
 fun KeyToolbar(
@@ -94,31 +124,38 @@ fun KeyToolbar(
     onKey: (SpecialKey) -> Unit,
     onToggleKeyboard: () -> Unit = {},
     onPaste: () -> Unit = {},
-    /** 命令片段插入面板（行 2 的「{}」键位；原符号键 / 由系统键盘提供）。 */
+    /** 命令片段插入面板（行 1 的「{}」键位）。 */
     onSnippets: () -> Unit = {},
+    /** Git 面板入口（行 4 展开的「⎇」键位；画布 FAB 的备用入口）。 */
+    onGit: () -> Unit = {},
     /** 普通字符键（如 /），直接作为终端输入发送。 */
     onChar: (String) -> Unit = {},
     theme: TerminalTheme,
     modifier: Modifier = Modifier,
 ) {
+    // 展开行 3/4：▾ 切换，会话内保持（键盘工具栏常驻组件，remember 不随重组丢失）
+    var expanded by remember { mutableStateOf(false) }
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        // 行 1：ESC 左上（实体键盘位置直觉）；PST/{}/面板类键靠右；⌨ 右上拇指区
+        // 行 1：ESC 左上（实体键盘位置直觉）；TAB 常驻（shell 补全高频，长按 = ⇧⇥）；
+        // {} 片段 / ⌨ / ▾ 展开靠右（拇指区）
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             RepeatKeyButton("ESC", theme,
                 onTap = { onKey(SpecialKey.ESC) },
                 onLongPress = { onKey(SpecialKey.ESC); onKey(SpecialKey.ESC) })
-            KeyButton("⇧⇥", false, theme) { onKey(SpecialKey.SHIFT_TAB) }
+            KeyButton("TAB", false, theme,
+                onLongPress = { onKey(SpecialKey.SHIFT_TAB) }) { onKey(SpecialKey.TAB) }
             RepeatKeyButton("⌃C", theme,
                 onTap = { onKey(SpecialKey.CTRL_C) },
                 onLongPress = { onKey(SpecialKey.CTRL_BACKSLASH) })
             KeyButton("⌃L", false, theme) { onKey(SpecialKey.CTRL_L) }
-            KeyButton("PST", false, theme) { onPaste() }
-            KeyButton("↑", false, theme, repeat = true) { onKey(SpecialKey.UP) }
             KeyButton("{}", false, theme) { onSnippets() }
+            // ↑ 保持第 6 列与行 2 的 ↓ 上下对齐（原设计约束）
+            KeyButton("↑", false, theme, repeat = true) { onKey(SpecialKey.UP) }
             KeyButton("⌨", false, theme) { onToggleKeyboard() }
+            KeyButton(if (expanded) "▴" else "▾", expanded, theme) { expanded = !expanded }
         }
         // 行 2：CTRL/ALT 左下（同实体键盘底行）；↑/↓ 第 6 列上下对齐；ENT 右下
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -132,6 +169,30 @@ fun KeyToolbar(
             KeyButton("↓", false, theme, repeat = true) { onKey(SpecialKey.DOWN) }
             KeyButton("→", false, theme, repeat = true) { onKey(SpecialKey.RIGHT) }
             KeyButton("ENT", false, theme) { onKey(SpecialKey.ENTER) }
+        }
+        // 行 3/4（▾ 展开）：低频键一步直达，不遮挡画布；每行保持 8 键等宽
+        if (expanded) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                KeyButton("PST", false, theme) { onPaste() }
+                KeyButton("⇧⇥", false, theme) { onKey(SpecialKey.SHIFT_TAB) }
+                KeyButton("DEL", false, theme) { onKey(SpecialKey.DEL) }
+                KeyButton("HOME", false, theme) { onKey(SpecialKey.HOME) }
+                KeyButton("END", false, theme) { onKey(SpecialKey.END) }
+                KeyButton("PGUP", false, theme) { onKey(SpecialKey.PGUP) }
+                KeyButton("PGDN", false, theme) { onKey(SpecialKey.PGDN) }
+                KeyButton("⌃\\", false, theme) { onKey(SpecialKey.CTRL_BACKSLASH) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                KeyButton("F1", false, theme) { onKey(SpecialKey.F1) }
+                KeyButton("F2", false, theme) { onKey(SpecialKey.F2) }
+                KeyButton("F3", false, theme) { onKey(SpecialKey.F3) }
+                KeyButton("F4", false, theme) { onKey(SpecialKey.F4) }
+                KeyButton("F5", false, theme) { onKey(SpecialKey.F5) }
+                KeyButton("F6", false, theme) { onKey(SpecialKey.F6) }
+                KeyButton("F7", false, theme) { onKey(SpecialKey.F7) }
+                // Git 面板入口（画布 FAB 的备用入口；F8–F12 极低频不占位）
+                KeyButton("⎇", false, theme) { onGit() }
+            }
         }
     }
 }
