@@ -118,6 +118,11 @@ fun HostEditScreen(
                 actions = {
                     TextButton(onClick = {
                         val id = existing?.id ?: newId()
+                        // 服务器记录字段（探测系统 / TOFU 指纹 / 最近连接）取仓库
+                        // 最新值：列表页 hosts 状态可能滞后（指纹是连接时才写入的，
+                        // 系统探测失败时无回调刷新），用 existing 快照会把已授信
+                        // 指纹抹回 null → 重连重复弹「确认服务器身份」
+                        val latest = repository.getHost(id)
                         val host = Host(
                             id = id,
                             name = name.ifBlank { hostname },
@@ -126,14 +131,14 @@ fun HostEditScreen(
                             username = username.ifBlank { "root" },
                             // 系统由连接后自动探测写入（Termius 式），编辑页不手填；
                             // 保留已探测到的值，不覆盖。
-                            system = existing?.system ?: "",
+                            system = latest?.system ?: existing?.system ?: "",
                             authMethod = authMethod,
                             connectionMode = connectionMode,
                             launchHerdr = launchHerdr,
                             tags = tags,
                             createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
-                            lastConnectedAt = existing?.lastConnectedAt ?: 0L,
-                            knownHostFingerprint = existing?.knownHostFingerprint,
+                            lastConnectedAt = latest?.lastConnectedAt ?: existing?.lastConnectedAt ?: 0L,
+                            knownHostFingerprint = latest?.knownHostFingerprint ?: existing?.knownHostFingerprint,
                             startupCommand = startupCommand.trim(),
                             moshThemeSync = moshThemeSync,
                             moshUdpPort = moshUdpPort.toIntOrNull()?.takeIf { it in 1024..65535 } ?: 0,
