@@ -189,7 +189,7 @@ never appear. Termish's input pipeline is designed around composition from day o
   passphrase asked once per connection, never persisted) & keyboard-interactive
   auth, TOFU host-key verification
 - **Bilingual UI** — Chinese / English / follow system, switchable in Settings
-- **About section in Settings** — version, website, contact email, "Support the developer" with Alipay + WeChat QR codes (Alipay deep-links to the app; Termius-style bottom placement)
+- **About section in Settings** — version, website, contact email
 - Secrets in platform stores: **Android Keystore (AES-GCM) / iOS Keychain**
 - Design system: zinc neutrals + emerald accent, JetBrains Mono titles,
   dark & light themes; 12 built-in terminal palettes (Default, Solarized, Dracula,
@@ -317,17 +317,6 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 - [ ] tmux session list
 - [ ] E2EE cross-device sync
 - [ ] Later: landscape dual-pane, kana/hangul IME, deep links
-
-## Support the developer
-
-Termish is free, open source (MIT) and ad-free. If it has been useful to you —
-for work, in your pocket, or for your agent sessions — you can buy the
-developer a coffee. Support is completely voluntary, and every bit goes into
-keeping the project alive.
-
-| Alipay | WeChat |
-|--------|--------|
-| [![Alipay QR](docs/donate/alipay-qr.jpg)](https://qr.alipay.com/fkx12790skh105nviquzaea) | ![WeChat QR](docs/donate/wechat-qr.jpg) |
 
 ## Contributing
 

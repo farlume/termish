@@ -254,18 +254,11 @@ data class AppStrings(
     val hostsSectionTitle: String,
     val connSectionTitle: String,
     val sftpSectionTitle: String,
-    // 设置页「关于」区（版本/官网/联系/支持作者入口）
+    // 设置页「关于」区（版本/官网/联系入口）
     val settingsGroupAbout: String,
     val settingsVersion: String,
     val settingsWebsite: String,
     val settingsContact: String,
-    val settingsSupport: String,
-    /** 微信收款码提示：微信无直链调起，只能保存图片后相册识别。 */
-    val settingsSupportHint: String,
-    /** 支持弹窗主按钮：直接唤起支付宝 App（qr.alipay.com universal link）。 */
-    val settingsOpenAlipay: String,
-    val settingsTabAlipay: String,
-    val settingsTabWechat: String,
     // 终端页
     val terminalCancel: String,
     val terminalCopied: String,
@@ -546,11 +539,6 @@ private val EnStrings = AppStrings(
     settingsVersion = "Version",
     settingsWebsite = "Website",
     settingsContact = "Contact",
-    settingsSupport = "Support the developer",
-    settingsSupportHint = "Long-press the QR code to save it, then open WeChat and scan from your album",
-    settingsOpenAlipay = "Open Alipay",
-    settingsTabAlipay = "Alipay",
-    settingsTabWechat = "WeChat",
     terminalCancel = "Cancel",
     terminalCopied = "Copied",
     terminalPasted = "Pasted",
@@ -813,11 +801,6 @@ private val ZhStrings = AppStrings(
     settingsVersion = "版本",
     settingsWebsite = "官网",
     settingsContact = "联系",
-    settingsSupport = "支持作者",
-    settingsSupportHint = "长按二维码保存图片，打开微信扫一扫从相册识别",
-    settingsOpenAlipay = "打开支付宝",
-    settingsTabAlipay = "支付宝",
-    settingsTabWechat = "微信",
     terminalCancel = "取消",
     terminalCopied = "已复制",
     terminalPasted = "已粘贴",

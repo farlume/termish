@@ -64,18 +64,13 @@ import dev.termish.data.AppSettings
 import dev.termish.data.HostRepository
 import dev.termish.util.TermLog
 import dev.termish.generated.resources.Res
-import dev.termish.generated.resources.alipay_qr
-import dev.termish.generated.resources.wechat_qr
-import org.jetbrains.compose.resources.painterResource
 import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
-// ---- 关于区外链（官网 / 联系邮箱 / 支付宝收款；文档/GitHub 待仓库公开后再加回） ----
+// ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 待仓库公开后再加回） ----
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
 private const val CONTACT_EMAIL = "ttermish@gmail.com"
-/** 支付宝收款码链接：Android/iOS 上 qr.alipay.com 为 universal link，直接唤起支付宝 App。 */
-private const val ALIPAY_URL = "https://qr.alipay.com/fkx12790skh105nviquzaea"
 
 private fun themeModeLabel(mode: ThemeMode, s: AppStrings): String = when (mode) {
     ThemeMode.DARK -> s.settingsThemeDark
@@ -117,8 +112,6 @@ fun SettingsScreen(
     var verifyHostKey by remember { mutableStateOf(settings.verifyHostKeyOnFirstUse) }
     var osc52Clipboard by remember { mutableStateOf(settings.osc52Clipboard) }
     var language by remember { mutableStateOf(settings.language) }
-
-    var showSupportDialog by remember { mutableStateOf(false) }
 
     var showThemeDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
@@ -226,8 +219,6 @@ fun SettingsScreen(
                 SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
-                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                SettingsOptionItem(s.settingsSupport, "Alipay / WeChat") { showSupportDialog = true }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -301,9 +292,6 @@ fun SettingsScreen(
             onBack = { onOpenSub(null) },
         )
     }
-    if (showSupportDialog) {
-        SupportDialog(onDismiss = { showSupportDialog = false })
-    }
     if (showLanguageDialog) {
         val codes = listOf("", "zh", "en")
         val options = listOf(
@@ -331,72 +319,6 @@ fun SettingsScreen(
             onDismiss = { showTerminalTypeDialog = false },
         )
     }
-}
-
-/** 支持作者弹窗：支付宝 / 微信双收款码。支付宝有 universal link 直链唤起；
- *  微信无公开调起链接，只能保存图片后相册识别（提示文案）。 */
-@Composable
-private fun SupportDialog(onDismiss: () -> Unit) {
-    val s = LocalAppStrings.current
-    val uriHandler = LocalUriHandler.current
-    var tab by remember { mutableStateOf(0) } // 0=支付宝，1=微信
-    // 支付宝 tab 才有直链按钮；微信无公开调起链接，confirmButton 渲染空占位。
-    // material3 AlertDialog 的 confirmButton 为非空参数，不能传 null。
-    val confirmButton: @Composable () -> Unit = if (tab == 0) {
-        ({
-            Button(onClick = {
-                onDismiss()
-                uriHandler.openUri(ALIPAY_URL)
-            }) { Text(s.settingsOpenAlipay) }
-        })
-    } else {
-        ({})
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(s.settingsSupport) },
-        text = {
-            Column {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    SupportTab(s.settingsTabAlipay, selected = tab == 0) { tab = 0 }
-                    Spacer(Modifier.width(8.dp))
-                    SupportTab(s.settingsTabWechat, selected = tab == 1) { tab = 1 }
-                }
-                Spacer(Modifier.height(12.dp))
-                Image(
-                    painterResource(if (tab == 0) Res.drawable.alipay_qr else Res.drawable.wechat_qr),
-                    contentDescription = s.settingsSupport,
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 300.dp).clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Fit,
-                )
-                if (tab == 1) {
-                    Text(
-                        s.settingsSupportHint,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        modifier = Modifier.padding(top = 10.dp),
-                    )
-                }
-            }
-        },
-        confirmButton = confirmButton,
-        dismissButton = { TextButton(onClick = onDismiss) { Text(s.settingsClose) } },
-    )
-}
-
-/** 支持弹窗内的渠道切换 chip。 */
-@Composable
-private fun SupportTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-    )
 }
 
 /** 卡片分组：外间距 + 圆角 + 组标题。 */

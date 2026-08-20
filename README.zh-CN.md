@@ -171,7 +171,7 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
   密码 / 私钥 / 加密私钥（PKCS#8 / 传统 PEM / OpenSSH，连接时询问一次口令、
   不持久化）与 keyboard-interactive 认证、TOFU 主机密钥校验
 - **双语界面**——中文 / 英文 / 跟随系统，设置页随时切换
-- **设置页「关于」区**——版本号、官网、联系邮箱与「支持作者」支付宝/微信双收款码（支付宝一键唤起，Termius 式底部布局）
+- **设置页「关于」区**——版本号、官网、联系邮箱
 - 密钥存平台安全存储：**Android Keystore（AES-GCM）/ iOS Keychain**
 - 设计系统：zinc 中性色 + emerald 点缀，JetBrains Mono 标题，
   深色与浅色主题；内置 12 套终端配色（Default、Solarized、Dracula、Nord、
@@ -287,16 +287,6 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [ ] tmux 会话列表
 - [ ] E2EE 跨设备同步
 - [ ] 后期：横屏双栏、kana/hangul 输入法、深链
-
-## 支持作者
-
-Termish 免费、开源（MIT）、无广告。如果它帮你省了时间——无论是工作、随身
-使用还是你的 agent 会话——可以请作者喝杯咖啡。打赏完全自愿，每一份支持都会
-用于让项目持续维护下去。
-
-| 支付宝 | 微信 |
-|--------|------|
-| [![支付宝收款码](docs/donate/alipay-qr.jpg)](https://qr.alipay.com/fkx12790skh105nviquzaea) | ![微信收款码](docs/donate/wechat-qr.jpg) |
 
 ## 参与贡献
 
