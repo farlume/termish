@@ -1,5 +1,9 @@
 package dev.termish.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -301,15 +305,8 @@ private fun TerminalBody(
             // 放 key 块内：每个会话独立，切换/新建 tab 都会重新建连。
             var connectSent by remember { mutableStateOf(false) }
 
-            // 重连/错误飘条：重连中=琥珀色，失败=红色；跟随终端主题背景
+        // 顶部 banner 文案：错误/断开/失联（连接中走画布居中指示器，见下）
         val bannerText = when {
-            controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
-                s.terminalReconnectingN(controller.reconnectCount)
-            // 首连进行中：琥珀色「连接中…」（无此提示用户看到的是黑屏几秒）
-            controller.status == ConnStatus.CONNECTING ->
-                s.terminalConnecting + "…"
-            // mosh 链路失联（会话保持中，网络恢复自动续传）：对齐 mosh 的
-            // "Last contact Ns ago" 提示；状态点同步变琥珀色「失联中」
             controller.linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS ->
                 s.terminalMoshLostContact(controller.linkLostSeconds)
             controller.errorMessage != null -> controller.errorMessage
@@ -371,6 +368,19 @@ private fun TerminalBody(
                     )
                 }
             }
+
+            // 连接中：画布居中指示器（首连/重连共用），淡入淡出——连接完成
+            // 平滑消失，不留顶部浮层痕迹（错误/断开/失联仍走顶部 banner）
+            ConnectingIndicator(
+                visible = controller.status == ConnStatus.CONNECTING,
+                text = if (controller.reconnectCount > 0) {
+                    s.terminalReconnectingN(controller.reconnectCount)
+                } else {
+                    s.terminalConnecting
+                },
+                theme = theme,
+                modifier = Modifier.align(Alignment.Center),
+            )
 
             // 顶部浮层 banner：盖在画布上（不占布局空间、不把画布顶下来）
             bannerText?.let { message ->
@@ -926,6 +936,43 @@ private fun MoshInstallGuide(controller: TerminalController, bottomInset: Dp) {
                     }
                 }
             }
+        }
+    }
+}
+
+/** 连接中居中指示器：画布中央 spinner + 文案（跟随终端主题），淡入淡出。 */
+@Composable
+private fun ConnectingIndicator(
+    visible: Boolean,
+    text: String,
+    theme: TerminalTheme,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(180)),
+        exit = fadeOut(tween(220)),
+        modifier = modifier,
+    ) {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(20.dp))
+                .background(theme.background().copy(alpha = 0.72f))
+                .border(1.dp, theme.foreground().copy(alpha = 0.14f))
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = theme.foreground().copy(alpha = 0.75f),
+            )
+            Text(
+                text,
+                color = theme.foreground().copy(alpha = 0.85f),
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
     }
 }
