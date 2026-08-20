@@ -16,9 +16,14 @@ else
   echo "== 安装 JDK 17（Adoptium Temurin，免 sudo） =="
   JDK_HOME="$HOME/Library/Java/JavaVirtualMachines/temurin-17.jdk"
   mkdir -p "$JDK_HOME"
-  ARCH="$(uname -m)"
+  # Adoptium API 的 arch 用 aarch64/x64（macOS uname 返回 arm64/x86_64，直接拼 URL 会 404）
+  case "$(uname -m)" in
+    arm64) ADOPT_ARCH="aarch64" ;;
+    x86_64) ADOPT_ARCH="x64" ;;
+    *) ADOPT_ARCH="$(uname -m)" ;;
+  esac
   curl -fsSL --retry 3 \
-    "https://api.adoptium.net/v3/binary/latest/17/ga/mac/${ARCH}/jdk/hotspot/normal/eclipse" \
+    "https://api.adoptium.net/v3/binary/latest/17/ga/mac/${ADOPT_ARCH}/jdk/hotspot/normal/eclipse" \
     -o /tmp/temurin17.tar.gz
   tar xzf /tmp/temurin17.tar.gz -C "$JDK_HOME" --strip-components=1
   echo "== JDK 17 安装完成：$(/usr/libexec/java_home -v 17) =="
