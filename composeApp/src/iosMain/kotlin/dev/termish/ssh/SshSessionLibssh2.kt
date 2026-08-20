@@ -380,7 +380,7 @@ class SshSessionLibssh2(
     }
 
     // iOS 暂未实现 exec+pty 通道（libssh2 串行线程模型下需额外通道管理）；
-    // 返回 null → TerminalController.startHerdrExec 回退到 shell 命令路径。
+    // 返回 null → 安装引导等调用方回退到 runCommand 路径。
     override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? = null
 
     override fun sendData(data: ByteArray) {

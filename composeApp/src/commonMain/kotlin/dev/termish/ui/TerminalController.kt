@@ -60,9 +60,9 @@ data class HostKeyRequest(
 
 /**
  * 终端会话控制器：持有终端状态（buffer / emulator / 连接状态）供 UI 观察，
- * 并把键盘输入路由到当前传输（SSH shell / mosh / herdr exec）。
+ * 并把键盘输入路由到当前传输（SSH shell / mosh）。
  *
- * 连接编排（三模式建连、重连、herdr 探测/引导/降级、网络事件）在
+ * 连接编排（SSH/Mosh 建连、重连、herdr 工作台开关、网络事件）在
  * [SessionConnector]——状态所有权留在这里（Compose 观察点不变），
  * connector 经同包 internal 访问读写。
  */
@@ -115,19 +115,15 @@ class TerminalController(
     /** 自动探测到远端系统并已保存时回调（Termius 式识别；UI 据此刷新主机列表）。 */
     var onSystemDetected: ((Host) -> Unit)? = null
 
-    /** herdr 是否可用（HERDR 模式探测：远端装了 herdr）。 */
-    var herdrAvailable by mutableStateOf(false)
-        internal set
-
-    /** HERDR 模式：远端未安装 herdr（banner 显示安装引导）。 */
+    /** herdr 工作台开关开启且远端未安装 herdr（banner 显示安装引导）。 */
     var herdrNeedsInstall by mutableStateOf(false)
         internal set
 
-    /** HERDR 安装进行中（banner 显示进度，避免重复触发）。 */
+    /** herdr 安装进行中（banner 显示进度，避免重复触发）。 */
     var herdrInstalling by mutableStateOf(false)
         internal set
 
-    /** HERDR 安装脚本的实时输出（引导卡片里展示；挂住时可见无新进展）。 */
+    /** herdr 安装脚本的实时输出（引导卡片里展示；挂住时可见无新进展）。 */
     var herdrInstallLog by mutableStateOf("")
         internal set
 
@@ -147,7 +143,7 @@ class TerminalController(
     var moshNeedsSudoPassword by mutableStateOf(false)
         internal set
 
-    /** 探测到的 herdr 可执行路径（HERDR 模式：安装 mosh / 降级后继续连接用）。 */
+    /** 探测到的 herdr 可执行路径（工作台开关：引导 mosh / 注入命令用）。 */
     internal var herdrBin: String? = null
 
     /** 本会话条目已从 mosh 降级到 SSH（UDP 不通，或用户在安装卡片主动选择）：
@@ -174,10 +170,6 @@ class TerminalController(
     // ---- 传输通道（connector 读写；close 时统一释放）----
     internal var session: SshSession? = null
     internal var moshSession: MoshSession? = null
-    /** HERDR 模式 SSH 兜底的 exec+pty 通道（herdr TUI 直接跑，无 shell 回显）。 */
-    internal var herdrExec: SshExecChannel? = null
-    /** HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）。 */
-    internal var herdrSuppressShellOutput = false
     /** Mosh 成功路径关闭 SSH 引导通道时短路 onClosed（避免误判为意外断线）。 */
     internal var swallowClosed = false
     internal val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
@@ -224,9 +216,7 @@ class TerminalController(
         buffer.defaultCursorRgb = argbToRgb(terminalTheme.cursor)
 
         emulator.onTitleChange = { t -> title = t }
-        // OSC 应答（10/11/4 颜色查询、DSR/DA 等）与键盘输入同路由：herdrExec 优先。
-        // 此前直发 session——HERDR 降级路径（exec+pty 跑 herdr）下 herdr 的 OSC 4
-        // 调色板查询应答被发到 shell stdin，readline 回显成满屏 "]4;i;rgb:…" 文本。
+        // OSC 应答（10/11/4 颜色查询、DSR/DA 等）与键盘输入同路由（当前传输）
         emulator.onResponse = { bytes -> sendBytes(bytes) }
         emulator.onClipboardWrite = { text ->
             // OSC 52 远端写剪贴板受设置开关控制（远端可静默覆盖剪贴板，默认开）
@@ -254,7 +244,7 @@ class TerminalController(
     /** 按最近一次窗口尺寸重连（保留屏幕缓冲）；用于退到后台后回前台恢复会话。 */
     fun reconnect() = connector.reconnect()
 
-    /** HERDR 模式：远端未安装时，在已认证连接上执行官网安装脚本并继续连接。 */
+    /** herdr 引导安装：远端未安装时，在已认证连接上执行官网安装脚本并继续连接。 */
     fun installHerdr() = connector.installHerdr()
 
     /** Mosh 模式：远端未安装时按系统包管理器安装并继续 mosh 连接。
@@ -278,8 +268,6 @@ class TerminalController(
             trace?.step(step)
         }
         override suspend fun onOutput(data: ByteArray) {
-            // HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）
-            if (herdrSuppressShellOutput) return
             enqueueOutput(data)
         }
 
@@ -382,15 +370,11 @@ class TerminalController(
     }
 
     fun sendText(text: String) {
-        val exec = herdrExec
-        if (exec != null) exec.write(text.encodeToByteArray())
-        else moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
+        moshSession?.sendData(text.encodeToByteArray()) ?: session?.sendData(text.encodeToByteArray())
     }
 
     fun sendBytes(bytes: ByteArray) {
-        val exec = herdrExec
-        if (exec != null) exec.write(bytes)
-        else moshSession?.sendData(bytes) ?: session?.sendData(bytes)
+        moshSession?.sendData(bytes) ?: session?.sendData(bytes)
     }
 
     fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
@@ -446,8 +430,6 @@ class TerminalController(
         moshInstalling = false
         moshInstallLog = ""
         moshNeedsSudoPassword = false
-        herdrExec?.close()
-        herdrExec = null
         session?.close()
         session = null
     }
