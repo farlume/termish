@@ -679,6 +679,12 @@ private fun TerminalTabBar(
                         is SessionTab.Terminal -> tab.controller.host
                         is SessionTab.Sftp -> tab.host
                     }
+                    // 同一主机的终端会话按**当前 tab 列表顺序**编号（1、2、3…）：
+                    // 只看当前存活 tab，删除后自动重排（第 2 个删了，原第 3 个变 2）
+                    val hostTerminalTabs = tabs.filter {
+                        (it as? SessionTab.Terminal)?.controller?.host?.id == host.id
+                    }
+                    val seq = (tab as? SessionTab.Terminal)?.let { hostTerminalTabs.indexOf(it) + 1 } ?: 0
                     val statusColor = (tab as? SessionTab.Terminal)?.let {
                         statusColor(it.controller.status, it.controller.linkLostSeconds)
                     }
@@ -689,6 +695,8 @@ private fun TerminalTabBar(
                     } ?: false
                     SessionTabChip(
                         host = host,
+                        seq = seq,
+                        showSeq = hostTerminalTabs.size > 1,
                         statusDotColor = statusColor,
                         inactive = inactive,
                         selected = tab.id == current.id,
@@ -731,10 +739,25 @@ private fun TerminalTabBar(
     }
 }
 
-/** 单个会话 tab：系统小头像 + user@host + 关闭 X；当前 tab 高亮并显示连接状态点。 */
+/**
+ * 会话 tab 标题：**优先显示用户自定义名称**；未起名时（保存时 name 回退为
+ * hostname）回退 `user@host`——自定义名称是用户心智里的标识，IP/域名是备选。
+ * 同一主机存在多个会话时（[showSeq]），标题追加**当前 tab 列表序号** `(n)`
+ * （按存活 tab 顺序 1、2、3…编号，删除后自动重排）。
+ */
+internal fun sessionTabTitle(host: Host, seq: Int = 0, showSeq: Boolean = false): String {
+    val base = if (host.name.isNotBlank() && host.name != host.hostname) host.name
+    else "${host.username}@${host.hostname}"
+    return if (showSeq) "$base ($seq)" else base
+}
+
+/** 单个会话 tab：系统小头像 + 标题 + 关闭 X；当前 tab 高亮并显示连接状态点。 */
 @Composable
 private fun SessionTabChip(
     host: Host,
+    /** 同主机会话序号：仅 [showSeq] 时显示 `(n)`。 */
+    seq: Int = 0,
+    showSeq: Boolean = false,
     statusDotColor: Color?,
     /** 断开/失败的会话：文字与背景降透明度（状态点仍保留区分）。 */
     inactive: Boolean = false,
@@ -768,7 +791,7 @@ private fun SessionTabChip(
         }
         Spacer(Modifier.size(6.dp))
         Text(
-            "${host.username}@${host.hostname}",
+            sessionTabTitle(host, seq, showSeq),
             style = MaterialTheme.typography.labelSmall,
             color = if (inactive) foreground.copy(alpha = 0.4f) else foreground,
             maxLines = 1,
