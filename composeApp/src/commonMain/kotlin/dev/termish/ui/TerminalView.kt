@@ -157,6 +157,12 @@ fun TerminalView(
     keyboardVisible: Boolean = false,
     /** 首次量到真实画布尺寸后回调（用于以真实行列建连，避免先以 80x24 起 PTY）。 */
     onReady: (cols: Int, rows: Int) -> Unit = { _, _ -> },
+    /**
+     * 画布尺寸是否已稳定（布局链上游的常驻元素已量到）：false 时不 resize、
+     * 不上报 [onReady]——首帧中间尺寸（如工具栏未量到、bottom padding 未
+     * 生效）会以错误行数起 PTY / resize，TUI（herdr）跟着整体重排跳动。
+     */
+    sizeStable: Boolean = true,
     onCopy: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -312,9 +318,10 @@ fun TerminalView(
     // 避免每帧新建实例产生的缓存垃圾
     val emptyLine = remember(buffer.cols) { TerminalLine(buffer.cols) }
 
-    // 尺寸或字号变化时重新计算行列并同步 PTY
-    LaunchedEffect(canvasSize, effectiveFontSizeSp) {
-        if (canvasSize.width <= 0 || canvasSize.height <= 0) return@LaunchedEffect
+    // 尺寸或字号变化时重新计算行列并同步 PTY；sizeStable=false（上游布局
+    // 未定，画布尺寸还是中间值）时全部跳过——稳定后 effect 重跑一次到位
+    LaunchedEffect(canvasSize, effectiveFontSizeSp, sizeStable) {
+        if (!sizeStable || canvasSize.width <= 0 || canvasSize.height <= 0) return@LaunchedEffect
         val cols = (canvasSize.width / cellW).toInt().coerceAtLeast(1)
         val rows = (canvasSize.height / cellH).toInt().coerceAtLeast(1)
         controller.resize(cols, rows, canvasSize.width, canvasSize.height)

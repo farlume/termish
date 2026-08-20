@@ -351,13 +351,16 @@ private fun TerminalBody(
                         coveredBottomPx = coveredBottomPx,
                         keyboardVisible = imeVisible,
                         onReady = { cols, rows ->
-                            // 等工具栏高度量到后再建连：画布尺寸已扣除工具栏区域，
+                            // 等工具栏高度量到后（sizeStable）建连：画布尺寸已扣除工具栏区域，
                             // 避免先用"含被盖住区域"的错误行数起 PTY
                             if (!connectSent && toolbarHeightPx > 0f) {
                                 connectSent = true
                                 controller.connect(cols, rows)
                             }
                         },
+                        // 首帧工具栏未量到时画布偏高是中间尺寸：跳过 resize/onReady，
+                        // 避免错误行数起 PTY 后再 resize（TUI 整体重排跳动）
+                        sizeStable = toolbarHeightPx > 0f,
                         onCopy = { text ->
                             clipboard.setText(AnnotatedString(text))
                             scope.launch { snackbar.showSnackbar(s.terminalCopied) }

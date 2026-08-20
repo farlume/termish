@@ -225,6 +225,16 @@ fun AppRoot(repository: HostRepository) {
     }
     LaunchedEffect(pendingNavigate) {
         val target = pendingNavigate ?: return@LaunchedEffect
+        // TUI 会话（herdr 工作台 / 启动命令）不预连：列表页无终端画布只能
+        // 80x24 起步，herdr/tmux 按错误尺寸布局后再 resize 会整体重排跳动；
+        // 直接进终端页等画布量到实际尺寸后建连，首帧即正确布局
+        //（纯 shell 预连无此问题——resize 只是把提示符换行）
+        if (target.host.launchHerdr || target.host.startupCommand.isNotBlank()) {
+            currentTab = SessionTab.Terminal(target)
+            screen = Screen.Terminal
+            pendingNavigate = null
+            return@LaunchedEffect
+        }
         // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
         // 到实际画布尺寸），否则会话停留在 IDLE 永远无法连接
         if (target.status == ConnStatus.IDLE) {
