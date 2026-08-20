@@ -380,7 +380,6 @@ private fun TerminalBody(
                 } else {
                     s.terminalConnecting
                 },
-                theme = theme,
                 modifier = Modifier.align(Alignment.Center),
             )
 
@@ -955,42 +954,6 @@ private fun MoshInstallGuide(controller: TerminalController, bottomInset: Dp) {
                     }
                 }
             }
-        }
-    }
-}
-
-/** 连接中居中指示器：画布中央 spinner + 文案（跟随终端主题），淡入淡出。 */
-@Composable
-private fun ConnectingIndicator(
-    visible: Boolean,
-    text: String,
-    theme: TerminalTheme,
-    modifier: Modifier = Modifier,
-) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(180)),
-        exit = fadeOut(tween(220)),
-        modifier = modifier,
-    ) {
-        Row(
-            Modifier
-                .background(theme.background().copy(alpha = 0.72f), RoundedCornerShape(12.dp))
-                .border(1.dp, theme.foreground().copy(alpha = 0.16f), RoundedCornerShape(12.dp))
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(18.dp),
-                strokeWidth = 2.dp,
-                color = theme.foreground().copy(alpha = 0.75f),
-            )
-            Text(
-                text,
-                color = theme.foreground().copy(alpha = 0.85f),
-                style = MaterialTheme.typography.bodyMedium,
-            )
         }
     }
 }

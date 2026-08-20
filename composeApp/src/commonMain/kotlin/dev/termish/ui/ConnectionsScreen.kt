@@ -185,16 +185,25 @@ fun ConnectionsScreen(
                                     )
                                 },
                                 leadingContent = {
-                                    Box(
-                                        Modifier.size(10.dp).clip(CircleShape)
-                                            .background(
-                                                if (item is HostSessionItem.Terminal) {
-                                                    statusColor(item.controller.status, item.controller.linkLostSeconds)
-                                                } else {
-                                                    StatusColors.Connected
-                                                },
-                                            ),
-                                    )
+                                    val isConnecting = item is HostSessionItem.Terminal &&
+                                        (item.controller.status == ConnStatus.CONNECTING || item.controller.status == ConnStatus.AUTH)
+                                    if (isConnecting) {
+                                        // 连接中：状态点位置换小 spinner（与首页头像转圈同语义）
+                                        Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                                            StatusSpinner(Modifier.size(14.dp))
+                                        }
+                                    } else {
+                                        Box(
+                                            Modifier.size(10.dp).clip(CircleShape)
+                                                .background(
+                                                    if (item is HostSessionItem.Terminal) {
+                                                        statusColor(item.controller.status, item.controller.linkLostSeconds)
+                                                    } else {
+                                                        StatusColors.Connected
+                                                    },
+                                                ),
+                                        )
+                                    }
                                 },
                                 trailingContent = {
                                     IconButton(onClick = { onClose(item) }) {

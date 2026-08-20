@@ -437,14 +437,15 @@ fun SftpContent(
     // SFTP 是独立页面类型的 tab：主题随应用（浅色页面），不随终端主题
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize()) {
-            // 断线 banner：样式与终端页对齐（红色=断开 + 重连按钮 / 琥珀=重连中）
+            // 断线 banner（红色 + 重连按钮）；重连中改画布居中指示器
+            //（与终端页同款，见 ConnectingIndicator）
             val bannerText = when {
-                state.reconnecting -> s.sftpReconnecting
+                state.reconnecting -> null
                 state.disconnected || loadError != null -> s.sftpDisconnected
                 else -> null
             }
             if (bannerText != null) {
-                val bannerColor = if (state.reconnecting) StatusColors.Warning else StatusColors.Error
+                val bannerColor = StatusColors.Error
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -758,6 +759,13 @@ fun SftpContent(
             }
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+
+        // 重连中：页面主状态不可用，居中指示器（终端页同款，淡入淡出）
+        ConnectingIndicator(
+            visible = state.reconnecting,
+            text = s.sftpReconnecting,
+            modifier = Modifier.align(Alignment.Center),
+        )
     }
 
     if (newFolderDialog) {
