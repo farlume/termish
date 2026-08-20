@@ -35,7 +35,6 @@ import androidx.compose.ui.window.DialogProperties
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.util.monospaceFontFamily
-import org.jetbrains.compose.resources.painterResource
 
 /**
  * New SFTP connection 覆盖层：盖在当前页面之上（非压栈导航）。
@@ -118,12 +117,7 @@ private fun SftpHostRow(host: Host, onClick: () -> Unit) {
                 Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).background(systemColor(sys)),
                 contentAlignment = Alignment.Center,
             ) {
-                val svg = systemSvg(sys)
-                if (svg != null) {
-                    Icon(painterResource(svg), null, tint = Color.White, modifier = Modifier.size(22.dp))
-                } else {
-                    Icon(systemIcon(sys), null, tint = Color.White, modifier = Modifier.size(22.dp))
-                }
+                SystemAvatarIcon(sys, 22.dp)
             }
             Column(Modifier.weight(1f)) {
                 Text(

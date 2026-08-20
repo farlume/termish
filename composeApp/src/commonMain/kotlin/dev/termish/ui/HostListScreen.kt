@@ -31,7 +31,6 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DesktopWindows
-import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.LaptopMac
 import androidx.compose.material.icons.filled.Link
@@ -76,15 +75,30 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.ssh.SftpSession
 import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
+import dev.termish.generated.resources.host_alma
+import dev.termish.generated.resources.host_alpine
+import dev.termish.generated.resources.host_arch
 import dev.termish.generated.resources.host_centos
+import dev.termish.generated.resources.host_cloud
+import dev.termish.generated.resources.host_debian
+import dev.termish.generated.resources.host_fedora
+import dev.termish.generated.resources.host_fnos
+import dev.termish.generated.resources.host_istoreos
+import dev.termish.generated.resources.host_kali
 import dev.termish.generated.resources.host_linux
 import dev.termish.generated.resources.host_mac
+import dev.termish.generated.resources.host_openwrt
+import dev.termish.generated.resources.host_opensuse
+import dev.termish.generated.resources.host_raspbian
+import dev.termish.generated.resources.host_rocky
+import dev.termish.generated.resources.host_synology
 import dev.termish.generated.resources.host_ubuntu
 import dev.termish.generated.resources.host_windows
 import dev.termish.util.monospaceFontFamily
@@ -523,22 +537,7 @@ private fun HostCard(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    val svg = systemSvg(sys)
-                    if (svg != null) {
-                        Icon(
-                            painterResource(svg),
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    } else {
-                        Icon(
-                            systemIcon(sys),
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
+                    SystemAvatarIcon(sys, 22.dp)
                 }
             }
             Column(Modifier.weight(1f)) {
@@ -699,7 +698,7 @@ private fun SessionCountMenu(
     }
 }
 
-/** 系统关键词 → 白色 SVG 图标资源（有品牌图标的系统；其余回退 [systemIcon]）。 */
+/** 系统关键词 → 白色图标资源（有品牌图标的系统；其余回退 [systemIcon]）。 */
 internal fun systemSvg(system: String): DrawableResource? {
     val s = system.lowercase()
     return when {
@@ -707,18 +706,29 @@ internal fun systemSvg(system: String): DrawableResource? {
         s.contains("windows") || s.contains("win") -> Res.drawable.host_windows
         s.contains("centos") -> Res.drawable.host_centos
         s.contains("ubuntu") -> Res.drawable.host_ubuntu
-        s.contains("linux") || s.contains("debian") || s.contains("fedora") || s.contains("arch") ||
-            s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
-            s.contains("raspbian") || s.contains("opensuse") || s.contains("manjaro") ||
-            s.contains("gentoo") || s.contains("rocky") || s.contains("alma") ||
-            s.contains("mint") || s.contains("nixos") || s.contains("pop") || s.contains("elementary") ||
-            s.contains("suse") -> Res.drawable.host_linux
+        s.contains("alpine") -> Res.drawable.host_alpine
+        s.contains("fedora") -> Res.drawable.host_fedora
+        s.contains("openwrt") -> Res.drawable.host_openwrt
+        s.contains("istoreos") -> Res.drawable.host_istoreos
+        s.contains("debian") -> Res.drawable.host_debian
+        s.contains("fnos") || s.contains("fnnas") || s.contains("飞牛") -> Res.drawable.host_fnos
+        s.contains("arch") -> Res.drawable.host_arch
+        s.contains("kali") -> Res.drawable.host_kali
+        s.contains("rocky") -> Res.drawable.host_rocky
+        s.contains("alma") -> Res.drawable.host_alma
+        s.contains("raspbian") || s.contains("raspberry") -> Res.drawable.host_raspbian
+        s.contains("opensuse") || s.contains("suse") -> Res.drawable.host_opensuse
+        s.contains("synology") || s.contains("dsm") -> Res.drawable.host_synology
+        s.contains("linux") ||
+            s.contains("redhat") || s.contains("manjaro") || s.contains("gentoo") ||
+            s.contains("mint") || s.contains("nixos") || s.contains("pop") ||
+            s.contains("elementary") -> Res.drawable.host_linux
         else -> null
     }
 }
 
-/** 系统关键词 → 头像图标（Material 兜底：无 SVG 的系统如 android/ios/bsd/未知）。 */
-internal fun systemIcon(system: String): ImageVector {
+/** 系统关键词 → 头像图标（Material 矢量：android/ios/bsd；未知系统返回 null 走云主机默认图）。 */
+internal fun systemIcon(system: String): ImageVector? {
     val s = system.lowercase()
     return when {
         s.contains("android") -> Icons.Filled.Android
@@ -730,14 +740,34 @@ internal fun systemIcon(system: String): ImageVector {
             s.contains("centos") || s.contains("fedora") || s.contains("arch") ||
             s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
             s.contains("raspbian") -> Icons.Filled.Terminal
-        else -> Icons.Filled.Dns
+        else -> null
     }
 }
 
 /**
- * 系统关键词 → 头像背景色（纯色）。识别顺序：
+ * 系统头像图标（恒白色）：品牌 SVG 优先 → Material 矢量（android/ios/bsd）→
+ * 云主机默认图标兜底。首页卡片 / 终端 tab / SFTP 选主机统一走这里，保证渲染一致。
+ */
+@Composable
+internal fun SystemAvatarIcon(system: String, size: Dp) {
+    val svg = systemSvg(system)
+    if (svg != null) {
+        Icon(painterResource(svg), contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
+        return
+    }
+    val vec = systemIcon(system)
+    if (vec != null) {
+        Icon(vec, contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
+        return
+    }
+    // 未知系统：默认云主机图标（白色）
+    Icon(painterResource(Res.drawable.host_cloud), contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
+}
+
+/**
+ * 系统关键词 → 头像背景色（纯色，尽量贴近各系统官方品牌色）。识别顺序：
  * 先看主机「系统」字段，为空时用主机名兜底（如 mac.example.com → macOS）。
- * mac 黑、ubuntu 品牌红，其余按品牌色判断。
+ * ubuntu 橙、debian 红、mac 黑……未知系统用品牌翠绿。
  */
 internal fun systemColor(system: String): Color {
     val s = system.lowercase()
@@ -748,11 +778,25 @@ internal fun systemColor(system: String): Color {
         s.contains("windows") || s.contains("win") -> Color(0xFF0078D4)
         s.contains("freebsd") || s.contains("bsd") -> Color(0xFFD6242C)
         s.contains("ubuntu") -> Color(0xFFE95420)
-        s.contains("centos") -> Color(0xFF2E6DA4)
-        s.contains("linux") || s.contains("debian") ||
-            s.contains("fedora") || s.contains("arch") ||
-            s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
-            s.contains("raspbian") -> Color(0xFF475569)
-        else -> Color(0xFF83838C)
+        s.contains("fedora") -> Color(0xFF294172)
+        s.contains("debian") -> Color(0xFFA80030)
+        s.contains("alpine") -> Color(0xFF0D597F)
+        s.contains("openwrt") -> Color(0xFF295FB3)
+        s.contains("istoreos") -> Color(0xFF2E6BE6)
+        s.contains("centos") -> Color(0xFF262577)
+        s.contains("fnos") || s.contains("fnnas") || s.contains("飞牛") -> Color(0xFF3070D0)
+        s.contains("arch") -> Color(0xFF1793D1)
+        s.contains("kali") -> Color(0xFF557C94)
+        s.contains("rocky") -> Color(0xFF10B981)
+        s.contains("alma") -> Color(0xFF0E6682)
+        s.contains("raspbian") || s.contains("raspberry") -> Color(0xFFC51A4A)
+        s.contains("opensuse") || s.contains("suse") -> Color(0xFF73BA25)
+        s.contains("synology") || s.contains("dsm") -> Color(0xFF1692D4)
+        s.contains("linux") || s.contains("redhat") ||
+            s.contains("manjaro") || s.contains("gentoo") ||
+            s.contains("mint") || s.contains("nixos") ||
+            s.contains("pop") || s.contains("elementary") -> Color(0xFF475569)
+        // 未知系统：品牌翠绿（浅色主题 primary 同源），白色云主机图标在上面更醒目
+        else -> Color(0xFF059669)
     }
 }
