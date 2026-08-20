@@ -8,7 +8,7 @@
 #      干净检出没有；缺失时 Kotlin framework 的 cinterop/链接直接失败
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(git rev-parse --show-toplevel)"
 
 if /usr/libexec/java_home -v 17 >/dev/null 2>&1; then
   echo "== JDK 17 已存在：$(/usr/libexec/java_home -v 17) =="

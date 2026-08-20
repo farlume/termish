@@ -42,5 +42,5 @@ iosApp/Pods/
 iosApp/Podfile.lock
 iosApp/iosApp.xcworkspace/
 
-# AI adb 测试产物（截图/日志/报告，不入库）
-.aiadb/results/
+# AI adb 测试资产（用例/产物，开源前移出仓库——含 demo 凭据与内网测试主机）
+.aiadb/
