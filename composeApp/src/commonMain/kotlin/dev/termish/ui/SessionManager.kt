@@ -181,7 +181,24 @@ class SessionManager(
     }
 
     /** 关闭并移除 SFTP 会话。 */
-    fun closeSftp(entry: SftpSessionEntry) {
+    /** 断开 SFTP 会话但保留条目（与终端会话同语义：灰点可重连，浏览状态保留）。 */
+fun disconnectSftp(entry: SftpSessionEntry) {
+    try {
+        entry.session?.close()
+    } catch (_: Exception) {
+    }
+    val idx = sftpSessions.indexOf(entry)
+    if (idx >= 0) {
+        sftpSessions[idx] = SftpSessionEntry(entry.host, null, entry.uiState)
+        entry.uiState.disconnected = true
+        // 用户主动断开：不自动重连（进 tab 显示断开 banner，手动点重连）；
+        // 意外断链（onClosed 路径）仍保留自动重连一次
+        entry.uiState.autoReconnectAttempted = true
+    }
+    persist()
+}
+
+fun closeSftp(entry: SftpSessionEntry) {
         try {
             entry.session?.close()
         } catch (_: Exception) {
@@ -190,10 +207,10 @@ class SessionManager(
         persist()
     }
 
-    /** 关闭主机的全部会话：终端断开保留可重入 + SFTP 释放（卡片 Close）。 */
+    /** 关闭主机的全部会话：断开但保留可重入（终端灰点重连；SFTP 保路径重连恢复浏览）。 */
     fun closeAllForHost(hostId: String) {
         sessions.filter { it.host.id == hostId }.forEach { disconnect(it) }
-        sftpSessions.filter { it.host.id == hostId }.toList().forEach { closeSftp(it) }
+        sftpSessions.filter { it.host.id == hostId && it.session != null }.toList().forEach { disconnectSftp(it) }
     }
 
     /** 主机被删除时，连带断开并移除其会话。 */

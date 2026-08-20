@@ -633,7 +633,8 @@ private fun SessionCountMenu(
                         ConnStatus.CONNECTING, ConnStatus.AUTH -> s.connStatusConnecting
                         else -> s.connStatusClosed
                     }
-                    is HostSessionItem.Sftp -> s.hostsActive
+                    // SFTP：有连接=活跃；断开保留（session=null）=已断开，可进 tab 重连
+                    is HostSessionItem.Sftp -> if (item.session != null) s.hostsActive else s.connStatusClosed
                 }
                 val statusColor = when (item) {
                     is HostSessionItem.Terminal -> when (item.controller.status) {
@@ -641,7 +642,7 @@ private fun SessionCountMenu(
                         ConnStatus.CONNECTING, ConnStatus.AUTH -> StatusColors.Warning
                         else -> StatusColors.Neutral
                     }
-                    is HostSessionItem.Sftp -> StatusColors.Connected
+                    is HostSessionItem.Sftp -> if (item.session != null) StatusColors.Connected else StatusColors.Neutral
                 }
                 when (item) {
                     is HostSessionItem.Terminal -> DropdownMenuItem(

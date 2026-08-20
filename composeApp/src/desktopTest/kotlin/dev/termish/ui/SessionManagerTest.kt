@@ -13,6 +13,7 @@ import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -98,7 +99,9 @@ class SessionManagerTest {
     }
 
     @Test
-    fun closeAllForHostClosesSftpSession() {
+    fun closeAllForHostDisconnectsSftpButKeepsEntry() {
+        // 语义变更：卡片「关闭」= 断开保留（与终端一致），不再直接删除条目；
+        // 进 tab 可重连恢复原浏览路径
         val r = repo()
         val m = SessionManager(r)
         val h = host("a")
@@ -129,9 +132,11 @@ class SessionManagerTest {
 
         m.closeAllForHost(h.id)
 
-        assertTrue(m.sftpSessions.isEmpty())           // SFTP 条目被移除
-        assertTrue(closed)                              // 底层连接被关闭
-        assertTrue(r.loadRecentSftpEntries().isEmpty()) // 持久化同步
+        assertTrue(closed, "底层连接应被关闭")
+        assertEquals(1, m.sftpSessions.size, "条目应保留（断开可重连）")
+        assertNull(m.sftpSessions.first().session, "session 应置空（断开态）")
+        assertTrue(m.sftpSessions.first().uiState.disconnected, "应标记断开态")
+        assertTrue(m.sftpSessions.first().uiState.autoReconnectAttempted, "主动断开不自动重连")
     }
 
     @Test

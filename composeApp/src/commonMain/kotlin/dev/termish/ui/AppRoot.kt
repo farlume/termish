@@ -495,9 +495,15 @@ fun AppRoot(repository: HostRepository) {
                                                 else sessionManager.remove(item.controller)
                                             }
                                             is HostSessionItem.Sftp -> {
-                                                sessionManager.sftpSessions
-                                                    .firstOrNull { it.session === item.session }
-                                                    ?.let { sessionManager.closeSftp(it) }
+                                                // 与终端同语义两段式：活跃=断开保留（重连恢复路径），
+                                                // 已断开（session=null）=从列表移除
+                                                val entry = sessionManager.sftpSessions
+                                                    .firstOrNull { it.session === item.session || (item.session == null && it.host.id == item.host.id) }
+                                                when {
+                                                    entry == null -> {}
+                                                    entry.session != null -> sessionManager.disconnectSftp(entry)
+                                                    else -> sessionManager.closeSftp(entry)
+                                                }
                                             }
                                         }
                                     },
