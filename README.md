@@ -22,6 +22,10 @@
   <img src="docs/screenshots/terminal-herdr-en.png" width="230" alt="herdr TUI agent" />
   <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
+<p>
+  <img src="docs/screenshots/mosh-install-en.png" width="230" alt="mosh guided install" />
+  <img src="docs/screenshots/herdr-install-en.png" width="230" alt="herdr guided install" />
+</p>
 
 <p>
   <a href="https://github.com/ttermish/termish/releases/latest">
@@ -156,6 +160,10 @@ never appear. Termish's input pipeline is designed around composition from day o
 - Real-time connection status in the terminal header
 
 **Mosh**
+- **Guided install**: connecting in Mosh mode with no `mosh-server` on the
+  remote pops a bootstrap card — one-tap install (sudo password is sent over
+  the encrypted SSH channel for this install only, never stored), live apt
+  install log, auto-reconnect over mosh when done; skip to keep using SSH
 - SSH bootstrap: `mosh-server` is started over SSH, its UDP port/key parsed, then
   a **pure-Kotlin mosh client** (`dev.termish.mosh`: AES-128-OCB, SSP state sync,
   zlib fragmentation) speaks UDP directly — no GPL native binary needed.
@@ -171,6 +179,8 @@ never appear. Termish's input pipeline is designed around composition from day o
 **SFTP**
 - File browser with upload / streaming download / recursive folder download,
   breadcrumb navigation with back-as-history, recursive cross-directory search
+- **Text preview** (md/txt/log/…): streams only the first 512 KB, auto-detects
+  binary files, renders in a full-screen monospace view with a truncation hint
 - Download: progress banner + completion notification (Android taps to open);
   Android 10+ saves straight to the Download folder (auto-rename, no save-as
   dialog), iOS exports to Files, desktop file chooser
@@ -218,14 +228,21 @@ never appear. Termish's input pipeline is designed around composition from day o
    terminal page.
 3. **Type** — tap the canvas to raise the keyboard. Use the key toolbar for
    CTRL/ALT/ESC and arrows; PST pastes (bracketed-paste aware).
-4. **Mosh** — set the host's Connection Mode to Mosh (the server needs
-   `mosh-server` installed). Behind NAT, set a fixed UDP port on the host and
-   forward it. Enable "Sync terminal theme" for TUIs like herdr.
+4. **Mosh** — set the host's Connection Mode to Mosh. If `mosh-server` is
+   missing on the remote, a **guided install** card appears: one-tap install
+   (sudo password sent once, never stored), live install log, auto-reconnect
+   over mosh when done; you can also skip and stay on SSH. Behind NAT, set a
+   fixed UDP port on the host and forward it. Enable "Sync terminal theme" for
+   TUIs like herdr.
 5. **Keep sessions alive** — set a startup command like `tmux new -A -s main`
    for server-side persistence. Leaving the terminal page keeps the session
    running in the background (Android foreground service); the Connections tab
    re-enters it with the exact buffer.
-6. **SFTP** — `+` → Connect via SFTP: browse, upload, download files and whole
+6. **herdr workspace** — turn on the host's herdr mode (pocket entry to your
+   agents). If herdr is missing on the remote, a **guided install** card pops:
+   one-tap install (official script), live install log on the card, straight
+   into your agent workspace when done.
+7. **SFTP** — `+` → Connect via SFTP: browse, upload, download files and whole
    folders.
 
 ## Documentation

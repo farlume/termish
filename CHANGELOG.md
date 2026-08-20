@@ -5,6 +5,29 @@
 
 ## [Unreleased]
 
+## [1.1.11] - 2026-08-21
+
+### 新增
+
+- **SFTP 文本预览**（文件菜单 → 预览）：md/txt/log 等直接全屏等宽查看，
+  只流式读取前 512 KB（大文件自动截断提示），前 4 KB 含 NUL 自动识别二进制，
+  UTF-8 解码；行内可选文本 + 一键复制全部
+- **SFTP 图片预览**：png/jpg/jpeg/gif/webp/bmp 点击直接黑底显示（Fit 适配），
+  标题栏切换原始像素大小（可滚动看细节）；读取上限 8MB，超限明确提示；
+  平台解码（Android BitmapFactory / iOS skia / 桌面 ImageIO）
+- **SFTP 上传多选**：三平台选择器支持一次选多个文件并发上传
+  （Android OpenMultipleDocuments / iOS allowsMultipleSelection /
+  JFileChooser multiSelectionEnabled，各自独立流式读）
+- **SFTP 文件类型 icon**：图片/视频/音频/压缩包/代码/文本/PDF 按扩展名
+  区分图标（列表与搜索结果一致）
+
+### 变更
+
+- **终端 tab 标题优先显示主机自定义名称**；未起名时回退 `user@host`
+- **同主机多会话 tab 编号**：按当前 tab 列表位置 1、2、3…（删除自动重排）
+- **README 截图全部更新**（新 UI）+ mosh/herdr 引导安装截图（中英配对），
+  文档同步引导安装说明（sudo 密码仅本次发送、可跳过降级 SSH）
+
 ## [1.1.10] - 2026-08-21
 
 ## [1.1.9] - 2026-08-20
@@ -240,7 +263,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.10...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.11...HEAD
+[1.1.11]: https://github.com/ttermish/termish/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/ttermish/termish/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/ttermish/termish/compare/v1.1.8...v1.1.9
 [1.1.8]: https://github.com/ttermish/termish/compare/v1.1.7...v1.1.8

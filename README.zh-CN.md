@@ -22,6 +22,10 @@
   <img src="docs/screenshots/terminal-herdr-zh.png" width="230" alt="herdr TUI agent" />
   <img src="docs/screenshots/sftp-zh.png" width="230" alt="SFTP" />
 </p>
+<p>
+  <img src="docs/screenshots/mosh-install-zh.png" width="230" alt="mosh 引导安装" />
+  <img src="docs/screenshots/herdr-install-zh.png" width="230" alt="herdr 引导安装" />
+</p>
 
 <p>
   <a href="https://github.com/ttermish/termish/releases/latest">
@@ -142,6 +146,9 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 - 终端页头实时连接状态
 
 **Mosh**
+- **引导安装**：Mosh 模式连接时发现远端未装 `mosh-server`，自动弹引导卡——
+  一键安装（sudo 密码仅本次经加密 SSH 发送、不存储），实时显示 apt 安装日志，
+  装完自动重连 mosh；不想装可跳过，继续用 SSH
 - SSH 引导：经 SSH 启动 `mosh-server`、解析 UDP 端口与密钥，然后**纯 Kotlin
   mosh 客户端**（`dev.termish.mosh`：AES-128-OCB、SSP 状态同步、zlib 分片）
   直连 UDP——无需任何 GPL 原生二进制
@@ -155,6 +162,8 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
 **SFTP**
 - 文件浏览器：上传 / 流式下载 / 递归下载目录，面包屑导航 + 返回键回退历史，
   跨目录递归搜索
+- **文本预览**（md/txt/log 等）：只流式读取前 512 KB，自动识别二进制文件，
+  全屏等宽视图渲染 + 截断提示
 - 下载：进度横幅 + 完成系统通知（Android 点击打开文件）；
   Android 10+ 直接存到下载目录（同名自动重命名、不弹另存为），
   iOS 转存到「文件」，桌面文件选择器
@@ -195,13 +204,18 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
    之后自动校验。再次点同一主机即可再开一个会话，终端页内 tab 切换。
 3. **输入**——点画布拉起键盘；功能键工具栏提供 CTRL/ALT/ESC 与方向键；
    PST 粘贴（自动识别 bracketed paste）。
-4. **Mosh**——把主机的连接方式改为 Mosh（服务器需已安装 `mosh-server`）。
+4. **Mosh**——把主机的连接方式改为 Mosh。远端未装 `mosh-server` 时
+   会自动弹出**引导安装**卡片：一键安装（sudo 密码仅本次发送、不存储），
+   实时显示安装日志，装完自动重连；也可跳过继续用 SSH。
    NAT 环境下给主机固定一个 UDP 端口并做端口转发；用 herdr 等 TUI 时
    打开「同步终端主题」。
 5. **会话保活**——设置启动命令如 `tmux new -A -s main` 做服务端持久化。
    离开终端页会话在后台保持运行（Android 前台服务）；连接 tab 可带着
    完整缓冲重新进入。
-6. **SFTP**——`+` → Connect via SFTP：浏览、上传、下载文件与整个目录。
+6. **herdr 工作台**——主机开启 herdr 模式（agent 口袋入口）。远端未装 herdr 时
+   自动弹**引导安装**卡片：一键安装（官网脚本），卡片实时显示安装日志，
+   装完直接进入 agent 工作台；日常用 herdr 等 TUI 时打开「同步终端主题」。
+7. **SFTP**——`+` → Connect via SFTP：浏览、上传、下载文件与整个目录。
 
 ## 文档
 
