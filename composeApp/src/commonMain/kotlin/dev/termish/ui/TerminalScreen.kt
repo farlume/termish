@@ -305,8 +305,7 @@ private fun TerminalBody(
         val bannerText = when {
             controller.status == ConnStatus.CONNECTING && controller.reconnectCount > 0 ->
                 s.terminalReconnectingN(controller.reconnectCount)
-            // 首连进行中（HERDR 模式直接进终端页等画布尺寸后才建连——无此提示
-            // 用户看到的是黑屏几秒）：琥珀色「连接中…」
+            // 首连进行中：琥珀色「连接中…」（无此提示用户看到的是黑屏几秒）
             controller.status == ConnStatus.CONNECTING ->
                 s.terminalConnecting + "…"
             // mosh 链路失联（会话保持中，网络恢复自动续传）：对齐 mosh 的
@@ -743,7 +742,7 @@ private fun sendTyped(controller: TerminalController, text: String, ctrl: Boolea
     }
 }
 
-/** HERDR 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。
+/** herdr 引导安装卡片：画布中央展示，远端未安装时引导安装 + 实时安装日志。
  *  @param bottomInset 底部让出高度（工具栏），卡片在其中居中以保持视觉重心。 */
 @Composable
 private fun HerdrInstallGuide(controller: TerminalController, bottomInset: Dp) {    val s = LocalAppStrings.current

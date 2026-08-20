@@ -11,13 +11,11 @@ enum class HostAuthMethod {
     KEY_OR_PASSWORD,
 }
 
-/** 连接方式：SSH 终端（默认）、Mosh（需要远端安装 mosh-server）或 Herdr
- *  （agent 工作台：SSH 底座 + 探测 herdr + agent 状态监控；选 Herdr = 显式同意监控）。 */
+/** 连接方式：SSH 终端（默认）或 Mosh（需要远端安装 mosh-server）。 */
 @Serializable
 enum class ConnectionMode {
     SSH,
     MOSH,
-    HERDR,
 }
 
 @Serializable
@@ -40,6 +38,14 @@ data class Host(
     val knownHostFingerprint: String? = null,
     /** SSH 终端 或 Mosh。 */
     val connectionMode: ConnectionMode = ConnectionMode.SSH,
+    /**
+     * 连接后自动启动 herdr 工作台（agent 口袋入口）：
+     * - Mosh：引导 `mosh-server new -- herdr`，mosh 会话直接跑 herdr TUI；
+     *   降级/SSH：连接后向 shell 注入 `herdr` 命令（回 shell 可退出）
+     * - 远端未装 herdr 时引导安装（官网脚本，卡片实时日志）
+     * - 勾选 = 显式同意 agent 状态监控（探测/安装引导都以此开关驱动）
+     */
+    val launchHerdr: Boolean = false,
     /** 连接成功后自动执行的命令（如 `tmux new -A -s main` 实现会话现场恢复）。 */
     val startupCommand: String = "",
     /**

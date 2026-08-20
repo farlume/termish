@@ -9,7 +9,6 @@ import dev.termish.notify.NotificationEvent
 import dev.termish.ssh.MoshSession
 import dev.termish.ssh.SYSTEM_PROBE_COMMAND
 import dev.termish.ssh.SshConnection
-import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import dev.termish.ssh.createKmpMoshSession
 import dev.termish.ssh.detectSystemFromOutput
@@ -27,8 +26,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 连接编排层：三模式（SSH / Mosh / HERDR）建连、重连退避、网络事件、
- * herdr 探测/引导/降级、mosh 主题注入、系统探测。
+ * 连接编排层：两模式（SSH / Mosh）建连、重连退避、网络事件、herdr 工作台
+ * 开关（探测/引导安装/注入）、mosh 主题注入、系统探测。
+ *
+ * herdr 是远端应用而非传输协议（[Host.launchHerdr]）：
+ * - Mosh：引导 `mosh-server new -- herdr`，mosh 会话直接跑 herdr TUI
+ * - SSH / mosh 降级：连接后向 shell 注入 `herdr` 命令（退出回 shell）
+ * - 远端未装：引导安装卡片（官网脚本，实时日志）；勾选开关 = 显式同意监控
  *
  * 状态所有权（Compose 观察点：status / frame / buffer …）留在
  * [TerminalController]——本类通过同包 internal 访问读写，UI 观察点不变。
@@ -59,10 +63,6 @@ internal class SessionConnector(
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
         /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
-        /** herdr exec 通道 EOF 后的判定宽限：JVM 引擎把读异常吞成 null（EOF 双义），
-         *  连接级死亡时 shell 侧 onClosed 会在毫秒级随之而来；等一小段再按
-         *  isActive 区分「herdr 正常退出」与「断链」。 */
-        private const val HERDR_EOF_GRACE_MS = 500L
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
         private const val HERDR_INSTALL_TIMEOUT_MS = 180_000L
         /** mosh 安装超时：包管理器下载 + 依赖，给足时间。 */
@@ -120,10 +120,6 @@ internal class SessionConnector(
                         doConnectMosh()
                         return@launch
                     }
-                    ConnectionMode.HERDR -> {
-                        doConnectHerdr()
-                        return@launch
-                    }
                     ConnectionMode.SSH -> {}
                 }
                 val s = c.sessionFactory(newConnection(), c.callbacks(trace))
@@ -141,16 +137,20 @@ internal class SessionConnector(
                 trace.step("connected")
                 trace.end()
                 TermLog.i("ssh") { "connected ${c.host.name} kex=${info.kexAlgorithm} in ${c.nowMs() - t0}ms" }
-                finishConnected(s)
-                // HERDR 模式：探测 herdr（snapshot 成功 = 已装）——显式选模式即同意监控
-                if (c.host.connectionMode == ConnectionMode.HERDR) {
-                    val ssh = s
-                    c.scope.launch {
-                        val raw = runCatching { ssh.runCommand("herdr api snapshot") }.getOrNull()
-                        c.herdrAvailable = raw != null && raw.isNotBlank()
-                        TermLog.d("herdr") { "probe ${c.host.name}: herdrAvailable=${c.herdrAvailable}" }
+                // herdr 工作台开关：探测远端 herdr；缺失 → 引导安装卡片
+                //（会话保活；勾选开关 = 显式同意 agent 监控）
+                if (c.host.launchHerdr) {
+                    val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
+                    if (probed == null) {
+                        TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
+                        c.herdrNeedsInstall = true
+                        finishConnected(s, sendStartup = false)
+                        return@launch
                     }
+                    c.herdrBin = probed.bin
+                    TermLog.i("herdr") { "herdr probe ok ${c.host.name} bin=${probed.bin}" }
                 }
+                finishConnected(s)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e // 协程取消不是连接失败：不置 ERROR、不停保活
             } catch (e: Exception) {
@@ -183,20 +183,18 @@ internal class SessionConnector(
 
     /**
      * Mosh 模式：SSH 引导 mosh-server，UDP 首包确认后关闭 SSH（引导工具使命完成）。
-     * 降级语义（两种）：引导失败 = 远端未安装 mosh-server → 降级
-     * （Mosh：SSH shell；HERDR：SSH + herdr TUI）；引导成功但 UDP 首包超时 =
+     * herdr 工作台开关（[Host.launchHerdr]）：引导前探测 herdr（缺失 → 安装卡片），
+     * 引导命令追加 ` -- herdr`（mosh 会话直接跑 herdr TUI）。
+     * 降级语义（两种）：引导失败 = 远端未安装 mosh-server → 安装卡片或降级
+     * （SSH shell；launchHerdr 时注入 herdr）；引导成功但 UDP 首包超时 =
      * mosh 连接失败 → 同样降级到 SSH（SSH 引导通道还活着，直接当显示通道——
      * UDP 不通时用户至少拿到一个可用 shell，而不是面对一个报错发愣；
      * banner 提示降级原因 + 固定 UDP 端口解法）。
      *
-     * @param existingSession HERDR 复用已认证连接（探测后引导；null = 自建）
-     * @param bootstrapExtra 引导命令追加参数（HERDR：` -- herdr`，mosh 会话直接跑 herdr）
-     * @param onDegraded 降级回调（HERDR：exec+pty 跑 herdr；null = 普通 shell）
+     * @param existingSession 复用已认证连接（安装引导后续连；null = 自建）
      */
     private suspend fun doConnectMosh(
         existingSession: SshSession? = null,
-        bootstrapExtra: String = "",
-        onDegraded: (suspend (SshSession) -> Unit)? = null,
     ) {
         val t0 = c.nowMs()
         try {
@@ -215,11 +213,20 @@ internal class SessionConnector(
 
             // UDP 不通降级过的会话条目（moshDegradedToSsh）：不再重试 mosh 引导
             //（UDP 阻断不会因重连自愈，重试只会每次多耗一次引导 + 5s UDP 确认等待），
-            // 直接走降级显示通道：HERDR = exec+pty 跑 herdr；MOSH = 普通 shell
+            // 直接走降级显示通道：SSH shell（launchHerdr 时注入 herdr）
             if (c.moshDegradedToSsh) {
                 TermLog.i("mosh") { "mosh degraded earlier ${c.host.name}——重连直走 ssh（跳过 mosh 引导）" }
-                if (onDegraded != null) onDegraded(s) else finishConnected(s)
+                if (!ensureHerdrProbed(s)) return // 缺失 → 安装卡片（finishConnected 已置 CONNECTED）
+                finishConnected(s)
                 return
+            }
+
+            // herdr 工作台：引导前探测（缺失 → 安装卡片，SSH 显示通道保留）
+            if (!ensureHerdrProbed(s)) return
+            val bootstrapExtra = if (c.host.launchHerdr) {
+                " -- ${shSingleQuote(c.herdrBin ?: "herdr")}"
+            } else {
+                ""
             }
 
             // 2. 同连接引导 mosh-server（runCommand 复用已认证连接；探测输出跟在
@@ -255,21 +262,18 @@ internal class SessionConnector(
                     else -> strings().moshBootstrapFailed(rawTrimmed)
                 }
                 // 远端未装 mosh-server → 引导安装（SSH 显示通道保留，卡片可选
-                //「安装」或「降级 SSH」）；HERDR 模式同样引导——装上 mosh 才有
-                // 漫游能力，静默降级用户永远不知道少了什么
+                //「安装」或「降级 SSH」）；herdr 工作台开关同样引导——装上 mosh
+                // 才有漫游能力，静默降级用户永远不知道少了什么
                 if (missing) {
                     TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
-                    // 先置引导态再置 CONNECTED（同 herdr 分支：消除状态中间帧）
+                    // 先置引导态再置 CONNECTED（消除状态中间帧：awaitStatus 后
+                    // 立即断言 moshNeedsInstall 的测试不会看到中间帧）
                     c.moshNeedsInstall = true
                     finishConnected(s, sendStartup = false)
                     return
                 }
                 TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——降级" }
-                if (onDegraded != null) {
-                    onDegraded(s)
-                } else {
-                    finishConnected(s)
-                }
+                finishConnected(s)
                 showDegradeNotice(reason)
                 TermLog.i("mosh") { "mosh degraded ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
@@ -325,11 +329,7 @@ internal class SessionConnector(
                 // UDP 不通是环境性阻断：标记本会话条目后续重连直走 SSH，
                 // 不再重试 mosh（新开会话才会重新尝试）
                 c.moshDegradedToSsh = true
-                if (onDegraded != null) {
-                    onDegraded(s)
-                } else {
-                    finishConnected(s)
-                }
+                finishConnected(s)
                 showDegradeNotice(strings().moshUdpDegraded)
                 TermLog.i("mosh") { "mosh degraded-to-ssh ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
@@ -354,66 +354,27 @@ internal class SessionConnector(
     }
 
     /**
-     * HERDR 模式：herdr 的一等连接模式（Mosh 优先，降级能力在 Mosh 内）。
-     *
-     * - SSH 连接（认证/TOFU 一次）→ 探测 herdr（候选路径；失败明确报错并释放）
-     * - 探测成功 → Mosh 引导 `mosh-server new -- herdr`（mosh 会话直接跑 herdr TUI）
-     *   - 引导失败（无 mosh-server）→ 降级 SSH + exec+pty 跑 herdr（无 shell 回显）
-     *   - UDP 首包超时 → 同样降级 SSH + exec+pty 跑 herdr（banner 提示原因）
-     *   - Mosh 成功 → 关闭 SSH（漫游）
+     * herdr 工作台开关开启时确保已探测（[c.herdrBin]）；未装 → 引导安装卡片
+     *（保留 SSH 连接，置 CONNECTED），返回 false。开关未开直接返回 true。
      */
-    private suspend fun doConnectHerdr() {
-        val t0 = c.nowMs()
-        try {
-            // HERDR 连接阶段：shell 输出抑制（决策前不渲染，避免提示符/命令回显割裂）
-            c.herdrSuppressShellOutput = true
-            // 1. SSH 连接 + shell（探测/引导通道）
-            val s = c.sessionFactory(newConnection(), c.callbacks())
-            c.session = s
-            val info = s.connectAndStart(c.lastCols, c.lastRows)
-            if (c.status == ConnStatus.CLOSED) {
-                c.session = null
-                try { s.close() } catch (_: Exception) { }
-                return
-            }
-            info.hostKey?.let { c.repository.touchConnected(c.host.id, it.fingerprintSha256) }
-
-            // 2. 探测 herdr：失败明确报错（不降级——选 HERDR = herdr 工作台）
-            val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
-            if (probed == null) {
-                // 远端无 herdr：保留 SSH 连接作为引导通道，进入「待安装」状态
-                //（banner 显示安装按钮，点击后自动装并继续 HERDR 连接）
-                TermLog.w("herdr") { "HERDR not found ${c.host.name}: 引导安装" }
-                c.herdrSuppressShellOutput = false
-                // 先置引导态再置 CONNECTED：awaitStatus(CONNECTED) 后立即断言
-                // herdrNeedsInstall 的测试/竞态不会看到中间帧（反序则有一帧窗口）
-                c.herdrNeedsInstall = true
-                finishConnected(s, sendStartup = false)
-                return
-            }
-            val herdrBin = probed.bin
-            c.herdrBin = herdrBin
-            TermLog.i("herdr") { "HERDR probe ok ${c.host.name} bin=$herdrBin" }
-
-            // 3. Mosh 优先（降级在 doConnectMosh 内）：mosh-server 直接跑 herdr
-            connectHerdrViaMosh(s, herdrBin)
-            TermLog.i("herdr") { "HERDR connected ${c.host.name} in ${c.nowMs() - t0}ms" }
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Throwable) {
-            if (c.status != ConnStatus.CLOSED) {
-                TermLog.e("herdr") { "HERDR connect failed ${c.host.name}: ${e.message}" }
-                c.status = ConnStatus.ERROR
-                c.errorMessage = e.message
-                c.stopKeepAlive()
-            }
+    private suspend fun ensureHerdrProbed(s: SshSession): Boolean {
+        if (!c.host.launchHerdr || c.herdrBin != null) return true
+        val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
+        if (probed == null) {
+            TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
+            c.herdrNeedsInstall = true
+            finishConnected(s, sendStartup = false)
+            return false
         }
+        c.herdrBin = probed.bin
+        TermLog.i("herdr") { "herdr probe ok ${c.host.name} bin=${probed.bin}" }
+        return true
     }
 
     /**
-     * HERDR 引导安装：远端无 herdr 时，在已认证连接上执行官网安装脚本
-     * （curl https://herdr.dev/install.sh | sh），成功后重新探测并继续 HERDR
-     * 连接（Mosh 优先）。失败则 banner 显示原因，可再次点击重试。
+     * herdr 引导安装：远端无 herdr 时，在已认证连接上执行官网安装脚本
+     * （curl https://herdr.dev/install.sh | sh），成功后重新探测并继续连接
+     * （Mosh：带 `-- herdr` 重新引导；SSH / 已降级：注入 herdr 命令）。
      * 安装过程流式读脚本输出进 [TerminalController.herdrInstallLog]（引导卡片
      * 实时展示），卡住时用户能看到日志不再更新。
      */
@@ -475,13 +436,14 @@ internal class SessionConnector(
                 c.herdrBin = probed.bin
                 c.herdrInstalling = false
                 c.herdrNeedsInstall = false
-                c.herdrSuppressShellOutput = true
-                doConnectMosh(
-                    existingSession = s,
-                    bootstrapExtra = " -- ${shSingleQuote(probed.bin)}",
-                    onDegraded = { ssh -> startHerdrExec(ssh, probed.bin) },
-                )
-                c.herdrSuppressShellOutput = false
+                if (c.host.connectionMode == ConnectionMode.MOSH && !c.moshDegradedToSsh) {
+                    // Mosh：带 herdr 参数重新引导（mosh 会话直接跑 herdr TUI）
+                    doConnectMosh(existingSession = s)
+                } else {
+                    // SSH / 已降级条目：会话已 CONNECTED，直接注入 herdr 命令
+                    s.sendData((probed.bin + "\n").encodeToByteArray())
+                    c.frame++
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -591,19 +553,13 @@ internal class SessionConnector(
                     return@launch
                 }
                 // 安装完成：直接重新引导（bootstrap 即最终验证：成功 → mosh；
-                // 仍缺 → 卡片重现可重试/降级；其他错误 → 普通降级）
+                // 仍缺 → 卡片重现可重试/降级；其他错误 → 普通降级）。
+                // launchHerdr 开关由 doConnectMosh 内部处理（引导命令带 -- herdr）
                 TermLog.i("mosh") { "mosh install finished ${c.host.name}: ${log.take(120)}" }
                 c.moshInstalling = false
                 c.moshNeedsSudoPassword = false
                 c.moshNeedsInstall = false
-                // HERDR 模式：带上 herdr 路径重新引导（mosh 会话直接跑 herdr；
-                // 降级路径 = exec+pty 跑 herdr），与 doConnectHerdr 的引导一致
-                val herdrPath = c.herdrBin
-                if (c.host.connectionMode == ConnectionMode.HERDR && herdrPath != null) {
-                    connectHerdrViaMosh(s, herdrPath)
-                } else {
-                    doConnectMosh(existingSession = s)
-                }
+                doConnectMosh(existingSession = s)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -615,24 +571,20 @@ internal class SessionConnector(
 
     /** 引导卡片上的「降级 SSH」：放弃安装，当前 SSH 显示通道转正。
      *  用户明确选择 SSH → 标记本会话条目后续重连不再重试 mosh。
-     *  HERDR 模式：降级显示通道 = exec+pty 跑 herdr（无 shell 回显）。 */
+     *  herdr 工作台开关开启时注入 herdr 命令（退出回 shell）；否则启动命令。 */
     fun degradeMoshToSsh() {
         if (!c.moshNeedsInstall) return
         TermLog.i("mosh") { "mosh install skipped ${c.host.name}——降级 SSH" }
         c.moshNeedsInstall = false
         c.moshNeedsSudoPassword = false
         c.moshDegradedToSsh = true
-        if (c.host.connectionMode == ConnectionMode.HERDR) {
-            val bin = c.herdrBin
-            val s = c.session
-            if (bin != null && s != null) {
-                c.scope.launch { startHerdrExec(s, bin) }
-                return
-            }
-            // bin/session 缺失（异常路径）：落到下面的 shell 兑底
+        val cmd = if (c.host.launchHerdr) {
+            c.herdrBin
+        } else {
+            c.host.startupCommand.trim().takeIf { it.isNotBlank() }
         }
-        if (c.host.startupCommand.isNotBlank()) {
-            c.session?.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
+        if (cmd != null) {
+            c.session?.sendData((cmd + "\n").encodeToByteArray())
         }
         c.frame++
     }
@@ -646,103 +598,6 @@ internal class SessionConnector(
         "void" -> "xbps-install -y mosh"
         "macos", "darwin" -> "brew install mosh"
         else -> null
-    }
-
-    /**
-     * HERDR 的 Mosh 优先引导（doConnectHerdr 探测成功后与 mosh 安装完成后共用）：
-     * mosh-server 直接跑 herdr；无 mosh-server 时降级 exec+pty 跑 herdr（无回显）。
-     * shell 输出在决策期间抑制（不渲染提示符/命令回显割裂）。
-     */
-    private suspend fun connectHerdrViaMosh(s: SshSession, herdrBin: String) {
-        c.herdrSuppressShellOutput = true
-        doConnectMosh(
-            existingSession = s,
-            bootstrapExtra = " -- ${shSingleQuote(herdrBin)}",
-            onDegraded = { ssh -> startHerdrExec(ssh, herdrBin) },
-        )
-        c.herdrSuppressShellOutput = false
-    }
-
-    /** HERDR 降级显示通道：exec+pty 跑 herdr（无 shell 提示符/命令回显）。
-     *  通道结束的两种语义：EOF 且底层连接仍活 = herdr 自己退出（工作台关闭，
-     *  正常结束整个会话）；读异常 / EOF 时连接已死 = 连接级死亡，按意外断开
-     *  处理（自动重连 + 耗尽通知，与 shell 会话 onClosed 路径一致）。 */
-    private suspend fun startHerdrExec(s: SshSession, herdrBin: String) {
-        // bin 路径转义后拼远端 shell（探测来源多样，统一在此处转义）
-        val exec = s.startExec(shSingleQuote(herdrBin), c.lastCols, c.lastRows)
-        if (exec != null) {
-            c.herdrExec = exec
-            // 状态收尾：CONNECTED + 保活 + 免疫期（此前漏掉——会话实际可用
-            // 但状态永远停在 CONNECTING，banner 一直显示「连接中…」）
-            finishConnected(s, sendStartup = false)
-            val execRef = exec
-            c.scope.launch {
-                var readError: Exception? = null
-                try {
-                    while (true) {
-                        val chunk = execRef.read() ?: break
-                        c.enqueueOutput(chunk)
-                    }
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    readError = e
-                }
-                // 用户已主动关闭：无事可做
-                if (c.status == ConnStatus.CLOSED) return@launch
-                // EOF 双义（JVM 引擎把读异常也吞成 null）：herdr 正常退出时底层
-                // 连接仍活跃，连接级死亡时 shell 侧 onClosed 毫秒级随之而来。
-                // 宽限后再按 isActive 判定，避免把断链误判成「工作台关闭」。
-                if (readError == null && c.status == ConnStatus.CONNECTED) {
-                    delay(HERDR_EOF_GRACE_MS)
-                    when {
-                        // 宽限期间重连流程已接管（onClosed → 意外断开重连排程）
-                        c.status != ConnStatus.CONNECTED && c.status != ConnStatus.AUTH -> {
-                            cleanupHerdrExec(execRef)
-                            return@launch
-                        }
-                        // 连接仍活：herdr 自己退出（工作台关闭）——正常结束
-                        s.isActive() -> {
-                            TermLog.i("herdr") { "herdr exec exited ${c.host.name}（工作台关闭）" }
-                            c.close()
-                            return@launch
-                        }
-                        // 连接已死：落入意外断开路径
-                    }
-                }
-                // 连接级死亡（read 异常 / EOF 时连接已死）：按意外断开处理——
-                // 自动重连、耗尽置 CLOSED + 后台通知，与 shell 会话 onClosed
-                // 路径一致。此前无条件 c.close() 会吞掉/取消 onUnexpectedClose
-                // 排程的重连（切后台断链回前台 tab 变灰且不自动重连的根因）。
-                if (c.status != ConnStatus.CONNECTED && c.status != ConnStatus.AUTH) {
-                    cleanupHerdrExec(execRef) // 重连/关闭流程已接管：仅清引用防泄漏
-                    return@launch
-                }
-                cleanupHerdrExec(execRef)
-                TermLog.w("herdr") {
-                    "herdr exec died ${c.host.name}（连接断开${readError?.let { ": ${it.message}" } ?: ""}）——按意外断开处理"
-                }
-                // 主动关掉已死会话（吞掉 close 触发的 onClosed，避免与
-                // onUnexpectedClose 双触发），再走统一的意外断开路径
-                c.swallowClosed = true
-                try { s.close() } catch (_: Exception) { }
-                c.session = null
-                c.swallowClosed = false
-                onUnexpectedClose("herdr: connection lost")
-            }
-            TermLog.i("herdr") { "HERDR degraded to ssh-exec ${c.host.name}" }
-        } else {
-            // exec+pty 不可用（如 iOS 暂未实现）：退回 shell 命令路径
-            s.sendData("$herdrBin\n".encodeToByteArray())
-            finishConnected(s, sendStartup = false)
-            TermLog.i("herdr") { "HERDR degraded to ssh-shell ${c.host.name}" }
-        }
-    }
-
-    /** 清理 herdr exec 通道引用并关闭（幂等；重连/关闭流程接管时防泄漏用）。 */
-    private fun cleanupHerdrExec(exec: SshExecChannel) {
-        if (c.herdrExec === exec) c.herdrExec = null
-        try { exec.close() } catch (_: Exception) { }
     }
 
     /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
@@ -766,9 +621,15 @@ internal class SessionConnector(
                 }
             }
         }
-        // 启动命令（如 tmux new -A -s main）：HERDR 不发送（herdr 是唯一入口）
-        if (sendStartup && c.host.startupCommand.isNotBlank()) {
-            s.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
+        // 启动入口：herdr 工作台开关优先（herdr 即入口，探测拿到的完整路径）；
+        // 否则启动命令（如 tmux new -A -s main，实现会话现场恢复）
+        if (sendStartup) {
+            val cmd = if (c.host.launchHerdr) {
+                c.herdrBin ?: "herdr"
+            } else {
+                c.host.startupCommand.trim().takeIf { it.isNotBlank() }
+            }
+            if (cmd != null) s.sendData((cmd + "\n").encodeToByteArray())
         }
         c.frame++
     }
@@ -845,8 +706,9 @@ internal class SessionConnector(
             delay(MOSH_STABLE_RESET_MS)
             if (c.status == ConnStatus.CONNECTED) c.reconnectAttempts = 0
         }
-        // 启动命令同样适用于 mosh 会话（登录 shell 里执行）
-        if (c.host.startupCommand.isNotBlank()) {
+        // 启动命令仅普通会话发送：herdr 工作台下 mosh-server 直接跑 herdr
+        //（`-- herdr`），再发启动命令会打进 herdr TUI 的输入流
+        if (!c.host.launchHerdr && c.host.startupCommand.isNotBlank()) {
             client.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
         }
         c.frame++
@@ -859,11 +721,11 @@ internal class SessionConnector(
      * herdr 会像收到终端应答一样解析。
      */
     private fun prepareThemeSync() {
-        // 仅当配置了启动命令（TUI 会话：herdr/tmux 等）才注入：
+        // 仅 TUI 会话（herdr 工作台 / 配置了启动命令的 herdr、tmux 等）才注入：
         // 注入的 OSC 应答会作为「用户输入」送达远端 shell，普通 shell（bash
-        // readline）不解析 OSC，会把 ESC]10;… 原样回显成特殊字符。
-        // 有启动命令说明会话会跑 TUI（herdr 查询终端主题），注入才安全有效。
-        if (!c.host.moshThemeSync || c.host.startupCommand.isBlank()) return
+        // readline）不解析 OSC，会把 ESC]10;… 原样回显成特殊字符。有 TUI 才
+        // 会查询终端主题，注入才安全有效。
+        if (!c.host.moshThemeSync || (!c.host.launchHerdr && c.host.startupCommand.isBlank())) return
         c.moshThemePayload = c.emulator.buildThemeSyncPayload()
         c.moshThemeInjected = false
     }

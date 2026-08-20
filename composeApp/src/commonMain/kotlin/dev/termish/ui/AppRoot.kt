@@ -43,7 +43,6 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
@@ -226,14 +225,6 @@ fun AppRoot(repository: HostRepository) {
     }
     LaunchedEffect(pendingNavigate) {
         val target = pendingNavigate ?: return@LaunchedEffect
-        // HERDR 模式不预连：exec+pty 的 pty 尺寸固定（无法后续调整），
-        // 必须等 TerminalView 就绪拿到实际画布尺寸再建连（终端页显示连接中）
-        if (target.host.connectionMode == ConnectionMode.HERDR) {
-            currentTab = SessionTab.Terminal(target)
-            screen = Screen.Terminal
-            pendingNavigate = null
-            return@LaunchedEffect
-        }
         // 列表页没有终端画布：用默认尺寸先行建连（跳转后 TerminalView 会 resize
         // 到实际画布尺寸），否则会话停留在 IDLE 永远无法连接
         if (target.status == ConnStatus.IDLE) {
@@ -245,7 +236,6 @@ fun AppRoot(repository: HostRepository) {
         }
         pendingNavigate = null
         if (target.status == ConnStatus.CONNECTED) {
-            // HERDR 模式终端页 = herdr TUI（连接时自动发 startupCommand "herdr"）
             currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal
         } else if (target.status == ConnStatus.ERROR) {

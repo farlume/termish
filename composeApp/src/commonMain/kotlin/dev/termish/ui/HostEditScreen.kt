@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,6 +100,7 @@ fun HostEditScreen(
     var username by remember { mutableStateOf(existing?.username ?: "root") }
     var authMethod by remember { mutableStateOf(existing?.authMethod ?: HostAuthMethod.PASSWORD) }
     var connectionMode by remember { mutableStateOf(existing?.connectionMode ?: ConnectionMode.SSH) }
+    var launchHerdr by remember { mutableStateOf(existing?.launchHerdr ?: false) }
     var password by remember { mutableStateOf("") }
     var privateKey by remember { mutableStateOf("") }
     var tags by remember { mutableStateOf(existing?.tags ?: emptyList()) }
@@ -127,6 +129,7 @@ fun HostEditScreen(
                             system = existing?.system ?: "",
                             authMethod = authMethod,
                             connectionMode = connectionMode,
+                            launchHerdr = launchHerdr,
                             tags = tags,
                             createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
                             lastConnectedAt = existing?.lastConnectedAt ?: 0L,
@@ -177,14 +180,18 @@ fun HostEditScreen(
                 RadioButton(connectionMode == ConnectionMode.MOSH, { connectionMode = ConnectionMode.MOSH })
                 Text(s.editModeMosh)
             }
-            // Herdr：agent 工作台模式——SSH 底座 + herdr 探测 + agent 监控（选 Herdr = 显式同意监控）
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                RadioButton(connectionMode == ConnectionMode.HERDR, { connectionMode = ConnectionMode.HERDR })
+            // herdr 工作台开关（勾选 = 显式同意 agent 监控）：与传输层正交，
+            // Mosh 引导 `mosh-server new -- herdr`；SSH / 降级则连接后注入 herdr 命令
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            ) {
+                Checkbox(launchHerdr, { launchHerdr = it })
                 Column {
-                    Text(s.editModeHerdr)
-                    if (connectionMode == ConnectionMode.HERDR) {
+                    Text(s.editLaunchHerdr, style = MaterialTheme.typography.bodyMedium)
+                    if (launchHerdr) {
                         Text(
-                            s.editModeHerdrHint,
+                            s.editLaunchHerdrHint,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
