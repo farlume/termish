@@ -134,7 +134,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
   Without `ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`, Xcode 26's `-target` build passes
   `arch=undefined_arch` and the Kotlin framework task fails with
   "Could not infer iOS target architectures"
-- The signing keystore was rebuilt on 2026-08-17 (alias `termish`, CN=Termish) **before any public release** — old `mssh` alias is gone, no upgrade-path constraint. The pre-release legacy keystore is archived at `~/Documents/秘钥/termish-mssh-legacy-20260817.jks`. Once any build is published, the **private key must never change** (breaks signature consistency and upgrade installs) — back it up in `~/Documents/秘钥/` and never commit `.env` / `*.jks`
+- The signing keystore was rebuilt on 2026-08-17 (alias `termish`, CN=Termish) **before any public release** — old `mssh` alias is gone, no upgrade-path constraint. The pre-release legacy keystore is archived off-repo (local backup, not in git). Once any build is published, the **private key must never change** (breaks signature consistency and upgrade installs) — keep backups off-repo and never commit `.env` / `*.jks`
 - Version numbers are synced in three places (Android / desktop / iOS): always use
   `make bump`, never edit by hand; a pushed `vX.Y.Z` tag is validated by CI against
   the checked-in version
