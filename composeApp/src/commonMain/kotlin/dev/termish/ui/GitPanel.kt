@@ -151,8 +151,9 @@ private object AuxCallbacks : SshCallbacks {
  */
 internal class GitCommandRunner(private val controller: TerminalController) {
 
-    /** herdr 模式（herdrExec 活跃）：cwd 走 herdr snapshot，无交互 fallback。 */
-    val herdrMode: Boolean get() = controller.herdrExec != null
+    /** herdr 工作台开关开启：cwd 优先走 herdr snapshot（焦点 pane 的工作区）。
+     *  herdr 重构后不再是独立连接模式（Host.launchHerdr），探测路径不变。 */
+    val herdrMode: Boolean get() = controller.host.launchHerdr && controller.herdrBin != null
 
     /** 工作目录（独立 exec 通道用 `git -C` 定位；refresh 时探测，见 [fetchWorkdir]）。 */
     var workdir: String? = null
