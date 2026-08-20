@@ -956,9 +956,8 @@ private fun ConnectingIndicator(
     ) {
         Row(
             Modifier
-                .clip(RoundedCornerShape(20.dp))
-                .background(theme.background().copy(alpha = 0.72f))
-                .border(1.dp, theme.foreground().copy(alpha = 0.14f))
+                .background(theme.background().copy(alpha = 0.72f), RoundedCornerShape(20.dp))
+                .border(1.dp, theme.foreground().copy(alpha = 0.16f), RoundedCornerShape(20.dp))
                 .padding(horizontal = 20.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
