@@ -237,6 +237,8 @@ private fun TerminalBody(
     var committedText by remember { mutableStateOf("") }
     // 命令片段插入面板
     var snippetOpen by remember { mutableStateOf(false) }
+    // Git 面板（FAB 与工具栏「⎇」键共用开关）
+    var gitPanelOpen by remember { mutableStateOf(false) }
     // 面板打开时拦截系统返回：先关面板，不直接退回首页
     PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
@@ -395,6 +397,19 @@ private fun TerminalBody(
 
             SnackbarHost(snackbar, Modifier.align(Alignment.TopCenter))
 
+            // Git 悬浮面板：右侧悬浮按钮（可拖动）+ 状态/diff 面板（跟随终端主题）。
+            // git 命令走独立 exec 通道（SSH 复用已认证连接 / mosh 控制面连接），
+            // 不注入交互终端；工具栏「⎇」键可展开面板。
+            GitOverlay(
+                controller = controller,
+                theme = theme,
+                open = gitPanelOpen,
+                onOpenChange = { gitPanelOpen = it },
+                bottomInset = with(density) { toolbarHeightPx.toDp() + 12.dp },
+                onToast = { msg -> scope.launch { snackbar.showSnackbar(msg) } },
+                modifier = Modifier.align(Alignment.Center).fillMaxSize(),
+            )
+
             // 底部悬浮键盘工具栏：不透明背景 + 顶部分隔线，与系统键盘/终端内容拉开层次。
             // 外层负责避让导航条/键盘；内层单独测内容高度（padding 会算进
             // 外层总高，直接测外层会把键盘高度重复计入平移量）。
@@ -430,6 +445,10 @@ private fun TerminalBody(
                         onSnippets = {
                             if (settings.hapticFeedback) hapticTick()
                             snippetOpen = true
+                        },
+                        onGit = {
+                            if (settings.hapticFeedback) hapticTick()
+                            gitPanelOpen = true
                         },
                         onPaste = {
                             val text = clipboard.getText()?.text
