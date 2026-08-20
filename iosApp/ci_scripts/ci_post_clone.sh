@@ -16,15 +16,28 @@ else
   echo "== 安装 JDK 17（Adoptium Temurin，免 sudo） =="
   JDK_HOME="$HOME/Library/Java/JavaVirtualMachines/temurin-17.jdk"
   mkdir -p "$JDK_HOME"
-  # Adoptium API 的 arch 用 aarch64/x64（macOS uname 返回 arm64/x86_64，直接拼 URL 会 404）
-  case "$(uname -m)" in
-    arm64) ADOPT_ARCH="aarch64" ;;
-    x86_64) ADOPT_ARCH="x64" ;;
-    *) ADOPT_ARCH="$(uname -m)" ;;
+  # Adoptium API 的 arch 用 aarch64/x64（macOS uname 返回 arm64/x86_64，直接拼 URL 会 404）。
+  # 未知架构兜底轮询（Xcode Cloud 只有 ARM/Intel 两种机器）；tar 校验确保拿到有效包而非错误页
+  RAW_ARCH="$(uname -m)"
+  case "$RAW_ARCH" in
+    arm64|aarch64) ARCHES=(aarch64) ;;
+    x86_64|x64) ARCHES=(x64) ;;
+    *) ARCHES=(aarch64 x64) ;;
   esac
-  curl -fsSL --retry 3 \
-    "https://api.adoptium.net/v3/binary/latest/17/ga/mac/${ADOPT_ARCH}/jdk/hotspot/normal/eclipse" \
-    -o /tmp/temurin17.tar.gz
+  echo "== uname -m: $RAW_ARCH → 尝试 arch: ${ARCHES[*]} =="
+  ok=""
+  for arch in "${ARCHES[@]}"; do
+    url="https://api.adoptium.net/v3/binary/latest/17/ga/mac/${arch}/jdk/hotspot/normal/eclipse"
+    echo "== 下载 Temurin 17 (${arch}) =="
+    if curl -fsSL --retry 3 "$url" -o /tmp/temurin17.tar.gz && tar tzf /tmp/temurin17.tar.gz >/dev/null 2>&1; then
+      ok="$arch"; break
+    fi
+    echo "== ${arch} 下载/校验失败，换下一个 =="
+  done
+  if [ -z "$ok" ]; then
+    echo "!! JDK 17 下载失败（uname=$RAW_ARCH，尝试过 ${ARCHES[*]}）"; exit 1
+  fi
+  echo "== 使用 ${ok} 版 JDK =="
   tar xzf /tmp/temurin17.tar.gz -C "$JDK_HOME" --strip-components=1
   echo "== JDK 17 安装完成：$(/usr/libexec/java_home -v 17) =="
 fi
