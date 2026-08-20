@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-08-20
+
 ## [1.1.7] - 2026-08-20
 
 ### 变更
@@ -229,7 +231,9 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.6...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/ttermish/termish/compare/v1.1.7...v1.1.8
+[1.1.7]: https://github.com/ttermish/termish/compare/v1.1.6...v1.1.7
 [1.1.6]: https://github.com/ttermish/termish/compare/v1.1.5...v1.1.6
 [1.1.5]: https://github.com/ttermish/termish/compare/v1.1.4...v1.1.5
 [1.1.4]: https://github.com/ttermish/termish/compare/v1.1.3...v1.1.4
