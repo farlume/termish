@@ -97,6 +97,37 @@ data class AppSettings(
     val notificationEnabled: Boolean = true,
     /** 被关闭的通知事件 id（见 NotificationEvent）；空 = 全部开启。 */
     val notificationDisabledEvents: Set<String> = emptySet(),
+    /** 语音输入总开关（终端工具栏麦克风键）。 */
+    val voiceInputEnabled: Boolean = false,
+    /**
+     * 语音识别服务列表（可插拔：火山引擎等，未来可加阿里云/讯飞等）；
+     * 每项独立密钥/参数（密钥存 SecretStore）。旧字段 [asrResourceId]
+     * 已被列表取代，读取时自动迁移（见 AppRoot）。
+     */
+    val asrProviders: List<AsrProvider> = emptyList(),
+    /** @deprecated 旧版单实例配置：已被 [asrProviders] 取代（迁移用）。 */
+    val asrResourceId: String = "",
+)
+
+/** 语音识别服务类型（可插拔 provider）。 */
+@Serializable
+enum class AsrProviderType {
+    /** 火山引擎·大模型流式语音识别（bigmodel_async WebSocket）。 */
+    VOLC_STREAMING,
+}
+
+/** 一个语音识别服务实例配置（密钥单独存 SecretStore：asr.<id>.apiKey）。 */
+@Serializable
+data class AsrProvider(
+    val id: String,
+    /** 服务类型（决定使用哪个引擎实现）。 */
+    val type: AsrProviderType = AsrProviderType.VOLC_STREAMING,
+    /** 显示名称（如「火山引擎·家庭号」）。 */
+    val name: String = "",
+    /** 类型专属参数：火山流式为资源 ID（模型版本，见 VolcAsrProtocol.RESOURCE_IDS）。 */
+    val resourceId: String = "",
+    /** 是否启用（终端优先取第一个启用的服务）。 */
+    val enabled: Boolean = true,
 )
 
 /** 生成一个随机 ID（UUID v4 风格）。 */

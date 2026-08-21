@@ -13,3 +13,9 @@ expect object SecretStore {
 const val SECRET_SERVICE = "dev.termish.secrets"
 
 fun secretAccountFor(hostId: String, kind: String): String = "$hostId.$kind"
+
+/** 火山引擎流式语音识别 API Key（新版控制台 API Key 管理页获取）的存储账号。 */
+const val ASR_API_KEY_ACCOUNT = "asr.apiKey"
+
+/** 语音识别服务实例的密钥账号（provider 粒度，见 AsrProvider）。 */
+fun asrKeyAccount(providerId: String): String = "asr.$providerId.apiKey"

@@ -25,15 +25,17 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.1.14</string>
+	<string>1.2.0</string>
 	<key>CFBundleVersion</key>
-	<string>19</string>
+	<string>20</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Termish 需要通过局域网连接你配置的 SSH/Mosh 服务器（NAS、Mac 等），用于远程终端与文件传输。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>用于语音输入：按住终端工具栏的麦克风键说话，将语音转换为文字发送到终端。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

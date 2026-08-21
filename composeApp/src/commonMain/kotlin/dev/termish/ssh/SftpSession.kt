@@ -24,6 +24,15 @@ interface SftpSession {
     fun mkdir(path: String)
 
     /**
+     * 删除文件或目录；目录非空时**递归删除**（平台实现内部处理，与
+     * shell `rm -r` 语义一致）。失败抛异常（如无权限/只读）。
+     */
+    fun delete(path: String)
+
+    /** 重命名/移动（同目录改名或跨目录 move）。失败抛异常。 */
+    fun rename(oldPath: String, newPath: String)
+
+    /**
      * 用户主目录（服务器端 SFTP 工作目录，即 ~）：用 realpath(".") 解析，
      * 比猜 /home/xxx 通用（macOS/BSD/自定义 home 均覆盖）；失败抛异常。
      */
@@ -57,3 +66,7 @@ interface SftpSession {
 
 /** 平台工厂：JVM=sshj SFTPClient；iOS=libssh2_sftp。 */
 expect fun createSftpSession(connection: SshConnection, callbacks: SshCallbacks): SftpSession
+
+/** 远端路径拼接：根目录下不产生双斜杠（平台删除/重命名递归用）。 */
+internal fun joinRemote(base: String, name: String): String =
+    if (base == "/") "/$name" else "$base/$name"

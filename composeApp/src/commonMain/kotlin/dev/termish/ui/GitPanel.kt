@@ -404,10 +404,6 @@ fun GitOverlay(
     var commitOpen by remember { mutableStateOf(false) }
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    /** 画布区域尺寸（FAB 拖拽钳制边界）。 */
-    var overlaySize by remember { mutableStateOf(IntSize.Zero) }
-    /** FAB 拖拽偏移（会话内保持：面板开关不重置）。 */
-    var fabDrag by remember { mutableStateOf(Offset.Zero) }
 
     val connected = controller.status == ConnStatus.CONNECTED
     if (!connected) return
@@ -564,57 +560,8 @@ fun GitOverlay(
         if (e.diffable) loadDiff(e, showStaged)
     }
 
-    Box(modifier.onSizeChanged { overlaySize = it }) {
-        // ---- 悬浮入口按钮：画布右侧中间，可拖动（长按拖动到任意位置）----
-        if (!open) {
-            val density = LocalDensity.current
-            val fabSizePx = with(density) { 44.dp.toPx() }
-            val fabPaddingPx = with(density) { 10.dp.toPx() }
-            // 组合阶段读取 state：拖动更新 → 重组 → offset 参数更新（lambda 版在
-            // 布局阶段读取，实测不触发重绘，改用 Dp 参数版）
-            val fabOffsetX = with(density) { fabDrag.x.toDp() }
-            val fabOffsetY = with(density) { fabDrag.y.toDp() }
-
-            // 拖拽偏移钳制：按钮实际位置（初始 CenterEnd + 偏移）不超出画布
-            // （画布尺寸由外层 Box 的 onSizeChanged 提供，FAB 自身尺寸量不到画布）
-            fun clampFabDrag(drag: Offset): Offset {
-                if (overlaySize == IntSize.Zero) return drag
-                val baseLeft = (overlaySize.width - fabSizePx - fabPaddingPx)
-                    .toFloat()
-                    .coerceAtLeast(0f)
-                val baseTop = ((overlaySize.height - fabSizePx) / 2f).coerceAtLeast(0f)
-                return Offset(
-                    drag.x.coerceIn(-baseLeft, overlaySize.width - fabSizePx - baseLeft),
-                    drag.y.coerceIn(-baseTop, overlaySize.height - fabSizePx - baseTop),
-                )
-            }
-
-            Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 10.dp)
-                    .offset(x = fabOffsetX, y = fabOffsetY)
-                    .size(44.dp)
-                    .shadow(6.dp, CircleShape)
-                    .clip(CircleShape)
-                    .background(theme.cursor())
-                    .pointerInput(Unit) {
-                        detectDragGestures(
-                            onDrag = { change, drag ->
-                                change.consume()
-                                fabDrag = clampFabDrag(fabDrag + drag)
-                            },
-                        )
-                    }
-                    .clickable { onOpenChange(true) },
-                contentAlignment = Alignment.Center,
-            ) {
-                GitBranchIcon(theme.background(), Modifier.size(21.dp))
-            }
-        }
-    }
-
-    // ---- 面板：全屏底部弹出（同快捷命令面板），盖过键盘工具栏 ----
+    // 入口已收进右下角功能菜单（CanvasToolMenu）：Git 使用频次低，不再占画布
+    // 独立悬浮位；面板本体不变。
     if (open) {
         ModalBottomSheet(
             onDismissRequest = { onOpenChange(false) },

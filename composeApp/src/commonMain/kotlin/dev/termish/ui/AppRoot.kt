@@ -43,12 +43,18 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import dev.termish.data.ASR_API_KEY_ACCOUNT
+import dev.termish.data.AppSettings
+import dev.termish.data.AsrProvider
+import dev.termish.data.AsrProviderType
 import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.ThemeMode
+import dev.termish.data.asrKeyAccount
+import dev.termish.data.newId
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
 import dev.termish.notify.NotificationEvent
@@ -115,12 +121,29 @@ private sealed interface Screen {
 
 /** 设置页二级页（统一由 AppRoot 管理开关：返回链 + 全屏 + 底部 tab 隐藏）。 */
 enum class SettingsSubPage {
-    TERMINAL, NOTIFICATION, DIAGNOSTICS, SNIPPETS,
+    TERMINAL, NOTIFICATION, DIAGNOSTICS, SNIPPETS, VOICE,
 }
 
 @Composable
 fun AppRoot(repository: HostRepository) {
-    var settings by remember { mutableStateOf(repository.loadSettings()) }
+    // 语音识别服务旧配置（单实例 asrResourceId）迁移到 provider 列表：
+    // 首次启动把旧资源 ID + 旧密钥搬进列表，避免用户重配
+    fun migrateLegacyAsr(s: AppSettings): AppSettings {
+        if (s.asrProviders.isNotEmpty() || s.asrResourceId.isBlank()) return s
+        val legacyKey = SecretStore.get(SECRET_SERVICE, ASR_API_KEY_ACCOUNT)
+        if (legacyKey.isNullOrBlank()) return s
+        val p = AsrProvider(
+            id = newId(),
+            type = AsrProviderType.VOLC_STREAMING,
+            name = "",
+            resourceId = s.asrResourceId,
+            enabled = true,
+        )
+        SecretStore.set(SECRET_SERVICE, asrKeyAccount(p.id), legacyKey)
+        return s.copy(asrProviders = listOf(p))
+    }
+
+    var settings by remember { mutableStateOf(migrateLegacyAsr(repository.loadSettings())) }
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val scope = rememberCoroutineScope()
@@ -210,13 +233,17 @@ fun AppRoot(repository: HostRepository) {
         onEstablished(session, connectionToken)
     }
 
-    // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）
-    val connectSftp: (Host) -> Unit = { host ->
+    // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）。
+    // [initialPath] 非空时打开后直接定位到该目录（终端「文件管理」菜单：当前工作目录）。
+    val connectSftp: (Host, String?) -> Unit = { host, initialPath ->
         sftpPickerVisible = false
         scope.launch {
             try {
                 establishSftp(host) { session, token ->
                     val entry = sessionManager.addSftp(host, session, token)
+                    if (!initialPath.isNullOrBlank()) {
+                        entry.uiState.path = initialPath
+                    }
                     // 与 entry 共用同一 uiState：浏览路径变化能反映到持久化（退后台保存）
                     currentTab = SessionTab.Sftp(host, session, entry.uiState)
                     screen = Screen.Terminal
@@ -603,6 +630,9 @@ fun AppRoot(repository: HostRepository) {
                                 }
                             },
                             onOpenSftpPicker = { sftpPickerVisible = true },
+                            // 文件管理：直接对当前主机建 SFTP 会话并切到 SFTP tab
+                            //（复用 connectSftp 全流程：认证弹窗 / 主机密钥 / 断线重连）
+                            onOpenSftpForHost = connectSftp,
                             // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
                             onReconnectSftp = { tab ->
                                 // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，
@@ -636,7 +666,7 @@ fun AppRoot(repository: HostRepository) {
                 SftpHostPickerOverlay(
                     hosts = hosts,
                     onDismiss = { sftpPickerVisible = false },
-                    onSelect = connectSftp,
+                    onSelect = { host -> connectSftp(host, null) },
                 )
             }
 
@@ -658,7 +688,7 @@ fun AppRoot(repository: HostRepository) {
                 }
             }
 
-            SnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
+            TermishSnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
             }
         }
     }

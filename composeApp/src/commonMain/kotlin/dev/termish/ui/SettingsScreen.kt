@@ -62,9 +62,12 @@ import androidx.compose.ui.unit.dp
 import dev.termish.APP_VERSION
 import dev.termish.data.AppSettings
 import dev.termish.data.HostRepository
+import dev.termish.data.SECRET_SERVICE
+import dev.termish.data.SecretStore
+import dev.termish.data.ThemeMode
+import dev.termish.data.asrKeyAccount
 import dev.termish.util.TermLog
 import dev.termish.generated.resources.Res
-import dev.termish.data.ThemeMode
 import dev.termish.ui.theme.TerminalThemes
 
 // ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 入口待补充） ----
@@ -118,6 +121,9 @@ fun SettingsScreen(
     var showTerminalTypeDialog by remember { mutableStateOf(false) }
     var notificationEnabled by remember { mutableStateOf(settings.notificationEnabled) }
     var notificationDisabledEvents by remember { mutableStateOf(settings.notificationDisabledEvents) }
+    var voiceInputEnabled by remember { mutableStateOf(settings.voiceInputEnabled) }
+    // 识别服务列表（可插拔 provider）；密钥按 provider 存 SecretStore
+    var asrProviders by remember { mutableStateOf(settings.asrProviders) }
 
     fun persist() = onChange(
         settings.copy(
@@ -133,6 +139,8 @@ fun SettingsScreen(
             osc52Clipboard = osc52Clipboard,
             notificationEnabled = notificationEnabled,
             notificationDisabledEvents = notificationDisabledEvents,
+            voiceInputEnabled = voiceInputEnabled,
+            asrProviders = asrProviders,
             language = language,
         )
     )
@@ -163,6 +171,15 @@ fun SettingsScreen(
                     s.settingsSnippets,
                     "",
                 ) { onOpenSub(SettingsSubPage.SNIPPETS) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(
+                    s.voice.settingsVoice,
+                    if (voiceInputEnabled) {
+                        s.voice.providerCount(asrProviders.count { it.enabled })
+                    } else {
+                        s.settingsOff
+                    },
+                ) { onOpenSub(SettingsSubPage.VOICE) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsHaptics, haptics) { haptics = it; persist() }
             }
@@ -289,6 +306,41 @@ fun SettingsScreen(
     ) {
         SnippetManageScreen(
             repository = repository,
+            onBack = { onOpenSub(null) },
+        )
+    }
+    // 语音输入设置二级页（火山引擎流式语音识别：开关 / API Key / 资源 ID）
+    AnimatedVisibility(
+        visible = subPage == SettingsSubPage.VOICE,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SettingsVoiceScreen(
+            enabled = voiceInputEnabled,
+            providers = asrProviders,
+            apiKeyOf = { p -> SecretStore.get(SECRET_SERVICE, asrKeyAccount(p.id)) ?: "" },
+            onChangeEnabled = {
+                voiceInputEnabled = it
+                persist()
+            },
+            onAddProvider = { p, key ->
+                asrProviders = asrProviders + p
+                SecretStore.set(SECRET_SERVICE, asrKeyAccount(p.id), key)
+                persist()
+            },
+            onUpdateProvider = { p, key ->
+                asrProviders = asrProviders.map { if (it.id == p.id) p else it }
+                // 密钥为空 = 保持不变；非空 = 覆盖
+                if (key.isNotBlank()) {
+                    SecretStore.set(SECRET_SERVICE, asrKeyAccount(p.id), key)
+                }
+                persist()
+            },
+            onDeleteProvider = { p ->
+                asrProviders = asrProviders.filter { it.id != p.id }
+                SecretStore.delete(SECRET_SERVICE, asrKeyAccount(p.id))
+                persist()
+            },
             onBack = { onOpenSub(null) },
         )
     }

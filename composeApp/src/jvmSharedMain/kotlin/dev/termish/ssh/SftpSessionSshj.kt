@@ -44,6 +44,27 @@ class SftpSessionSshj(
         clientOrThrow().mkdir(path)
     }
 
+    override fun delete(path: String) {
+        deleteRecursive(clientOrThrow(), path)
+    }
+
+    private fun deleteRecursive(c: SFTPClient, path: String) {
+        val attrs = c.stat(path)
+        if (attrs.type == FileMode.Type.DIRECTORY) {
+            c.ls(path).forEach { f ->
+                if (f.name == "." || f.name == "..") return@forEach
+                deleteRecursive(c, joinRemote(path, f.name))
+            }
+            c.rmdir(path)
+        } else {
+            c.rm(path)
+        }
+    }
+
+    override fun rename(oldPath: String, newPath: String) {
+        clientOrThrow().rename(oldPath, newPath)
+    }
+
     override fun home(): String = clientOrThrow().canonicalize(".")
 
     override fun upload(

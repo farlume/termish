@@ -5,6 +5,36 @@
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-08-22
+
+### 新增
+
+- **语音输入**：终端右下角功能菜单（+ 展开：语音 / 上传文件 / 文件管理 / Git）
+  - 点击语音开始录音：屏幕中央 72dp 大按钮（可拖动）+ 实时转写文字上屏 + 流动声波 + 录音计时
+  - 静音 ~1.6s 自动结束发送；60s 上限；误触（<300ms）丢弃
+  - 火山引擎「大模型流式语音识别」接入（bigmodel_async WebSocket，按实测协议修正响应解析）
+- **语音识别服务 Provider 化**：设置页可添加/编辑/删除多个识别服务（名称/API Key/资源 ID，密钥存平台安全存储），旧配置自动迁移；新增服务类型只需实现 AsrEngine 接口
+- **终端文件上传**：菜单选择目标目录（当前目录 / 临时目录，卡片式选项）→ 系统文件选择器多选 → SFTP 流式上传 + 右下角进度卡片；上传完成自动把远端路径输入终端
+- **文件管理**：终端菜单一键打开当前主机的 SFTP 文件管理，并定位到终端当前工作目录
+- **SFTP 文件管理器全面优化**：
+  - 多选模式（长按进入：批量下载 / 删除 / 复制路径）
+  - 删除（目录递归）与重命名（平台层新增 SftpSession.delete/rename，sshj + libssh2 双实现）
+  - 单击文件直接预览；预览面板操作菜单（下载 / 重命名 / 删除 / 复制路径）
+  - 下拉刷新、空态、目录收藏、日期排序按「今天 / 本周 / 更早」分组
+  - 文件类型图标扩展至 20 类（彩色线性图标，含 APK / 证书密钥 / Markdown / 种子 / 配置）
+- **全局统一提示样式**：品牌 Snackbar（深色圆角卡片 + 翠绿 action），覆盖终端页 / 文件管理 / 全局提示
+
+### 优化
+
+- 录音态浮层与 Git/语音按钮统一为品牌翠绿；功能菜单 FAB 与 Git 面板入口合并
+- 上传/下载进度控件统一（TransferProgressCard：右下角悬浮卡片）
+- 文件夹图标回归主题色；文件图标加大到 24dp 并着色区分
+
+### 修复
+
+- 语音识别协议按实测修正：响应 result 为顶层对象、最终包由帧 flags 标记、首包无 sequence 段
+- 设置页文案 AppStrings 拆分嵌套子类（避免 JVM 255 参数上限）
+
 ## [1.1.14] - 2026-08-21
 
 ### 修复
@@ -301,7 +331,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.14...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/ttermish/termish/compare/v1.1.14...v1.2.0
 [1.1.14]: https://github.com/ttermish/termish/compare/v1.1.13...v1.1.14
 [1.1.13]: https://github.com/ttermish/termish/compare/v1.1.12...v1.1.13
 [1.1.12]: https://github.com/ttermish/termish/compare/v1.1.11...v1.1.12

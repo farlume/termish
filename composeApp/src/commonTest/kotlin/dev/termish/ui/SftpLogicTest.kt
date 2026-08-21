@@ -112,6 +112,8 @@ class SftpLogicTest {
         val downloaded = mutableListOf<String>()
         override fun list(path: String): List<SftpEntry> = tree[path] ?: emptyList()
         override fun mkdir(path: String) {}
+        override fun delete(path: String) {}
+        override fun rename(oldPath: String, newPath: String) {}
         override fun home(): String = "/"
         override fun upload(
             remotePath: String,
@@ -265,6 +267,8 @@ class SftpLogicTest {
     ) : SftpSession {
         override fun list(path: String): List<SftpEntry> = emptyList()
         override fun mkdir(path: String) {}
+        override fun delete(path: String) {}
+        override fun rename(oldPath: String, newPath: String) {}
         override fun home(): String = "/"
         override fun upload(
             remotePath: String,
@@ -355,7 +359,11 @@ class SftpLogicTest {
         assertEquals(SftpFileKind.AUDIO, fileKindOf("song.mp3"))
         assertEquals(SftpFileKind.ARCHIVE, fileKindOf("backup.tar.gz"))
         assertEquals(SftpFileKind.CODE, fileKindOf("Main.kt"))
-        assertEquals(SftpFileKind.TEXT, fileKindOf("notes.md"))
+        assertEquals(SftpFileKind.MD, fileKindOf("notes.md"))
+        assertEquals(SftpFileKind.KEY, fileKindOf("id_ed25519.pem"))
+        assertEquals(SftpFileKind.CONFIG, fileKindOf("docker-compose.yml"))
+        assertEquals(SftpFileKind.TORRENT, fileKindOf("ubuntu.torrent"))
+        assertEquals(SftpFileKind.APK, fileKindOf("app.apk"))
         assertEquals(SftpFileKind.PDF, fileKindOf("manual.pdf"))
         assertEquals(SftpFileKind.OTHER, fileKindOf("blob.bin"))
         assertEquals(SftpFileKind.OTHER, fileKindOf("Makefile"))

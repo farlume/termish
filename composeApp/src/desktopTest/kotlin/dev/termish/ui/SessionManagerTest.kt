@@ -109,6 +109,8 @@ class SessionManagerTest {
         val fake = object : SftpSession {
             override fun list(path: String) = emptyList<SftpEntry>()
             override fun mkdir(path: String) {}
+        override fun delete(path: String) {}
+        override fun rename(oldPath: String, newPath: String) {}
             override fun home() = "/home/root"
             override fun upload(
                 remotePath: String,
@@ -189,6 +191,8 @@ class SessionManagerTest {
         val fake = object : SftpSession {
             override fun list(path: String) = emptyList<SftpEntry>()
             override fun mkdir(path: String) {}
+        override fun delete(path: String) {}
+        override fun rename(oldPath: String, newPath: String) {}
             override fun home() = "/home/root"
             override fun upload(
                 remotePath: String,

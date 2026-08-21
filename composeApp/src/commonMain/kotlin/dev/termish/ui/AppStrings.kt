@@ -304,6 +304,139 @@ data class AppStrings(
     // Git 面板（终端内可视化 git 状态/diff/提交）
     /** Git 面板文案（嵌套子类：主数据类构造参数受 JVM 255 上限约束）。 */
     val git: GitStrings,
+    // 语音输入（火山引擎流式语音识别）
+    val voice: VoiceStrings,
+    // 终端文件上传
+    val upload: UploadStrings,
+    // SFTP 文件管理器扩展（多选/收藏/删除/分组等）
+    val sftpExt: SftpExtStrings,
+)
+
+/** 语音输入文案（同 GitStrings：嵌套子类缓解 JVM 255 参数上限）。 */
+@Immutable
+data class VoiceStrings(
+    /** 设置页入口（通用组）。 */
+    val settingsVoice: String,
+    /** 语音输入二级页标题。 */
+    val settingsVoiceTitle: String,
+    /** 总开关行。 */
+    val settingsVoiceEnabled: String,
+    /** 使用说明。 */
+    val settingsVoiceHint: String,
+    /** API Key 输入框 label。 */
+    val settingsVoiceApiKey: String,
+    /** API Key 获取位置提示。 */
+    val settingsVoiceApiKeyHint: String,
+    /** 控制台入口按钮。 */
+    val settingsVoiceConsole: String,
+    /** 资源 ID 输入框 label。 */
+    val settingsVoiceResourceId: String,
+    /** 资源 ID 提示。 */
+    val settingsVoiceResourceHint: String,
+    /** 未启用语音输入（设置页开关未开）。 */
+    val disabled: String,
+    /** 未配置 API Key。 */
+    val notConfigured: String,
+    /** 麦克风权限被拒。 */
+    val noPermission: String,
+    /** 误触提示（按住时间过短）。 */
+    val holdToTalk: String,
+    /** 录音中提示（波浪气泡内）。 */
+    val listening: String,
+    /** 识别中提示。 */
+    val recognizing: String,
+    /** 录音计时（秒）。 */
+    val recordingSeconds: (Int) -> String,
+    /** 功能菜单入口标签。 */
+    val menuLabel: String,
+    /** 服务列表空态。 */
+    val providerEmpty: String,
+    /** 添加按钮。 */
+    val providerAdd: String,
+    /** 编辑按钮。 */
+    val providerEdit: String,
+    /** 服务名称字段。 */
+    val providerName: String,
+    /** 类型字段前缀（如「类型：火山引擎·流式识别」）。 */
+    val providerTypeLabel: String,
+    /** 火山引擎流式识别类型名。 */
+    val providerTypeVolc: String,
+    /** 未填密钥的标记。 */
+    val providerNoKey: String,
+    /** 删除确认标题（带名称）。 */
+    val providerDeleteConfirmTitle: (String) -> String,
+    /** 删除确认正文。 */
+    val providerDeleteConfirmBody: String,
+    /** 设置页入口显示启用服务数。 */
+    val providerCount: (Int) -> String,
+    /** 识别结果已发送（带文本）。 */
+    val sent: (String) -> String,
+    /** 识别失败（带原因）。 */
+    val error: (String) -> String,
+    /** 录音超时自动发送提示。 */
+    val timeout: String,
+)
+
+/** 终端文件上传文案（嵌套子类，同 GitStrings）。 */
+@Immutable
+data class UploadStrings(
+    /** 功能菜单入口标签。 */
+    val menuLabel: String,
+    /** 文件管理菜单入口（打开 SFTP 文件管理视图）。 */
+    val fileManagerLabel: String,
+    /** 目标目录对话框标题。 */
+    val dirTitle: String,
+    /** 上传到当前目录。 */
+    val dirCurrent: String,
+    /** 上传到临时目录。 */
+    val dirTmp: String,
+    /** 探测当前目录失败时的提示。 */
+    val dirNoWorkdir: String,
+    /** 上传中（文件名 + 序号）。 */
+    val uploading: (String) -> String,
+    /** 进度百分比。 */
+    val progress: (Int) -> String,
+    /** 完成提示（N 个文件）。 */
+    val done: (Int) -> String,
+    /** 失败提示。 */
+    val failed: (String) -> String,
+)
+
+/** SFTP 文件管理器扩展文案（多选 / 收藏 / 删除 / 分组，嵌套子类防 JVM 255 上限）。 */
+@Immutable
+data class SftpExtStrings(
+    /** 时间分组：今天。 */
+    val groupToday: String,
+    /** 时间分组：本周。 */
+    val groupWeek: String,
+    /** 时间分组：更早。 */
+    val groupEarlier: String,
+    /** 空目录。 */
+    val empty: String,
+    /** 多选计数。 */
+    val selected: (Int) -> String,
+    /** 全选。 */
+    val selectAll: String,
+    /** 重命名。 */
+    val rename: String,
+    /** 删除。 */
+    val delete: String,
+    /** 删除确认标题（N 项）。 */
+    val deleteConfirm: (Int) -> String,
+    /** 删除确认正文。 */
+    val deleteConfirmBody: String,
+    /** 删除完成提示。 */
+    val deleted: String,
+    /** 重命名对话框标题。 */
+    val renameTitle: String,
+    /** 收藏当前目录（MoreMenu 项）。 */
+    val favoriteAdd: String,
+    /** 取消收藏当前目录（MoreMenu 项）。 */
+    val favoriteRemove: String,
+    /** 收藏列表空态。 */
+    val favoritesEmpty: String,
+    /** 刷新。 */
+    val refresh: String,
 )
 
 /** Git 面板文案（终端内可视化 git 状态/diff/提交）。 */
@@ -338,6 +471,8 @@ data class GitStrings(
     val conflicted: String,
     val diffTruncated: String,
     val dirHint: String,
+    /** 功能菜单入口标签。 */
+    val menuLabel: String,
 )
 
 /** 当前 UI 树使用的文案集合；由 AppRoot 根据设置注入。 */
@@ -559,6 +694,68 @@ private val EnStrings = AppStrings(
     settingsVersion = "Version",
     settingsWebsite = "Website",
     settingsContact = "Contact",
+    voice = VoiceStrings(
+        settingsVoice = "Voice input",
+        settingsVoiceTitle = "Voice input",
+        settingsVoiceEnabled = "Enable voice input",
+        settingsVoiceHint = "Hold the mic key in the terminal toolbar to speak; release to send the recognized text as terminal input. Powered by Volcano Engine streaming ASR (Doubao Voice).",
+        settingsVoiceApiKey = "API Key",
+        settingsVoiceApiKeyHint = "Get it from Volcano Engine console → Speech → API Key management.",
+        settingsVoiceConsole = "Open Volcano Engine console",
+        settingsVoiceResourceId = "Resource ID (model version)",
+        settingsVoiceResourceHint = "The ASR service must be enabled for this key in the console; pick the plan you purchased.",
+        disabled = "Voice input is off — enable it in Settings → Voice input",
+        notConfigured = "Voice input is not configured — set your API Key in Settings → Voice input",
+        noPermission = "Microphone permission is required for voice input",
+        holdToTalk = "Spoke too briefly — tap the mic key and talk",
+        listening = "Listening…",
+        menuLabel = "Voice input",
+        providerEmpty = "No speech recognition service configured yet",
+        providerAdd = "Add recognition service",
+        providerEdit = "Edit",
+        providerName = "Name",
+        providerTypeLabel = "Type",
+        providerTypeVolc = "Volcano Engine · Streaming ASR",
+        providerNoKey = "no key",
+        providerDeleteConfirmTitle = { n -> "Delete \"$n\"?" },
+        providerDeleteConfirmBody = "The API Key of this service will be removed too.",
+        providerCount = { n -> if (n == 1) "1 service" else "$n services" },
+        recognizing = "Recognizing…",
+        recordingSeconds = { "$it s" },
+        sent = { "Sent: $it" },
+        error = { "Voice recognition failed: $it" },
+        timeout = "Speaking time limit reached — sending what was recognized",
+    ),
+    upload = UploadStrings(
+        menuLabel = "Upload file",
+        fileManagerLabel = "File manager",
+        dirTitle = "Upload to",
+        dirCurrent = "Current directory",
+        dirTmp = "Temp directory",
+        dirNoWorkdir = "Current directory could not be detected",
+        uploading = { n -> "Uploading $n" },
+        progress = { p -> "$p%" },
+        done = { n -> if (n == 1) "1 file uploaded" else "$n files uploaded" },
+        failed = { msg -> "Upload failed: $msg" },
+    ),
+    sftpExt = SftpExtStrings(
+        groupToday = "Today",
+        groupWeek = "This week",
+        groupEarlier = "Earlier",
+        empty = "Empty folder",
+        selected = { n -> "$n selected" },
+        selectAll = "Select all",
+        rename = "Rename",
+        delete = "Delete",
+        deleteConfirm = { n -> "Delete $n item(s)?" },
+        deleteConfirmBody = "This permanently removes them and cannot be undone.",
+        deleted = "Deleted",
+        renameTitle = "Rename",
+        favoriteAdd = "Favorite this folder",
+        favoriteRemove = "Remove from favorites",
+        favoritesEmpty = "No favorites yet",
+        refresh = "Refresh",
+    ),
     terminalCancel = "Cancel",
     terminalCopied = "Copied",
     terminalPasted = "Pasted",
@@ -616,6 +813,7 @@ private val EnStrings = AppStrings(
         conflicted = "Conflict",
         diffTruncated = "Diff too large — showing the first 600 lines",
         dirHint = "Untracked folder — open it in the terminal to explore",
+        menuLabel = "Git",
     ),
 )
 
@@ -828,6 +1026,68 @@ private val ZhStrings = AppStrings(
     settingsVersion = "版本",
     settingsWebsite = "官网",
     settingsContact = "联系",
+    voice = VoiceStrings(
+        settingsVoice = "语音输入",
+        settingsVoiceTitle = "语音输入",
+        settingsVoiceEnabled = "启用语音输入",
+        settingsVoiceHint = "按住终端工具栏的麦克风键说话，松手自动把识别出的文字发送到终端。由火山引擎流式语音识别（豆包语音）提供能力。",
+        settingsVoiceApiKey = "API Key",
+        settingsVoiceApiKeyHint = "在火山引擎控制台「语音技术 → API Key 管理」中获取。",
+        settingsVoiceConsole = "打开火山引擎控制台",
+        settingsVoiceResourceId = "资源 ID（模型版本）",
+        settingsVoiceResourceHint = "需先在控制台为当前 Key 开通对应的流式语音识别服务，按购买的套餐选择。",
+        disabled = "语音输入未开启：请在设置 → 语音输入中打开开关",
+        notConfigured = "语音输入未配置：请在设置 → 语音输入中填写 API Key",
+        noPermission = "语音输入需要麦克风权限",
+        holdToTalk = "录音时间太短，请点开麦克风再说话",
+        listening = "正在聆听…",
+        menuLabel = "语音输入",
+        providerEmpty = "还没有配置语音识别服务",
+        providerAdd = "添加识别服务",
+        providerEdit = "编辑",
+        providerName = "名称",
+        providerTypeLabel = "类型",
+        providerTypeVolc = "火山引擎 · 流式识别",
+        providerNoKey = "未填密钥",
+        providerDeleteConfirmTitle = { n -> "删除「$n」？" },
+        providerDeleteConfirmBody = "该服务的 API Key 也会一并清除。",
+        providerCount = { n -> "$n 个服务" },
+        recognizing = "识别中…",
+        recordingSeconds = { "$it 秒" },
+        sent = { "已发送：$it" },
+        error = { "语音识别失败：$it" },
+        timeout = "说话时间到，已发送识别到的内容",
+    ),
+    upload = UploadStrings(
+        menuLabel = "上传文件",
+        fileManagerLabel = "文件管理",
+        dirTitle = "上传到",
+        dirCurrent = "当前目录",
+        dirTmp = "临时目录",
+        dirNoWorkdir = "无法探测当前目录",
+        uploading = { n -> "上传中 $n" },
+        progress = { p -> "$p%" },
+        done = { n -> "已上传 $n 个文件" },
+        failed = { msg -> "上传失败：$msg" },
+    ),
+    sftpExt = SftpExtStrings(
+        groupToday = "今天",
+        groupWeek = "本周",
+        groupEarlier = "更早",
+        empty = "空目录",
+        selected = { n -> "已选 $n 项" },
+        selectAll = "全选",
+        rename = "重命名",
+        delete = "删除",
+        deleteConfirm = { n -> "删除 $n 项？" },
+        deleteConfirmBody = "将永久删除，且不可恢复。",
+        deleted = "已删除",
+        renameTitle = "重命名",
+        favoriteAdd = "收藏当前目录",
+        favoriteRemove = "取消收藏当前目录",
+        favoritesEmpty = "还没有收藏",
+        refresh = "刷新",
+    ),
     terminalCancel = "取消",
     terminalCopied = "已复制",
     terminalPasted = "已粘贴",
@@ -884,5 +1144,6 @@ private val ZhStrings = AppStrings(
         conflicted = "冲突",
         diffTruncated = "差异过大——仅显示前 600 行",
         dirHint = "未跟踪目录——请在终端中查看",
+        menuLabel = "Git",
     ),
 )

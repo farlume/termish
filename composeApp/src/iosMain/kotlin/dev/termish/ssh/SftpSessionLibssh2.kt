@@ -35,9 +35,12 @@ import libssh2.libssh2_sftp_mkdir_ex
 import libssh2.libssh2_sftp_open_ex
 import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
+import libssh2.libssh2_sftp_rename_ex
+import libssh2.libssh2_sftp_rmdir_ex
 import libssh2.libssh2_sftp_stat_ex
 import libssh2.libssh2_sftp_symlink_ex
 import libssh2.libssh2_sftp_shutdown
+import libssh2.libssh2_sftp_unlink_ex
 import libssh2.libssh2_sftp_write
 import platform.posix.usleep
 import sftp_write.termish_sftp_write
@@ -179,6 +182,40 @@ private class SftpSessionLibssh2(
         val s = sftpOrThrow()
         if (libssh2_sftp_mkdir_ex(s, path, path.encodeToByteArray().size.toUInt(), 0x1EDL) != 0) {
             throw SshException("SFTP 创建目录失败: $path")
+        }
+    }
+
+    override fun delete(path: String) {
+        deleteRecursive(sftpOrThrow(), path)
+    }
+
+    private fun deleteRecursive(s: CPointer<LIBSSH2_SFTP>, path: String) {
+        val isDir = runCatching { list(path) }.getOrNull()?.let {
+            // list 成功 = 目录（文件 list 会抛错）；也可能返回空列表（空目录）
+            true
+        } ?: false
+        val pathLen = path.encodeToByteArray().size.toUInt()
+        if (isDir) {
+            // 递归删除子项（list 内部已跳过 . / ..）
+            list(path).forEach { child -> deleteRecursive(s, joinRemote(path, child.name)) }
+            if (libssh2_sftp_rmdir_ex(s, path, pathLen) != 0) {
+                throw SshException("SFTP 删除目录失败: $path")
+            }
+        } else {
+            if (libssh2_sftp_unlink_ex(s, path, pathLen) != 0) {
+                throw SshException("SFTP 删除文件失败: $path")
+            }
+        }
+    }
+
+    override fun rename(oldPath: String, newPath: String) {
+        val s = sftpOrThrow()
+        val rc = libssh2_sftp_rename_ex(
+            s, oldPath, oldPath.encodeToByteArray().size.toUInt(),
+            newPath, newPath.encodeToByteArray().size.toUInt(), 0,
+        )
+        if (rc != 0) {
+            throw SshException("SFTP 重命名失败: $oldPath")
         }
     }
 

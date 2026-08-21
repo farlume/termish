@@ -1,5 +1,31 @@
 package dev.termish.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Article
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Notes
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.graphics.Color
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DatePeriod
+
 import dev.termish.util.TermLog
 
 import androidx.compose.animation.AnimatedVisibility
@@ -54,6 +80,7 @@ import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -85,7 +112,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
+
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
@@ -115,7 +142,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.todayIn
 import org.jetbrains.compose.resources.painterResource
 
 /** SFTP 排序方式。 */
@@ -143,6 +172,18 @@ class SftpUiState {
     var newFolderDialog by mutableStateOf(false)
     /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
     var fileMenu by mutableStateOf<SftpEntry?>(null)
+    /** 多选模式：选中的条目名集合（非空 = 多选模式，列表行切换勾选）。 */
+    val selection = mutableStateListOf<String>()
+    /** 收藏目录路径集合（快捷跳转）。 */
+    val favorites = mutableStateListOf<String>()
+    /** 重命名对话框目标（null = 关闭）。 */
+    var renameTarget by mutableStateOf<SftpEntry?>(null)
+    /** 删除确认目标列表（null = 关闭）。 */
+    var deleteTargets by mutableStateOf<List<SftpEntry>?>(null)
+    /** 多选批量下载的待下载文件路径（DirectorySaver 回调异步消费）。 */
+    var pendingDownloadMulti by mutableStateOf<List<String>?>(null)
+    /** 下拉刷新中。 */
+    var refreshing by mutableStateOf(false)
     /** 正在预览的文件条目（null = 预览面板关闭）。 */
     var previewEntry by mutableStateOf<SftpEntry?>(null)
     /** 预览加载中。 */
@@ -170,6 +211,49 @@ class SftpUiState {
 internal fun joinPath(base: String, name: String): String =
     if (base == "/") "/$name" else "$base/$name"
 
+/** DATE 排序的时间分组桶：今天 / 本周 / 更早（时间未知归更早）。 */
+internal fun dateBucket(modifiedAt: Long, s: AppStrings): String {
+    if (modifiedAt <= 0) return s.sftpExt.groupEarlier
+    val tz = TimeZone.currentSystemDefault()
+    val today = Clock.System.todayIn(tz)
+    val date = Instant.fromEpochMilliseconds(modifiedAt).toLocalDateTime(tz).date
+    return when {
+        date == today -> s.sftpExt.groupToday
+        date >= today.minus(DatePeriod(days = 6)) -> s.sftpExt.groupWeek
+        else -> s.sftpExt.groupEarlier
+    }
+}
+
+/** 单行条目渲染：多选点击/长按进入多选；非多选时目录进入、文件预览。 */
+@Composable
+private fun EntryRow(
+    entry: SftpEntry,
+    selecting: Boolean,
+    selection: List<String>,
+    path: String,
+    onToggle: (String) -> Unit,
+    onEnterSelection: (String) -> Unit,
+    onNavigate: (String) -> Unit,
+    onPreview: (SftpEntry) -> Unit,
+) {
+    SftpRowItem(
+        name = entry.name,
+        // 目录显示权限串；文件显示大小（移动端大小比权限更有用）
+        subtitle = if (entry.isDirectory) entry.permissions else formatSize(entry.size),
+        time = formatTime(entry.modifiedAt),
+        isDirectory = entry.isDirectory,
+        selected = entry.name in selection,
+        onClick = {
+            when {
+                selecting -> onToggle(entry.name)
+                entry.isDirectory -> onNavigate(joinPath(path, entry.name))
+                else -> onPreview(entry)
+            }
+        },
+        onLongClick = { if (!selecting) onEnterSelection(entry.name) },
+    )
+}
+
 /**
  * 递归下载目录：按相对路径写入本地 [DirectorySink]。跳过 `.`/`..`；
  * 单文件下载失败会沿调用栈抛异常（由调用方提示），已写完的文件关闭。
@@ -191,6 +275,20 @@ internal fun downloadDir(session: SftpSession, remotePath: String, sink: Directo
     }
 }
 
+/** 批量下载选中的远端文件到本地 sink（目录下载的伴生：多选操作栏用）。 */
+internal fun downloadFilesToSink(session: SftpSession, paths: List<String>, sink: DirectorySink) {
+    paths.forEach { remotePath ->
+        val name = remotePath.substringAfterLast('/').ifBlank { "file" }
+        val file = sink.openFile(name)
+        try {
+            session.download(remotePath) { chunk -> file.write(chunk) }
+        } finally {
+            file.close()
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SftpContent(
     host: Host,
@@ -458,11 +556,12 @@ fun SftpContent(
         previewLoading = false
     }
 
-    // 选择保存目录后递归下载当前目录；取消保存则不回调
+    // 选择保存目录后递归下载当前目录 / 批量下载选中文件；取消保存则不回调
     val saveDir = rememberDirectorySaver { _, sink ->
-        val target = pendingDownloadDir
-        if (target == null) {
-            // 没有待下载目录（防御路径）：直接放弃，不调 sink.close()——
+        val dir = pendingDownloadDir
+        val files = state.pendingDownloadMulti
+        if (dir == null && files == null) {
+            // 没有待下载目标（防御路径）：直接放弃，不调 sink.close()——
             // iOS 的 close 会弹导出面板，空目录也会弹
             return@rememberDirectorySaver
         }
@@ -470,7 +569,11 @@ fun SftpContent(
         scope.launch {
             try {
                 withContext(ioDispatcher()) {
-                    downloadDir(sc, target, sink)
+                    if (dir != null) {
+                        downloadDir(sc, dir, sink)
+                    } else {
+                        downloadFilesToSink(sc, files!!, sink)
+                    }
                 }
                 sink.close()
                 snackbar.showSnackbar(s.sftpDownloaded)
@@ -542,9 +645,113 @@ fun SftpContent(
             }
         }
 
-    // SFTP 是独立页面类型的 tab：主题随应用（浅色页面），不随终端主题
+
+    // ---- 多选 / 删除 / 重命名 / 刷新 ----
+    fun selecting() = state.selection.isNotEmpty()
+
+    fun enterSelection(name: String) {
+        state.selection.clear()
+        state.selection.add(name)
+    }
+
+    fun toggleSelect(name: String) {
+        if (name in state.selection) state.selection.remove(name) else state.selection.add(name)
+    }
+
+    fun clearSelection() = state.selection.clear()
+
+    fun selectAllVisible() {
+        state.selection.clear()
+        visible.forEach { state.selection.add(it.name) }
+    }
+
+    /** 删除确认（单文件菜单 / 多选底部栏共用）。 */
+    fun confirmDelete(targets: List<SftpEntry>) {
+        state.deleteTargets = targets
+    }
+
+    /** 执行删除（递归，平台实现内部处理目录）；成功后刷新并退出多选。 */
+    fun doDelete(targets: List<SftpEntry>) {
+        val sc = session ?: return
+        scope.launch {
+            try {
+                withContext(ioDispatcher()) {
+                    targets.forEach { sc.delete(joinPath(path, it.name)) }
+                }
+                clearSelection()
+                reload()
+                snackbar.showSnackbar(s.sftpExt.deleteConfirm(targets.size).removeSuffix("?").removeSuffix("？"))
+            } catch (e: Exception) {
+                snackbar.showSnackbar(s.sftpExt.delete + " " + (e.message ?: ""))
+            }
+        }
+    }
+
+    /** 执行重命名。 */
+    fun doRename(entry: SftpEntry, newName: String) {
+        val sc = session ?: return
+        val trimmed = newName.trim()
+        if (trimmed.isEmpty() || trimmed == entry.name) {
+            state.renameTarget = null
+            return
+        }
+        scope.launch {
+            try {
+                withContext(ioDispatcher()) {
+                    sc.rename(joinPath(path, entry.name), joinPath(path, trimmed))
+                }
+                state.renameTarget = null
+                reload()
+            } catch (e: Exception) {
+                snackbar.showSnackbar(s.sftpExt.rename + " " + (e.message ?: ""))
+            }
+        }
+    }
+
+    /** 手动/下拉刷新当前目录。 */
+    fun refreshNow() {
+        if (state.refreshing) return
+        state.refreshing = true
+        scope.launch {
+            reload()
+            state.refreshing = false
+        }
+    }
+
+    /** 收藏夹对话框开关（MoreMenu 进入）。 */
+    var favoritesOpen by remember { mutableStateOf(false) }
+    /** 预览面板 ⋮ 操作菜单开关。 */
+    var previewMenu by remember { mutableStateOf(false) }
+
+    /** 收藏/取消收藏当前目录（header 星标）。 */
+    fun toggleFavorite(p: String) {
+        if (p in state.favorites) state.favorites.remove(p) else state.favorites.add(p)
+    }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize()) {
+            // 多选顶部选择条：计数 + 全选 + 退出（紧贴 header 上方）
+            if (selecting()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                        .padding(start = 16.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        s.sftpExt.selected(state.selection.size),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { selectAllVisible() }) {
+                        Text(s.sftpExt.selectAll, style = MaterialTheme.typography.labelMedium)
+                    }
+                    IconButton(onClick = { clearSelection() }) {
+                        Icon(Icons.Filled.Close, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
             // 断线 banner（红色 + 重连按钮）；重连中改画布居中指示器
             //（与终端页同款，见 ConnectingIndicator）
             val bannerText = when {
@@ -663,6 +870,10 @@ fun SftpContent(
                     sort = sort,
                     showHidden = showHidden,
                     tint = MaterialTheme.colorScheme.onSurface,
+                    isFavorite = path in state.favorites,
+                    onToggleFavorite = { toggleFavorite(path) },
+                    onOpenFavorites = { favoritesOpen = true },
+                    onRefresh = { refreshNow() },
                     onSort = { sort = it },
                     onToggleHidden = { showHidden = !showHidden },
                     onNewFolder = { newFolderDialog = true },
@@ -718,38 +929,6 @@ fun SftpContent(
                     shape = RoundedCornerShape(14.dp),
                 )
             }
-            // 单文件下载进度横幅（跨平台：iOS/Desktop 也显示）
-            downloadProgress?.let { dp ->
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            dp.name,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        if (dp.total > 0) {
-                            Text(
-                                "${(dp.loaded * 100 / dp.total)}%",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.size(4.dp))
-                    LinearProgressIndicator(
-                        progress = { if (dp.total > 0) dp.loaded.toFloat() / dp.total else 0f },
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                    )
-                }
-            }
             when {
                 // 首连/目录加载中（entries 未就绪）：不在列表区画提示，
                 // 统一走外层 ConnectingIndicator 胶囊（与终端页同款）
@@ -803,69 +982,73 @@ fun SftpContent(
                         .background(MaterialTheme.colorScheme.surface)
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
                 ) {
-                    LazyColumn(Modifier.fillMaxSize()) {
-                        if (path != "/") {
-                            item("..") {
-                                SftpRowItem(
-                                    name = "..",
-                                    permissions = "",
-                                    time = "",
-                                    isDirectory = true,
-                                    onClick = {
-                                        navigateTo(path.substringBeforeLast('/', "/").ifBlank { "/" })
-                                    },
+                    if (visible.isEmpty()) {
+                        // 空态
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(
+                                    Icons.Filled.FolderOpen,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(40.dp),
+                                )
+                                Spacer(Modifier.size(10.dp))
+                                Text(
+                                    s.sftpExt.empty,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
                                 )
                             }
                         }
-                        items(visible, key = { it.name }) { entry ->
-                            if (entry.isDirectory) {
-                                SftpRowItem(
-                                    name = entry.name,
-                                    permissions = entry.permissions,
-                                    time = formatTime(entry.modifiedAt),
-                                    isDirectory = true,
-                                    onClick = {
-                                        navigateTo(joinPath(path, entry.name))
-                                    },
-                                )
-                            } else {
-                                Box {
-                                    SftpRowItem(
-                                        name = entry.name,
-                                        permissions = entry.permissions,
-                                        time = formatTime(entry.modifiedAt),
-                                        isDirectory = false,
-                                        onClick = { fileMenu = entry },
-                                    )
-                                    DropdownMenu(
-                                        expanded = fileMenu?.name == entry.name,
-                                        onDismissRequest = { fileMenu = null },
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text(s.sftpPreview) },
-                                            leadingIcon = { Icon(Icons.Filled.Visibility, null) },
+                    } else {
+                        // 下拉刷新 + 列表（DATE 排序按 今天/本周/更早 分组）
+                        PullToRefreshBox(
+                            isRefreshing = state.refreshing,
+                            onRefresh = { refreshNow() },
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            LazyColumn(Modifier.fillMaxSize()) {
+                                if (path != "/") {
+                                    item("..") {
+                                        SftpRowItem(
+                                            name = "..",
+                                            subtitle = "",
+                                            time = "",
+                                            isDirectory = true,
                                             onClick = {
-                                                fileMenu = null
-                                                startPreview(entry)
+                                                if (selecting()) clearSelection()
+                                                else navigateTo(path.substringBeforeLast('/', "/").ifBlank { "/" })
                                             },
                                         )
-                                        DropdownMenuItem(
-                                            text = { Text(s.sftpDownload) },
-                                            leadingIcon = { Icon(Icons.Filled.Download, null) },
-                                            onClick = {
-                                                fileMenu = null
-                                                startDownload(entry)
-                                            },
-                                        )
-                                        DropdownMenuItem(
-                                            text = { Text(s.sftpCopyPath) },
-                                            leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
-                                            onClick = {
-                                                fileMenu = null
-                                                clipboard.setText(AnnotatedString(joinPath(path, entry.name)))
-                                                scope.launch { snackbar.showSnackbar(s.sftpCopied) }
-                                            },
-                                        )
+                                    }
+                                }
+                                if (sort == SftpSort.DATE && !selecting()) {
+                                    // 时间分组头：今天 / 本周 / 更早（未知时间归更早）
+                                    val buckets = linkedMapOf<String, MutableList<SftpEntry>>()
+                                    visible.forEach { e ->
+                                        buckets.getOrPut(dateBucket(e.modifiedAt, s)) { mutableListOf() }.add(e)
+                                    }
+                                    buckets.forEach { (bucket, list) ->
+                                        item(key = "hdr-$bucket") {
+                                            Text(
+                                                bucket,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp),
+                                            )
+                                        }
+                                        items(list, key = { it.name }) { entry ->
+                                            EntryRow(entry, selecting(), state.selection, path, onToggle = { toggleSelect(it) },
+                                                onEnterSelection = { enterSelection(it) }, onNavigate = { navigateTo(it) },
+                                                onPreview = { startPreview(it) })
+                                        }
+                                    }
+                                } else {
+                                    items(visible, key = { it.name }) { entry ->
+                                        EntryRow(entry, selecting(), state.selection, path, onToggle = { toggleSelect(it) },
+                                            onEnterSelection = { enterSelection(it) }, onNavigate = { navigateTo(it) },
+                                            onPreview = { startPreview(it) })
                                     }
                                 }
                             }
@@ -874,7 +1057,162 @@ fun SftpContent(
                 }
             }
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        // 多选底部操作栏：下载 / 删除 / 复制路径 / 取消（盖在列表底部）
+        if (selecting()) {
+            val selEntries = visible.filter { it.name in state.selection }
+            Surface(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    TextButton(
+                        onClick = {
+                            state.pendingDownloadMulti = selEntries.map { joinPath(path, it.name) }
+                            saveDir("selection")
+                        },
+                        enabled = selEntries.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpDownload)
+                    }
+                    TextButton(onClick = { confirmDelete(selEntries) }, enabled = selEntries.isNotEmpty()) {
+                        Icon(Icons.Filled.Delete, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpExt.delete)
+                    }
+                    TextButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(selEntries.joinToString(" ") { joinPath(path, it.name) }))
+                            clearSelection()
+                            scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                        },
+                        enabled = selEntries.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpCopyPath)
+                    }
+                    TextButton(onClick = { clearSelection() }) {
+                        Text(s.terminalCancel)
+                    }
+                }
+            }
+        }
+
+        // 单文件下载进度：右下角悬浮卡片（与终端上传同款 TransferProgressCard）
+        val downloading = downloadProgress
+        if (downloading != null) {
+            TransferProgressCard(
+                title = downloading.name,
+                progress = if (downloading.total > 0) downloading.loaded.toFloat() / downloading.total else 0f,
+                percent = if (downloading.total > 0) "${downloading.loaded * 100 / downloading.total}%" else "",
+                subtitle = s.sftpDownload,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp),
+            )
+        }
+
+        TermishSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+
+        // ---- 重命名 / 删除 / 收藏夹 对话框 ----
+        state.renameTarget?.let { entry ->
+            var newName by remember(entry.name) { mutableStateOf(entry.name) }
+            AlertDialog(
+                onDismissRequest = { state.renameTarget = null },
+                title = { Text(s.sftpExt.renameTitle) },
+                text = {
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { doRename(entry, newName) }) { Text(s.terminalConfirm) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { state.renameTarget = null }) { Text(s.terminalCancel) }
+                },
+            )
+        }
+        state.deleteTargets?.let { targets ->
+            AlertDialog(
+                onDismissRequest = { state.deleteTargets = null },
+                title = { Text(s.sftpExt.deleteConfirm(targets.size)) },
+                text = { Text(s.sftpExt.deleteConfirmBody) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            state.deleteTargets = null
+                            doDelete(targets)
+                        },
+                    ) { Text(s.terminalConfirm) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { state.deleteTargets = null }) { Text(s.terminalCancel) }
+                },
+            )
+        }
+        if (favoritesOpen) {
+            AlertDialog(
+                onDismissRequest = { favoritesOpen = false },
+                title = { Text(s.sftpExt.favoriteAdd) },
+                text = {
+                    if (state.favorites.isEmpty()) {
+                        Text(
+                            s.sftpExt.favoritesEmpty,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Column {
+                            state.favorites.toList().forEach { fav ->
+                                Row(
+                                    Modifier.fillMaxWidth().clickable {
+                                        favoritesOpen = false
+                                        navigateTo(fav)
+                                    }.padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Text(
+                                        fav,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                    )
+                                    IconButton(onClick = { state.favorites.remove(fav) }, modifier = Modifier.size(28.dp)) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { favoritesOpen = false }) { Text(s.terminalCancel) }
+                },
+            )
+        }
 
         // 文本预览覆盖层：全屏模态盖住列表；标题栏（名称+大小+复制+关闭）+ 等宽文本滚动区。
         // 预览状态挂在会话级 uiState：切 tab 离开再回来，预览面板原样保留。
@@ -934,6 +1272,48 @@ fun SftpContent(
                                     if (imageFit) Icons.Filled.ZoomIn else Icons.Filled.ZoomOut,
                                     contentDescription = s.sftpPreviewZoom,
                                     tint = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
+                        // 更多操作：下载 / 重命名 / 删除 / 复制路径（文件操作入口，
+                        // 列表单击已改为直接预览，操作集中在此 + 多选栏）
+                        Box {
+                            IconButton(onClick = { previewMenu = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                            }
+                            DropdownMenu(expanded = previewMenu, onDismissRequest = { previewMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(s.sftpDownload) },
+                                    leadingIcon = { Icon(Icons.Filled.Download, null) },
+                                    onClick = {
+                                        previewMenu = false
+                                        startDownload(entry)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(s.sftpExt.rename) },
+                                    leadingIcon = { Icon(Icons.Filled.Edit, null) },
+                                    onClick = {
+                                        previewMenu = false
+                                        state.renameTarget = entry
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(s.sftpExt.delete) },
+                                    leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                                    onClick = {
+                                        previewMenu = false
+                                        confirmDelete(listOf(entry))
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(s.sftpCopyPath) },
+                                    leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
+                                    onClick = {
+                                        previewMenu = false
+                                        clipboard.setText(AnnotatedString(joinPath(path, entry.name)))
+                                        scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                                    },
                                 )
                             }
                         }
@@ -1017,7 +1397,54 @@ fun SftpContent(
         }
 
         // SnackbarHost 放预览层之后（z 序最高）：预览模式下复制成功等提示不被面板遮住
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+        // 多选底部操作栏：下载 / 删除 / 复制路径 / 取消（盖在列表底部）
+        if (selecting()) {
+            val selEntries = visible.filter { it.name in state.selection }
+            Surface(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 8.dp,
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    TextButton(
+                        onClick = {
+                            state.pendingDownloadMulti = selEntries.map { joinPath(path, it.name) }
+                            saveDir("selection")
+                        },
+                        enabled = selEntries.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.Download, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpDownload)
+                    }
+                    TextButton(onClick = { confirmDelete(selEntries) }, enabled = selEntries.isNotEmpty()) {
+                        Icon(Icons.Filled.Delete, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpExt.delete)
+                    }
+                    TextButton(
+                        onClick = {
+                            clipboard.setText(AnnotatedString(selEntries.joinToString(" ") { joinPath(path, it.name) }))
+                            clearSelection()
+                            scope.launch { snackbar.showSnackbar(s.sftpCopied) }
+                        },
+                        enabled = selEntries.isNotEmpty(),
+                    ) {
+                        Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.size(4.dp))
+                        Text(s.sftpCopyPath)
+                    }
+                    TextButton(onClick = { clearSelection() }) {
+                        Text(s.terminalCancel)
+                    }
+                }
+            }
+        }
+
+        TermishSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
 
         // 首连（列表未加载）与断线重连共用同一居中胶囊（终端页同款，淡入淡出）：
         // 同页不再出现裸文本「连接中…」，两页连接态视觉完全统一
@@ -1051,12 +1478,16 @@ fun SftpContent(
     }
 }
 
-/** 三点菜单：新建文件夹 / 排序 / 下载目录 / 复制路径 / 隐藏文件。 */
+/** 三点菜单：新建文件夹 / 排序 / 收藏 / 刷新 / 下载目录 / 复制路径 / 隐藏文件。 */
 @Composable
 private fun SftpMoreMenu(
     sort: SftpSort,
     showHidden: Boolean,
     tint: Color,
+    isFavorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onOpenFavorites: () -> Unit,
+    onRefresh: () -> Unit,
     onSort: (SftpSort) -> Unit,
     onToggleHidden: () -> Unit,
     onNewFolder: () -> Unit,
@@ -1076,6 +1507,22 @@ private fun SftpMoreMenu(
                 onClick = {
                     open = false
                     onNewFolder()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(if (isFavorite) s.sftpExt.favoriteRemove else s.sftpExt.favoriteAdd) },
+                leadingIcon = { Icon(if (isFavorite) Icons.Filled.Star else Icons.Filled.StarBorder, null) },
+                onClick = {
+                    open = false
+                    onToggleFavorite()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.sftpExt.refresh) },
+                leadingIcon = { Icon(Icons.Filled.Refresh, null) },
+                onClick = {
+                    open = false
+                    onRefresh()
                 },
             )
             HorizontalDivider()
@@ -1109,6 +1556,15 @@ private fun SftpMoreMenu(
                     onToggleHidden()
                 },
             )
+            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(s.sftpExt.favoriteAdd) },
+                leadingIcon = { Icon(Icons.Filled.Star, null) },
+                onClick = {
+                    open = false
+                    onOpenFavorites()
+                },
+            )
         }
     }
 }
@@ -1128,30 +1584,36 @@ private fun SftpSortItem(
     )
 }
 
-/** 文件/文件夹列表行：icon + 名称 + 权限，右下角时间。 */
+/** 文件/文件夹列表行：icon + 名称（目录=权限/文件=大小副标题）+ 时间；
+ *  支持多选选中态与长按（进入多选）。 */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SftpRowItem(
     name: String,
-    permissions: String,
+    subtitle: String,
     time: String,
     isDirectory: Boolean,
+    selected: Boolean = false,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            if (isDirectory) painterResource(Res.drawable.folder)
+            painter = if (isDirectory) painterResource(Res.drawable.folder)
             else rememberVectorPainter(fileKindIcon(fileKindOf(name))),
             contentDescription = null,
+            // 文件夹用主题色（翠绿）；文件用类型色（线性图标小尺寸清晰，色彩保留区分）
             tint = if (isDirectory) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(22.dp),
+            else fileKindColor(fileKindOf(name)),
+            modifier = Modifier.size(24.dp),
         )
         Column(Modifier.weight(1f)) {
             Text(
@@ -1162,12 +1624,14 @@ private fun SftpRowItem(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (permissions.isNotEmpty()) {
+            if (subtitle.isNotEmpty()) {
                 Text(
-                    permissions,
+                    subtitle,
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = monospaceFontFamily(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -1301,12 +1765,12 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            if (hit.isDirectory) painterResource(Res.drawable.folder)
+            painter = if (hit.isDirectory) painterResource(Res.drawable.folder)
             else rememberVectorPainter(fileKindIcon(fileKindOf(hit.name))),
             contentDescription = null,
             tint = if (hit.isDirectory) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(22.dp),
+            else fileKindColor(fileKindOf(hit.name)),
+            modifier = Modifier.size(24.dp),
         )
         Column(Modifier.weight(1f)) {
             Text(
@@ -1340,7 +1804,7 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
 // ---------- 文件类型识别（列表 icon + 预览分流） ----------
 
 /** SFTP 文件类型：决定列表 icon 与预览方式。 */
-enum class SftpFileKind { IMAGE, VIDEO, AUDIO, ARCHIVE, CODE, TEXT, PDF, OTHER }
+enum class SftpFileKind { IMAGE, VIDEO, AUDIO, ARCHIVE, APK, DOC, SHEET, SLIDES, EXEC, FONT, DB, DISK, KEY, MD, TORRENT, CONFIG, CODE, TEXT, PDF, OTHER }
 
 internal fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
 
@@ -1353,32 +1817,81 @@ internal fun isImageName(name: String): Boolean = extensionOf(name) in PREVIEW_I
 /** 按扩展名识别文件类型（列表 icon 用）；未知类型归 OTHER。 */
 internal fun fileKindOf(name: String): SftpFileKind = when (extensionOf(name)) {
     in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "ico", "avif") -> SftpFileKind.IMAGE
-    in setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v") -> SftpFileKind.VIDEO
-    in setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "mid") -> SftpFileKind.AUDIO
-    in setOf("zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz", "zst") -> SftpFileKind.ARCHIVE
+    in setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts", "m2ts") -> SftpFileKind.VIDEO
+    in setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "mid", "wma") -> SftpFileKind.AUDIO
+    in setOf("zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz", "zst", "tar.gz", "tar.bz2", "tar.xz") -> SftpFileKind.ARCHIVE
+    in setOf("iso", "img") -> SftpFileKind.DISK
+    in setOf("doc", "docx", "odt", "rtf", "pages", "wps") -> SftpFileKind.DOC
+    in setOf("xls", "xlsx", "ods", "numbers", "et") -> SftpFileKind.SHEET
+    in setOf("ppt", "pptx", "odp", "key", "dps") -> SftpFileKind.SLIDES
+    in setOf("exe", "msi", "deb", "rpm", "appimage", "app", "bat", "cmd", "com", "dmg", "pkg") -> SftpFileKind.EXEC
+    "apk" -> SftpFileKind.APK
+    in setOf("pem", "key", "crt", "cer", "p12", "pfx", "der", "jks") -> SftpFileKind.KEY
+    "torrent" -> SftpFileKind.TORRENT
+    in setOf("env", "yml", "yaml", "toml", "ini", "conf", "properties", "cfg", "editorconfig", "gitconfig") -> SftpFileKind.CONFIG
+    in setOf("ttf", "otf", "woff", "woff2", "eot") -> SftpFileKind.FONT
+    in setOf("db", "sqlite", "sqlite3", "mdb") -> SftpFileKind.DB
     in setOf(
         "kt", "kts", "java", "c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "tsx", "jsx",
         "go", "rs", "swift", "sh", "bash", "zsh", "rb", "php", "sql", "html", "css", "scss",
         "xml", "yml", "yaml", "json", "toml", "gradle", "properties", "ini", "conf", "cfg",
-        "dockerfile", "makefile", "lock", "patch", "diff",
+        "dockerfile", "makefile", "lock", "patch", "diff", "vue", "svelte", "dart", "lua", "pl", "r",
     ) -> SftpFileKind.CODE
-    in setOf("md", "markdown", "txt", "log", "csv", "tsv", "rst", "adoc", "text") -> SftpFileKind.TEXT
+    in setOf("md", "markdown") -> SftpFileKind.MD
+    in setOf("txt", "log", "rst", "adoc", "text", "nfo") -> SftpFileKind.TEXT
     "pdf" -> SftpFileKind.PDF
     else -> SftpFileKind.OTHER
 }
 
-/** 文件类型 icon（material-icons-extended）；目录 icon 走 painterResource(folder)。 */
+/** 文件类型 icon（material-icons-extended 线性图标；tint 由调用方按类型色/主题色给）。 */
 @Composable
 private fun fileKindIcon(kind: SftpFileKind): ImageVector = when (kind) {
     SftpFileKind.IMAGE -> Icons.Filled.Image
     SftpFileKind.VIDEO -> Icons.Filled.VideoFile
     SftpFileKind.AUDIO -> Icons.Filled.MusicNote
     SftpFileKind.ARCHIVE -> Icons.Filled.Archive
+    SftpFileKind.APK -> Icons.Filled.Android
+    SftpFileKind.DOC -> Icons.Filled.Description
+    SftpFileKind.SHEET -> Icons.Filled.TableChart
+    SftpFileKind.SLIDES -> Icons.Filled.Slideshow
+    SftpFileKind.EXEC -> Icons.Filled.PlayArrow
+    SftpFileKind.FONT -> Icons.Filled.TextFields
+    SftpFileKind.DB -> Icons.Filled.Storage
+    SftpFileKind.DISK -> Icons.Filled.Album
+    SftpFileKind.KEY -> Icons.Filled.Key
+    SftpFileKind.MD -> Icons.Filled.Notes
+    SftpFileKind.TORRENT -> Icons.Filled.Download
+    SftpFileKind.CONFIG -> Icons.Filled.Tune
     SftpFileKind.CODE -> Icons.Filled.Code
-    SftpFileKind.TEXT -> Icons.Filled.Description
+    SftpFileKind.TEXT -> Icons.Filled.Article
     SftpFileKind.PDF -> Icons.Filled.PictureAsPdf
     SftpFileKind.OTHER -> Icons.AutoMirrored.Filled.InsertDriveFile
 }
+
+/** 文件类型着色（线性图标 tint；列表行色彩区分，文件夹仍用主题色）。 */
+internal fun fileKindColor(kind: SftpFileKind): Color = when (kind) {
+    SftpFileKind.IMAGE -> Color(0xFF43A047)
+    SftpFileKind.VIDEO -> Color(0xFF8E24AA)
+    SftpFileKind.AUDIO -> Color(0xFFF57C00)
+    SftpFileKind.ARCHIVE -> Color(0xFF6D4C41)
+    SftpFileKind.APK -> Color(0xFF00A862)
+    SftpFileKind.DOC -> Color(0xFF1E88E5)
+    SftpFileKind.SHEET -> Color(0xFF2E7D32)
+    SftpFileKind.SLIDES -> Color(0xFFF4511E)
+    SftpFileKind.EXEC -> Color(0xFF7E57C2)
+    SftpFileKind.FONT -> Color(0xFF00ACC1)
+    SftpFileKind.DB -> Color(0xFF3949AB)
+    SftpFileKind.DISK -> Color(0xFF546E7A)
+    SftpFileKind.KEY -> Color(0xFFE6A23C)
+    SftpFileKind.MD -> Color(0xFF9C27B0)
+    SftpFileKind.TORRENT -> Color(0xFF00BFA5)
+    SftpFileKind.CONFIG -> Color(0xFF90A4AE)
+    SftpFileKind.CODE -> Color(0xFF455A64)
+    SftpFileKind.TEXT -> Color(0xFF607D8B)
+    SftpFileKind.PDF -> Color(0xFFE53935)
+    SftpFileKind.OTHER -> Color(0xFF78909C)
+}
+
 
 // ---------- 文本预览 ----------
 
