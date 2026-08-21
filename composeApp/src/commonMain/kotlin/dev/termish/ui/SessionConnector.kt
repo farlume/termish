@@ -81,6 +81,8 @@ internal class SessionConnector(
         c.reconnectAttempts = 0
         c.reconnectCount = 0
         c.errorMessage = null
+        // 重连时重置：降级重连（moshDegradedToSsh）的 SSH 输出要正常进显示
+        c.moshDisplayTakeover = false
         doConnect()
     }
 
@@ -335,8 +337,10 @@ internal class SessionConnector(
                 TermLog.i("mosh") { "mosh degraded-to-ssh ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
             }
-            // 3d. UDP 确认成功：mosh 连接成功——关闭 SSH（引导工具使命完成；
-            //     close 同步触发 onClosed，用 swallowClosed 短路避免误判断开）
+            // 3d. UDP 确认成功：mosh 连接成功——先门控 SSH 引导输出再关闭连接（PAM MOTD
+            //     等迟到字节会写进 mosh 会话的 UI buffer，盖在 herdr TUI 下方永久残留），
+            //     close 同步触发 onClosed，用 swallowClosed 短路避免误判断开
+            c.moshDisplayTakeover = true
             c.swallowClosed = true
             c.session = null
             try { s.close() } catch (_: Exception) { }

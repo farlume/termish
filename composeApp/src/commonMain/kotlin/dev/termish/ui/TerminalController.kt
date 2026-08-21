@@ -172,6 +172,17 @@ class TerminalController(
     internal var moshSession: MoshSession? = null
     /** Mosh 成功路径关闭 SSH 引导通道时短路 onClosed（避免误判为意外断线）。 */
     internal var swallowClosed = false
+
+    /** mosh 已接管显示：丢弃 SSH 引导通道的迟到输出。
+     *
+     * 云主机 PAM MOTD 脚本（landscape/ESM 检测）可能耗时 1-3s，其输出在 mosh
+     * UDP 确认之后才到达——此时 SSH 引导 shell 已使命完结，但 reader 协程仍会把
+     * 迟到字节经 enqueueOutput 写进与 mosh 会话共用的 UI buffer，盖在 herdr TUI
+     * 下方且无后续 mosh 帧覆盖（herdr 空闲不重绘），表现为「herdr 只画顶部一块、
+     * 下面残留 Ubuntu 升级文案」。置位后入队与消费两侧同时门控。 */
+    @Volatile
+    internal var moshDisplayTakeover = false
+
     internal val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
     /** destroy() 后置位：reader 协程停止向输出队列投递（队列已关闭，投递会抛）。 */
     @Volatile
@@ -227,6 +238,11 @@ class TerminalController(
         scope.launch(Dispatchers.Main) {
             while (true) {
                 val first = outputQueue.receiveCatching().getOrNull() ?: break
+                // mosh 已接管显示：丢弃引导通道迟到字节（含已在队列中的），
+                // 防止写在 mosh 状态之上永久残留
+                if (moshDisplayTakeover) {
+                    frame++; yield(); continue
+                }
                 // 单批字节解析异常（模拟器残留索引 bug 等）不能杀死消费循环——
                 // 否则终端静默冻屏且无任何诊断。记日志丢弃本批续跑：跳过一段输出
                 // 最多花屏，远好于会话永久失去响应
@@ -352,9 +368,10 @@ class TerminalController(
             withTimeoutOrNull(PROMPT_TIMEOUT_MS) { d.await() } ?: false
         }
 
-    /** reader 协程投递输出：队列满则挂起施加背压（TCP 窗口收敛），不丢字节。 */
+    /** reader 协程投递输出：队列满则挂起施加背压（TCP 窗口收敛），不丢字节。
+     * mosh 接管后丢弃（引导通道使命完结，迟到字节只会污染 mosh 会话画面）。 */
     internal suspend fun enqueueOutput(data: ByteArray) {
-        if (destroyed) return
+        if (destroyed || moshDisplayTakeover) return
         try {
             outputQueue.send(data)
         } catch (_: ClosedSendChannelException) {
