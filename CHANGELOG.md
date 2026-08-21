@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+## [1.1.12] - 2026-08-21
+
+### 修复
+
+- **herdr/TUI 模式滚动无惯性**：`awaitEachGesture` 在手势块返回后立即重入
+  （先调 block 再等 all-up），惯性取消语句放在 `awaitFirstDown` 之前，
+  松手启动的惯性滚轮在同一帧被掐死，表现为「拖多少是多少」；
+  移到等指之后，fling 恢复正常衰减滑行
+
 ## [1.1.11] - 2026-08-21
 
 ### 新增
@@ -263,7 +272,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.11...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.12...HEAD
+[1.1.12]: https://github.com/ttermish/termish/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/ttermish/termish/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/ttermish/termish/compare/v1.1.9...v1.1.10
 [1.1.9]: https://github.com/ttermish/termish/compare/v1.1.8...v1.1.9
