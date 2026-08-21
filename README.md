@@ -53,6 +53,12 @@ Get the latest build from the [Releases page](https://github.com/ttermish/termis
 Every release ships with SHA-256 checksums. Prefer a debug APK from CI
 artifacts? See [Install](#install).
 
+### Also on the web
+
+Prefer a browser? **Termish Web** is the same agent windows with nothing to
+install — global agent view, read-only session sharing, and a local host that
+needs no sshd. `npm install -g @termish/web` → [termish.dev/web](https://termish.dev/web)
+
 ## Table of Contents
 
 - [Download](#download)
@@ -74,18 +80,18 @@ Termish tells two stories that plain SSH clients can't.
 **The pocket front door to your agents.** herdr is the always-on room where your
 AI agents live on the server; Termish is the front door you carry in your
 pocket. Tap a host and you're in a real window into codex, claude, herdr, vim,
-htop — from anywhere, no web dashboard, no extra daemon on your phone.
+htop — from anywhere, no extra daemon on your phone.
 
 **Mosh-first: sessions that survive the network.** SSH guarantees
 compatibility, Mosh keeps the session alive through WiFi switches and roaming.
 Local echo prediction keeps typing snappy at high RTT; a lock screen or an app
 switch never costs you your session.
 
-Under the hood, that means a different path from webview terminals: a
-**pure-Kotlin terminal emulator** and a **Compose Multiplatform UI** shared
-across platforms, with the SSH transport swapped per platform against
-battle-tested libraries (sshj on JVM, libssh2 on iOS). All the effort goes
-where it matters — the terminal experience.
+Under the hood, the terminal engine is pure Kotlin and renders natively — no
+webview wrapper, no JS bridge: a **pure-Kotlin terminal emulator** and a
+**Compose Multiplatform UI** shared across platforms, with the SSH transport
+swapped per platform against battle-tested libraries (sshj on JVM, libssh2 on
+iOS). All the effort goes where it matters — the terminal experience.
 
 - **Local-first & private** — Termish connects straight to your servers: no
   account, no cloud sync, no telemetry, no third-party hop. Secrets live only
@@ -98,8 +104,9 @@ where it matters — the terminal experience.
 - **Touch-first TUI input** — fixed CTRL/ALT/ESC toolbar, tap/drag mapped to
   terminal mouse events, so agent TUIs (herdr/codex/claude/vim/htop) stay
   usable on a phone
-- **Native everywhere** — no webview, no Electron, one shared Kotlin codebase;
-  long-lived agent sessions stay cool and light on battery
+- **Native on every platform** — no webview on your phone, no Electron on your
+  desktop; one shared Kotlin codebase; long-lived agent sessions stay cool and
+  light on battery
 - **Terminal-first design** — the emulator, not the transport, is the core asset
 - **Built for real workflows** — tmux-friendly sessions, background keep-alive,
   leave-and-return session restore, zero Material-default looks
@@ -118,9 +125,9 @@ flowchart TB
 
 ### CJK input, done right
 
-Webview-based terminals (xterm.js inside Termius & friends) struggle with CJK IMEs on
-mobile: composing text gets swallowed or leaked byte-by-byte, and candidate bars often
-never appear. Termish's input pipeline is designed around composition from day one:
+On phones, browser-rendered terminals have a hard time with CJK IMEs: composing
+text gets swallowed or leaked byte-by-byte, and candidate bars often never
+appear. Termish's input pipeline is designed around composition from day one:
 
 - IME **composing text never reaches the wire** — only committed text is diffed
   (common-prefix) and sent; pinyin can't pollute the remote line
@@ -129,6 +136,9 @@ never appear. Termish's input pipeline is designed around composition from day o
   key events reach the remote even with an empty local buffer
 - Wide chars are 2-cell across buffer, renderer and selection — tails inherit the
   head's colors, so CJK on colored status bars (e.g. agent TUIs) renders cleanly
+
+Browser terminals excel at their own place — that's why Termish Web runs in the
+browser for desktop workflows while the phone stays native.
 
 ## Features
 
@@ -362,6 +372,12 @@ full guide. A few pointers:
 | [OpenSSL](https://www.openssl.org/) | [Apache-2.0](LICENSES/Apache-2.0.txt) | iOS crypto |
 | [Kotlin](https://kotlinlang.org/) / [Compose Multiplatform](https://www.jetbrains.com/compose-multiplatform/) | Apache-2.0 | language & UI |
 | [kotlinx-coroutines](https://github.com/Kotlin/kotlinx.coroutines) / [kotlinx-serialization](https://github.com/Kotlin/kotlinx.serialization) / [multiplatform-settings](https://github.com/russhwolf/multiplatform-settings) | Apache-2.0 | concurrency / JSON / storage |
+
+## See also
+
+- [Termish Web](https://termish.dev/web) — the same herdr windows in any
+  browser: global agent view, read-only sharing, a local host without sshd
+  (`npm install -g @termish/web`)
 
 ## License
 

@@ -52,6 +52,12 @@
 
 每个发布附 SHA-256 校验和。想要 CI 产物的 debug APK？见 [安装](#安装)。
 
+### 也可以用浏览器
+
+不想装 App？**Termish Web** 让同一批 agent 窗口免安装直达——全局 agent 视图、
+只读会话分享、无需 sshd 的本地主机。`npm install -g @termish/web` →
+[termish.dev/web](https://termish.dev/web)
+
 ## 目录
 
 - [下载](#下载)
@@ -72,14 +78,15 @@ Termish 讲的是普通 SSH 客户端讲不了的两个故事。
 
 **Agent 的口袋前门。** herdr 是 agent 在服务器上常驻的“房间”，Termish 是你随身带
 的前门——点一下主机，就进入 codex、claude、herdr、vim、htop 的真实窗口。从任何
-地方，不需要网页仪表盘，手机上也不用装额外常驻进程。
+地方——手机上不用装额外常驻进程。
 
 **Mosh 优先：会话在网络变化中存活。** SSH 保证兼容，Mosh 让会话在换网、漫游中
 不掉线。本地回显预测让高延迟下打字依然跟手；锁屏、切 App 都不会丢掉会话。
 
-底层上，这意味着与 webview 终端完全不同的路线：**纯 Kotlin 终端模拟器** + 全平台
-共享的 **Compose Multiplatform UI**，SSH 传输层按平台换用久经考验的库（JVM 用
-sshj，iOS 用 libssh2）。全部精力花在最值得的地方——终端体验。
+底层上，终端引擎是纯 Kotlin、原生渲染——没有 webview 壳、没有 JS 桥：
+**纯 Kotlin 终端模拟器** + 全平台共享的 **Compose Multiplatform UI**，SSH 传输
+层按平台换用久经考验的库（JVM 用 sshj，iOS 用 libssh2）。全部精力花在最值得
+的地方——终端体验。
 
 - **本地优先、隐私设计**——直连你的服务器：无需账号、无云同步、无遥测、
   不经过任何第三方。密钥只进系统保险库（Keystore / Keychain）；
@@ -88,8 +95,8 @@ sshj，iOS 用 libssh2）。全部精力花在最值得的地方——终端体�
 - **组合态输入法一等公民**——拼音、假名、谚文永不上线，候选栏完整可用（见下）
 - **触屏 TUI 输入**——固定 CTRL/ALT/ESC 工具行，tap/drag 映射为终端鼠标事件，
   agent TUI（herdr/codex/claude/vim/htop）在手机上顺手可用
-- **处处原生**——无 webview、无 Electron，一套共享 Kotlin 代码库；
-  长时 agent 会话不发热、不费电
+- **每个平台都原生**——手机上无 webview、桌面上无 Electron，一套共享 Kotlin
+  代码库；长时 agent 会话不发热、不费电
 - **终端优先**——模拟器而非传输层才是核心资产
 - **为真实工作流而生**——tmux 友好会话、后台保活、离开-回来会话恢复、
   告别 Material 默认观感
@@ -108,8 +115,8 @@ flowchart TB
 
 ### 中文输入，做到位
 
-Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法很吃力：组合文本被吞或
-逐字节泄漏，候选栏经常弹不出来。Termish 的输入管线从第一天起就围绕组合态设计：
+手机上的浏览器渲染终端处理中文输入法很吃力：组合文本被吞或逐字节泄漏，候选栏
+经常弹不出来。Termish 的输入管线从第一天起就围绕组合态设计：
 
 - 输入法**组合文本（拼音）永不上线**——只有提交后的文本才做公共前缀 diff 发送，
   拼音不可能污染远端行
@@ -118,6 +125,9 @@ Webview 终端（Termius 里的 xterm.js 们）在移动端处理中文输入法
   本地缓冲为空也删得掉远端内容
 - 宽字符在缓冲、渲染、选择全链路按 2 格处理——尾巴继承头部颜色，
   彩色状态条（如 agent TUI）上的中文渲染干净利落
+
+浏览器终端自有其用武之地——这正是 Termish Web 选择在浏览器里服务桌面工作流、
+而手机保持原生渲染的原因。
 
 ## 特性
 
@@ -328,6 +338,11 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 | [OpenSSL](https://www.openssl.org/) | [Apache-2.0](LICENSES/Apache-2.0.txt) | iOS 密码学 |
 | [Kotlin](https://kotlinlang.org/) / [Compose Multiplatform](https://www.jetbrains.com/compose-multiplatform/) | Apache-2.0 | 语言与 UI |
 | [kotlinx-coroutines](https://github.com/Kotlin/kotlinx.coroutines) / [kotlinx-serialization](https://github.com/Kotlin/kotlinx.serialization) / [multiplatform-settings](https://github.com/russhwolf/multiplatform-settings) | Apache-2.0 | 并发 / JSON / 存储 |
+
+## 相关项目
+
+- [Termish Web](https://termish.dev/web) — 同一批 herdr 窗口在任意浏览器里：
+  全局 agent 视图、只读分享、免 sshd 的本地主机（`npm install -g @termish/web`）
 
 ## 许可证
 
