@@ -365,8 +365,11 @@ fun TerminalView(
                 // 纵向滚轮手势的惯性：手指抬起后按速度持续发衰减滚轮，直到停下
                 var inertiaJob: Job? = null
                 awaitEachGesture {
-                    inertiaJob?.cancel()
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    // 手指落下即停惯性。必须在 awaitFirstDown 之后：awaitEachGesture
+                    // 在上个手势块返回后立即重入本块（循环里先调 block 再等 all-up），
+                    // 若先 cancel，刚启动的惯性会在同一帧被掐死（拖多少是多少）。
+                    inertiaJob?.cancel()
                     if (buffer.mouseTracking <= 0) return@awaitEachGesture
                     down.consume()
                     val downId = down.id
