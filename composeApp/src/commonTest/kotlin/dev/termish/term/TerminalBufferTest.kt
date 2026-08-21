@@ -286,6 +286,34 @@ class TerminalBufferTest {
     }
 
     @Test
+    fun wideCharExactlyFillingLineEndWrapsOnNextChar() {
+        // 宽字符头在 cols-2、尾在 cols-1 恰好填满行：光标必须钳在最后一格并挂起
+        // 延迟换行。修复前 cursorCol 落到 cols（越界），下一个字符访问 cells[cursorCol]
+        // 抛 ArrayIndexOutOfBounds —— 输出消费协程死亡，整段 CJK 长行后终端冻屏
+        val b = TerminalBuffer(4, 3)
+        "ab".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中：头在 2、尾在 3，恰好填满行
+        assertEquals(3, b.cursorCol)
+        b.putChar(0x6587) // 文：触发延迟换行，修复前此处崩溃
+        assertEquals(1, b.cursorRow)
+        assertEquals(2, b.cursorCol)
+        assertEquals(0x6587, b.lineAt(1).cells[0].codePoint)
+        assertTrue(b.lineAt(1).cells[1].isWideTail)
+    }
+
+    @Test
+    fun wideCharExactlyFillingLineEndNarrowFollows() {
+        // 同上一场帚但跟随窄字符：同样走延迟换行，不得越界
+        val b = TerminalBuffer(4, 3)
+        "ab".forEach { b.putChar(it.code) }
+        b.putChar(0x4E2D) // 中填满行
+        b.putChar('x'.code)
+        assertEquals(1, b.cursorRow)
+        assertEquals(1, b.cursorCol)
+        assertEquals('x'.code, b.lineAt(1).cells[0].codePoint)
+    }
+
+    @Test
     fun eraseScreenKeepsCursor() {
         val b = TerminalBuffer(10, 3)
         b.moveTo(1, 4)

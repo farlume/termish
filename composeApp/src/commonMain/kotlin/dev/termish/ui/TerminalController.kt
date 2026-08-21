@@ -227,11 +227,18 @@ class TerminalController(
         scope.launch(Dispatchers.Main) {
             while (true) {
                 val first = outputQueue.receiveCatching().getOrNull() ?: break
-                emulator.write(first)
-                val mark = TimeSource.Monotonic.markNow()
-                while (mark.elapsedNow().inWholeMilliseconds < OUTPUT_BATCH_BUDGET_MS) {
-                    val next = outputQueue.tryReceive().getOrNull() ?: break
-                    emulator.write(next)
+                // 单批字节解析异常（模拟器残留索引 bug 等）不能杀死消费循环——
+                // 否则终端静默冻屏且无任何诊断。记日志丢弃本批续跑：跳过一段输出
+                // 最多花屏，远好于会话永久失去响应
+                try {
+                    emulator.write(first)
+                    val mark = TimeSource.Monotonic.markNow()
+                    while (mark.elapsedNow().inWholeMilliseconds < OUTPUT_BATCH_BUDGET_MS) {
+                        val next = outputQueue.tryReceive().getOrNull() ?: break
+                        emulator.write(next)
+                    }
+                } catch (t: Throwable) {
+                    TermLog.e("term") { "emulator.write 异常，丢弃该批次续跑: ${t.stackTraceToString()}" }
                 }
                 frame++
                 yield()

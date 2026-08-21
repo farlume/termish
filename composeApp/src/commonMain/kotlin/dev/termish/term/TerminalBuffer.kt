@@ -286,6 +286,13 @@ class TerminalBuffer(
             // 尾巴盖掉了原宽字符的头：清掉它原来尾巴的标记，避免越雷悬空
             if (col + 2 < cols && line.cells[col + 2].isWideTail) line.cells[col + 2].isWideTail = false
             cursorCol = col + 2
+            // 宽字符恰好填满行（尾落最后一列）：与窄字符行末同一语义——光标钳在
+            // 最后一格并挂起延迟换行；否则 cursorCol == cols，下一个字符访问
+            // cells[cursorCol] 越界崩溃（输出协程死亡、终端冻屏）
+            if (cursorCol >= cols) {
+                cursorCol = cols - 1
+                pendingWrap = true
+            }
             line.touch()
             markChanged()
             return
