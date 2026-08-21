@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [1.1.13] - 2026-08-21
+
+### 修复
+
+- **iOS 中文全部渲染成 "kotlin.Unit"**：`codePointToString` 写作
+  `StringBuilder().appendCodePoint(cp).toString()`，而 Kotlin/Native 的
+  StringBuilder 无公开 `appendCodePoint` 成员，解析到本文件返回 `Unit` 的
+  私有扩展 → 每个宽字符渲染成字面串 `kotlin.Unit`；JVM 恰被
+  `java.lang.StringBuilder` 成员遮蔽而正确，掩盖了问题。改为手动码点
+  转代理对的纯表达式实现，平台语义统一
+- **CJK 长行输出冻屏**：宽字符头落 cols-2、尾落 cols-1 恰好填满行时
+  `cursorCol` 推到 cols（越界），下一个字符访问 `cells[cursorCol]` 抛
+  越界——输出消费协程死亡，终端静默冻屏且无任何诊断。钳到最后一格
+  并挂起延迟换行（与窄字符行末语义对齐）
+- **输出解析异常不再杀死会话**：消费循环的 `emulator.write` 包
+  try/catch，单批字节解析异常只丢当前批次（经 `TermLog` 落诊断日志），
+  会话保持响应——跳过一段输出最坏花屏，远好于永久失去响应
+
 ## [1.1.12] - 2026-08-21
 
 ### 修复
@@ -272,7 +290,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.12...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.13...HEAD
+[1.1.13]: https://github.com/ttermish/termish/compare/v1.1.12...v1.1.13
 [1.1.12]: https://github.com/ttermish/termish/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/ttermish/termish/compare/v1.1.10...v1.1.11
 [1.1.10]: https://github.com/ttermish/termish/compare/v1.1.9...v1.1.10
