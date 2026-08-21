@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.1.14] - 2026-08-21
+
+### 修复
+
+- **mosh 接管后 SSH 引导通道迟到输出污染画面**：云主机 PAM MOTD 脚本
+  （landscape/ESM 检测）可耗时 1-3s，其输出在 mosh UDP 确认后才到达，
+  迟到字节写进与 mosh 共用的 UI buffer，盖在 herdr TUI 下方且无后续
+  mosh 帧覆盖（herdr 空闲不重绘），表现为「herdr 下方残留 Ubuntu 升级
+  文案」。mosh UDP 首包确认时置 moshDisplayTakeover 门控，入队与消费
+  两侧同时丢弃；重连时复位保证降级路径 SSH 输出正常进显示
+
 ## [1.1.13] - 2026-08-21
 
 ### 修复
@@ -290,7 +301,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.13...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.1.14...HEAD
+[1.1.14]: https://github.com/ttermish/termish/compare/v1.1.13...v1.1.14
 [1.1.13]: https://github.com/ttermish/termish/compare/v1.1.12...v1.1.13
 [1.1.12]: https://github.com/ttermish/termish/compare/v1.1.11...v1.1.12
 [1.1.11]: https://github.com/ttermish/termish/compare/v1.1.10...v1.1.11
