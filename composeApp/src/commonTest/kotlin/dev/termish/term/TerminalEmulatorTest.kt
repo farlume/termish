@@ -425,6 +425,24 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    fun ctrlLClearScreenFlow() {
+        // 工具栏 ⌃L 端到端语义：发 0x0C → 远端 readline 回 clear 序列
+        //（xterm-256color/xterm: ESC[H ESC[2J；vt100/linux: ESC[H ESC[J）→
+        // 可视屏全清 + 光标归顶 + 滚动回看保留。锁定整条链路契约，防回归。
+        for (clearSeq in listOf("\u001b[H\u001b[2J", "\u001b[H\u001b[J")) {
+            val (e, b) = emu(10, 3)
+            e.writeText("1\n2\n3\n4\n5\n6") // 制造滚动回看（回看非空是真实 ^L 场景）
+            val before = b.scrollbackSize()
+            assertTrue(before > 0)
+            e.writeText(clearSeq)
+            assertEquals(0, b.cursorRow)
+            assertEquals(0, b.cursorCol)
+            for (r in 0 until 3) assertEquals("", b.lineText(r))
+            assertEquals(before, b.scrollbackSize()) // 清屏不丢回看
+        }
+    }
+
+    @Test
     fun csiZeroParamTreatedAsOne() {
         val (e, b) = emu(10, 5)
         e.writeText("\u001b[3;1H") // 光标到第 3 行
