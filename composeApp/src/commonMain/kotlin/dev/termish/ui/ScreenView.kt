@@ -127,43 +127,46 @@ fun ScreenContent(
             )
         }
 
-        // 服务缺失：引导一键安装（herdr 同款卡片：图标 + 说明 + 安装按钮 + 实时日志）
+        // 服务缺失：引导一键安装（含具体原因 + 安装日志）。此时 uiState.error
+        // 也被设置——不再渲染通用错误态，避免红色错误文案 + 「重新连接」按钮
+        // 与「安装」操作重复（v1.5.0 用户反馈）
         if (state.serviceMissing) {
             ScreenServiceGuide(
                 installing = state.installing,
                 installLog = state.installLog,
+                ffmpegMissing = state.ffmpegMissing,
                 onInstall = onInstallService,
                 modifier = Modifier.align(Alignment.Center),
             )
-        }
-
-        // 错误态：居中提示 + 重连/返回
-        state.error?.let { msg ->
-            Row(
-                Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        msg,
-                        color = StatusColors.Error,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    if (state.ffmpegMissing) {
+        } else {
+            // 错误态：居中提示 + 重连/返回
+            state.error?.let { msg ->
+                Row(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            s.screen.ffmpegHint,
-                            color = Color.White.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.bodySmall,
+                            msg,
+                            color = StatusColors.Error,
+                            style = MaterialTheme.typography.bodyMedium,
                         )
-                    }
-                    TextButton(onClick = onReconnect) {
-                        Text(s.screen.reconnect, color = Color.White)
-                    }
-                    TextButton(onClick = onBack) {
-                        Text(s.terminalCancel, color = Color.White.copy(alpha = 0.6f))
+                        if (state.ffmpegMissing) {
+                            Text(
+                                s.screen.ffmpegHint,
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TextButton(onClick = onReconnect) {
+                            Text(s.screen.reconnect, color = Color.White)
+                        }
+                        TextButton(onClick = onBack) {
+                            Text(s.terminalCancel, color = Color.White.copy(alpha = 0.6f))
+                        }
                     }
                 }
             }
@@ -203,11 +206,14 @@ fun ScreenContent(
     }
 }
 
-/** 推流服务安装引导卡片：远端服务缺失时引导一键安装 + 实时安装日志（herdr 同款）。 */
+/** 推流服务安装引导卡片：服务缺失时按具体原因（ffmpeg 缺失 / 服务未运行）引导一键安装，
+ * 安装中实时日志；失败后保留日志尾巴可重试。 */
 @Composable
 private fun ScreenServiceGuide(
     installing: Boolean,
     installLog: String,
+    /** 缺失原因：true = 远端缺 ffmpeg；false = 服务未运行（端口无监听）。 */
+    ffmpegMissing: Boolean,
     onInstall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -215,24 +221,34 @@ private fun ScreenServiceGuide(
     Box(
         modifier
             .fillMaxSize()
-            .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 24.dp),
+            .padding(24.dp),
         contentAlignment = Alignment.Center,
     ) {
         Card(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier.fillMaxWidth(),
         ) {
             Column(
                 Modifier.fillMaxWidth().padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Icon(
-                    Icons.Filled.Monitor,
-                    contentDescription = null,
-                    modifier = Modifier.size(44.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                // 图标：主题色浅底圆角容器，视觉更精致
+                Box(
+                    Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Filled.Monitor,
+                        contentDescription = null,
+                        modifier = Modifier.size(28.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Text(
                     s.screen.serviceTitle,
                     style = MaterialTheme.typography.titleMedium,
@@ -240,8 +256,9 @@ private fun ScreenServiceGuide(
                     color = MaterialTheme.colorScheme.onSurface,
                     textAlign = TextAlign.Center,
                 )
+                // 具体原因 + 动作说明（替代通用长文案，信息更准）
                 Text(
-                    s.screen.serviceHint,
+                    if (ffmpegMissing) s.screen.serviceHintFfmpeg else s.screen.serviceHintNotRunning,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -269,14 +286,39 @@ private fun ScreenServiceGuide(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(MaterialTheme.colorScheme.surfaceVariant)
                                 .padding(10.dp),
                         )
                     }
                 } else {
-                    Button(onClick = onInstall) {
+                    Button(
+                        onClick = onInstall,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
                         Text(s.screen.installService)
+                    }
+                    // 上次安装失败：错误提示 + 日志尾巴（可重试，按钮仍在）
+                    if (installLog.isNotBlank()) {
+                        Text(
+                            s.screen.installFailed,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                        )
+                        Text(
+                            installLog.lines().takeLast(6).joinToString("\n"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = monospaceFontFamily(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(10.dp),
+                        )
                     }
                 }
             }

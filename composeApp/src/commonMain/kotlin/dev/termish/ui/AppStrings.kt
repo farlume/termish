@@ -394,12 +394,16 @@ data class ScreenStrings(
     val ffmpegHint: String,
     /** 推流服务安装引导卡片标题。 */
     val serviceTitle: String,
-    /** 推流服务安装引导卡片说明。 */
-    val serviceHint: String,
+    /** 服务未运行（端口无监听）时的引导说明。 */
+    val serviceHintNotRunning: String,
+    /** 远端缺 ffmpeg 时的引导说明（SSH PATH 受限检测不到 brew 安装）。 */
+    val serviceHintFfmpeg: String,
     /** 安装服务按钮。 */
     val installService: String,
     /** 安装中。 */
     val installingService: String,
+    /** 安装失败提示（日志尾巴上方）。 */
+    val installFailed: String,
     /** 全屏返回按钮：就地全屏（小窗展开）时收起回终端。 */
     val collapse: String,
     /** 全屏返回按钮：屏幕 tab 模式返回上一 tab。 */
@@ -764,9 +768,11 @@ private val EnStrings = AppStrings(
         reconnect = "Reconnect",
         ffmpegHint = "Remote needs ffmpeg — install it on the Mac (e.g. `brew install ffmpeg` or download the static build), then reconnect.",
         serviceTitle = "Install screen streaming service",
-        serviceHint = "macOS blocks screen capture from SSH sessions, so Termish runs a capture daemon on your Mac (GUI session). Tap install — takes about a minute, ffmpeg required.",
+        serviceHintNotRunning = "The streaming service isn't running on your Mac (after reboot or logout). Tap install to relaunch it — your existing setup is kept.",
+        serviceHintFfmpeg = "Termish can't find ffmpeg on your Mac (SSH sessions can't see Homebrew paths). Tap install — it fetches a static ffmpeg build, about a minute.",
         installService = "Install service",
         installingService = "Installing…",
+        installFailed = "Installation failed — check the log below and retry.",
         collapse = "Collapse",
         back = "Back",
     ),
@@ -1110,9 +1116,11 @@ private val ZhStrings = AppStrings(
         reconnect = "重新连接",
         ffmpegHint = "远端需要 ffmpeg——在 Mac 上安装（如 `brew install ffmpeg` 或下载静态版）后重新连接。",
         serviceTitle = "安装屏幕推流服务",
-        serviceHint = "macOS 禁止 SSH 会话直接录屏，Termish 会在你的 Mac 上安装一个常驻推流服务（跑在登录会话里）。点安装即可，约 1 分钟（需已装 ffmpeg）。",
+        serviceHintNotRunning = "Mac 上的推流服务未在运行（可能重启后还没登录）。点安装重新拉起，已有配置会保留。",
+        serviceHintFfmpeg = "Mac 上检测不到 ffmpeg（SSH 会话看不到 Homebrew 路径）。点安装自动补装静态版，约 1 分钟。",
         installService = "安装服务",
         installingService = "正在安装…",
+        installFailed = "安装失败——查看下方日志后重试。",
         collapse = "收起",
         back = "返回",
     ),

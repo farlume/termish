@@ -110,6 +110,9 @@ class ScreenSession(
                         if (sb.length > 8192) sb.deleteRange(0, sb.length - 8192)
                         if (sb.contains("FFMPEG_MISSING")) {
                             uiState.ffmpegMissing = true
+                            // 与 SCREEN_SERVICE_MISSING 一致进引导卡片：ffmpeg 缺失
+                            // 同样可一键安装（安装脚本会自动补装 ffmpeg）
+                            uiState.serviceMissing = true
                             uiState.error = "远端未安装 ffmpeg"
                             running = false
                             break
@@ -247,8 +250,13 @@ class ScreenSession(
          */
         val READ_STREAM_SCRIPT = """
             PORT=$SCREEN_PORT
-            FF=${'$'}(command -v ffmpeg 2>/dev/null || echo "${'$'}HOME/bin/ffmpeg")
-            if [ ! -x "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
+            # ffmpeg 查找：SSH 非交互会话 PATH 受限（无 brew 目录），command -v 常漏掉
+            # brew 安装的 ffmpeg → 误报 FFMPEG_MISSING（v1.5.0 用户反馈：装过还提示安装）
+            FF=""
+            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+              if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
+            done
+            if [ -z "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
             if ! lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1; then
               echo "SCREEN_SERVICE_MISSING" >&2; exit 1
             fi
@@ -268,12 +276,20 @@ class ScreenSession(
             set -e
             PORT=$SCREEN_PORT
             PLIST="${'$'}HOME/Library/LaunchAgents/dev.termish.screen.plist"
-            # ---- ffmpeg：缺失时 brew 或静态包安装 ----
-            FF=${'$'}(command -v ffmpeg 2>/dev/null || echo "${'$'}HOME/bin/ffmpeg")
-            if [ ! -x "${'$'}FF" ]; then
+            # ---- ffmpeg：缺失时 brew 或静态包安装（查找路径与读流脚本一致，
+            # 避免装完仍被非交互 PATH 误报缺失）----
+            FF=""
+            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+              if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
+            done
+            if [ -z "${'$'}FF" ]; then
               if command -v brew >/dev/null 2>&1; then
                 echo "==> 正在通过 Homebrew 安装 ffmpeg（约几分钟）"
                 brew install ffmpeg
+                # brew 装完重新定位（PATH 受限会话里 command -v 仍可能失败，兜底 brew 前缀）
+                FF="${'$'}(command -v ffmpeg 2>/dev/null)"
+                [ -z "${'$'}FF" ] && FF="/opt/homebrew/bin/ffmpeg"
+                [ -x "${'$'}FF" ] || FF="/usr/local/bin/ffmpeg"
               else
                 echo "==> 正在下载 ffmpeg 静态版到 ~/bin"
                 mkdir -p "${'$'}HOME/bin"
