@@ -25,6 +25,7 @@
 <p>
   <img src="docs/screenshots/mosh-install-zh.png" width="230" alt="mosh 引导安装" />
   <img src="docs/screenshots/herdr-install-zh.png" width="230" alt="herdr 引导安装" />
+  <img src="docs/screenshots/hosts-edit-zh.png" width="230" alt="添加主机" />
 </p>
 
 <p>

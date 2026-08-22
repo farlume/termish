@@ -25,6 +25,7 @@
 <p>
   <img src="docs/screenshots/mosh-install-en.png" width="230" alt="mosh guided install" />
   <img src="docs/screenshots/herdr-install-en.png" width="230" alt="herdr guided install" />
+  <img src="docs/screenshots/hosts-edit-en.png" width="230" alt="Add host" />
 </p>
 
 <p>
