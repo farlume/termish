@@ -11,6 +11,10 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -67,12 +71,43 @@ private val WAVE_PHASES = FloatArray(WAVE_BARS) { i -> i * 0.55f }
 private val WAVE_FREQS = FloatArray(WAVE_BARS) { i -> 2.2f + (i % 3) * 0.45f }
 
 /**
- * 屏幕正中的语音开始按钮：大号品牌绿圆钮 + 麦克风（点一下直接开始，
- * 免去右下角菜单两步）。点击后原地切换为录音态组件（红按钮 + 浮层）。
+ * 重置小角标：语音按钮被拖动后出现在右上角，点击把按钮重置回屏幕水平中央。
+ * 小巧（26dp）、不喧宾夺主；未拖动时不显示。
  */
+@Composable
+fun VoiceResetBadge(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .size(26.dp)
+            .shadow(4.dp, CircleShape)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surface)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Refresh,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(15.dp),
+        )
+    }
+}
+
+/**
+ * 屏幕正中（水平）的语音开始按钮：大号品牌绿圆钮 + 麦克风（点一下直接开始，
+ * 免去右下角菜单两步）。外层负责拖动，**长按 = 重置回默认位置**。
+ * 点击后原地切换为录音态组件（红按钮 + 浮层）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun VoiceStartButton(
     onClick: () -> Unit,
+    onLongClick: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -81,7 +116,7 @@ fun VoiceStartButton(
             .shadow(10.dp, CircleShape)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primary)
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

@@ -12,6 +12,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.IconButton
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
@@ -21,6 +26,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -158,6 +164,8 @@ fun AppRoot(repository: HostRepository) {
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
     var pendingNavigate by remember { mutableStateOf<TerminalController?>(null) }
+    /** 终端 + 菜单「收藏夹」对话框：host + 收藏路径列表（null = 关闭）。 */
+    var favoritesDialog by remember { mutableStateOf<Pair<Host, List<String>>?>(null) }
     /** SFTP：选主机覆盖层 / 当前会话 / 认证与主机密钥弹窗。 */
     var sftpPickerVisible by remember { mutableStateOf(false) }
     var sftpAuth by remember { mutableStateOf<AuthPromptRequest?>(null) }
@@ -241,6 +249,8 @@ fun AppRoot(repository: HostRepository) {
             try {
                 establishSftp(host) { session, token ->
                     val entry = sessionManager.addSftp(host, session, token)
+                    // 持久化收藏恢复到会话（终端 + 菜单收藏夹读取同一份）
+                    repository.loadFavorites(host.id).forEach { entry.uiState.favorites.add(it) }
                     if (!initialPath.isNullOrBlank()) {
                         entry.uiState.path = initialPath
                     }
@@ -633,6 +643,21 @@ fun AppRoot(repository: HostRepository) {
                             // 文件管理：直接对当前主机建 SFTP 会话并切到 SFTP tab
                             //（复用 connectSftp 全流程：认证弹窗 / 主机密钥 / 断线重连）
                             onOpenSftpForHost = connectSftp,
+                            // 收藏夹：读取持久化收藏，弹列表跳转（无收藏则提示）
+                            onOpenFavorites = { host ->
+                                val favs = repository.loadFavorites(host.id)
+                                if (favs.isEmpty()) {
+                                    scope.launch { snackbarHostState.showSnackbar(appStrings.sftpExt.favoritesEmpty) }
+                                } else {
+                                    favoritesDialog = host to favs
+                                }
+                            },
+                            // 收藏变更：SFTP 页增删收藏即落盘
+                            onFavoritesChanged = { host, favs ->
+                                repository.saveFavorites(host.id, favs)
+                            },
+                            // 浏览路径即时持久化：导航即保存（退后台保存为兜底）
+                            onSftpPathChanged = { _, _ -> sessionManager.persistNow() },
                             // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
                             onReconnectSftp = { tab ->
                                 // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，
@@ -667,6 +692,60 @@ fun AppRoot(repository: HostRepository) {
                     hosts = hosts,
                     onDismiss = { sftpPickerVisible = false },
                     onSelect = { host -> connectSftp(host, null) },
+                )
+            }
+
+            // 收藏夹对话框（终端 + 菜单入口）：列收藏路径，点击直达
+            favoritesDialog?.let { (host, favs) ->
+                AlertDialog(
+                    onDismissRequest = { favoritesDialog = null },
+                    title = { Text(appStrings.sftpExt.favoritesTitle) },
+                    text = {
+                        Column {
+                            favs.forEach { fav ->
+                                Row(
+                                    Modifier.fillMaxWidth().clickable {
+                                        favoritesDialog = null
+                                        connectSftp(host, fav)
+                                    }.padding(vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Text(
+                                        fav,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val remaining = favs - fav
+                                            favoritesDialog = host to remaining
+                                            repository.saveFavorites(host.id, remaining)
+                                        },
+                                        modifier = Modifier.size(28.dp),
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Close,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(14.dp),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { favoritesDialog = null }) { Text(appStrings.terminalCancel) }
+                    },
                 )
             }
 

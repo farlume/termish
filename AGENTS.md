@@ -85,7 +85,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - **release 不是每次改动的必做项**——R8 混淆/资源收缩/签名问题在里程碑验证时暴露即可，日常被 debug 循环拖慢
 - **有模拟器时模拟器安装验证优先**（`make run`）；真机按上面 ④ 的点抽查
-- **提交时机由用户验收驱动**：本地改动不着急 commit，攒批等用户确认后再提交；但每个功能块完成时建议 `git stash` 或 WIP commit 防丢失（当天改动当天有备份）
+- **提交与发版必须等用户明确确认**：本地改动攒批即可，**不得擅自** `git commit` / `make bump` / 打 tag / `git push`（历史教训：用户反馈 bug 后直接推送 GitHub 是不被接受的）。完成一个功能块后：本地验证（①/②）+ 汇报结果，**等用户说「提交/发版」再动 git**；中途防丢失用 `git stash` 或 WIP commit（WIP 不 push）
 - 改动涉及 `term/` 或 `mosh/` 时先跑 ① 再上模拟器（秒级反馈，别浪费模拟器循环）
 
 ## Testing discipline
@@ -144,6 +144,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 ## Commits
 
+- **git 操作全部等用户明确确认**：`commit` / `make bump` / `tag` / `push` 一律在用户说「提交/发版」之后执行；修复反馈、功能迭代完成后先本地验证并汇报，不得擅自推送 GitHub
 - Commit messages are written in **Chinese**, short summary + body explaining
   **why** (see `git log` for the house style)
 - Commit message 含 `$` 等 shell 敏感字符时用 `-F <file>` 方式提交，

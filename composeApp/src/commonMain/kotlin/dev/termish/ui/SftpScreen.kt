@@ -298,6 +298,10 @@ fun SftpContent(
     onBack: () -> Unit,
     /** 断线重连（由 AppRoot 重建会话并替换当前 tab）。 */
     onReconnect: () -> Unit,
+    /** 收藏变更持久化回调（AppRoot 落盘；null = 不持久化）。 */
+    onFavoritesChanged: (List<String>) -> Unit = {},
+    /** 浏览路径变更回调（AppRoot 即时持久化，崩溃/强杀不丢）。 */
+    onPathChanged: (String) -> Unit = {},
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -364,6 +368,7 @@ fun SftpContent(
         if (newPath == path) return
         state.history.add(path)
         path = newPath
+        onPathChanged(newPath)
     }
 
     // 返回键：搜索中先退出搜索；有浏览历史则弹栈回退；否则返回上一页
@@ -724,9 +729,10 @@ fun SftpContent(
     /** 预览面板 ⋮ 操作菜单开关。 */
     var previewMenu by remember { mutableStateOf(false) }
 
-    /** 收藏/取消收藏当前目录（header 星标）。 */
+    /** 收藏/取消收藏当前目录（header 星标）；变更持久化。 */
     fun toggleFavorite(p: String) {
         if (p in state.favorites) state.favorites.remove(p) else state.favorites.add(p)
+        onFavoritesChanged(state.favorites.toList())
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(Modifier.fillMaxSize()) {
@@ -861,6 +867,15 @@ fun SftpContent(
                             }
                         }
                     }
+                }
+                // 收藏当前目录（星标）：收藏夹列表在三点菜单「收藏夹」里查看/跳转
+                IconButton(onClick = { toggleFavorite(path) }) {
+                    Icon(
+                        if (path in state.favorites) Icons.Filled.Star else Icons.Filled.StarBorder,
+                        contentDescription = if (path in state.favorites) s.sftpExt.favoriteRemove else s.sftpExt.favoriteAdd,
+                        tint = if (path in state.favorites) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface,
+                    )
                 }
                 TextButton(onClick = { pickFile() }) {
                     Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
@@ -1163,7 +1178,7 @@ fun SftpContent(
         if (favoritesOpen) {
             AlertDialog(
                 onDismissRequest = { favoritesOpen = false },
-                title = { Text(s.sftpExt.favoriteAdd) },
+                title = { Text(s.sftpExt.favoritesTitle) },
                 text = {
                     if (state.favorites.isEmpty()) {
                         Text(
@@ -1195,7 +1210,10 @@ fun SftpContent(
                                         overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
                                     )
-                                    IconButton(onClick = { state.favorites.remove(fav) }, modifier = Modifier.size(28.dp)) {
+                                    IconButton(onClick = {
+                                        state.favorites.remove(fav)
+                                        onFavoritesChanged(state.favorites.toList())
+                                    }, modifier = Modifier.size(28.dp)) {
                                         Icon(
                                             Icons.Filled.Close,
                                             contentDescription = null,
@@ -1221,6 +1239,9 @@ fun SftpContent(
             val err = previewError // delegated property 不能 smart cast，取局部值
             // 图片预览：true=适配屏幕；false=原始像素（可滚动）
             var imageFit by remember(entry.name) { mutableStateOf(true) }
+            // Markdown：渲染/源码 切换（默认渲染模式）；仅 md/markdown 文件显示
+            val isMarkdown = extensionOf(entry.name) in setOf("md", "markdown")
+            var mdRender by remember(entry.name) { mutableStateOf(true) }
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
                 Column(Modifier.fillMaxSize()) {
                     Row(
@@ -1273,6 +1294,38 @@ fun SftpContent(
                                     contentDescription = s.sftpPreviewZoom,
                                     tint = MaterialTheme.colorScheme.onSurface,
                                 )
+                            }
+                        }
+                        // Markdown 渲染 ⇄ 源码 切换
+                        if (isMarkdown && previewText != null) {
+                            Row(
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(2.dp),
+                            ) {
+                                TextButton(
+                                    onClick = { mdRender = true },
+                                    modifier = Modifier.height(30.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                ) {
+                                    Text(
+                                        "预览",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (mdRender) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                TextButton(
+                                    onClick = { mdRender = false },
+                                    modifier = Modifier.height(30.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                ) {
+                                    Text(
+                                        "源码",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (!mdRender) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                         // 更多操作：下载 / 重命名 / 删除 / 复制路径（文件操作入口，
@@ -1375,18 +1428,41 @@ fun SftpContent(
                                         .padding(horizontal = 12.dp, vertical = 6.dp),
                                 )
                             }
-                            LazyColumn(
-                                Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            ) {
-                                items(lines.size) { i ->
+                            val srcText = previewText.orEmpty()
+                            if (isMarkdown && mdRender) {
+                                // 渲染模式：Markdown 效果展示（可复制），纵向滚动
+                                Column(
+                                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                                ) {
                                     SelectionContainer {
                                         Text(
-                                            lines[i],
-                                            style = MaterialTheme.typography.bodySmall,
-                                            fontFamily = monospaceFontFamily(),
+                                            renderMarkdown(
+                                                srcText,
+                                                baseFontSize = 14.sp,
+                                                codeBg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                                linkColor = MaterialTheme.colorScheme.primary,
+                                            ),
+                                            style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurface,
+                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                                         )
+                                    }
+                                }
+                            } else {
+                                // 源码模式：逐行等宽（Markdown 与其他文本文件一致）
+                                LazyColumn(
+                                    Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                ) {
+                                    items(lines.size) { i ->
+                                        SelectionContainer {
+                                            Text(
+                                                lines[i],
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontFamily = monospaceFontFamily(),
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1558,7 +1634,7 @@ private fun SftpMoreMenu(
             )
             HorizontalDivider()
             DropdownMenuItem(
-                text = { Text(s.sftpExt.favoriteAdd) },
+                text = { Text(s.sftpExt.favoritesTitle) },
                 leadingIcon = { Icon(Icons.Filled.Star, null) },
                 onClick = {
                     open = false

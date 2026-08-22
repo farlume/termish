@@ -349,6 +349,8 @@ data class VoiceStrings(
     val recordingSeconds: (Int) -> String,
     /** 功能菜单入口标签。 */
     val menuLabel: String,
+    /** 长按语音按钮重置回中央的提示。 */
+    val resetDone: String,
     /** 服务列表空态。 */
     val providerEmpty: String,
     /** 添加按钮。 */
@@ -433,6 +435,8 @@ data class SftpExtStrings(
     val favoriteAdd: String,
     /** 取消收藏当前目录（MoreMenu 项）。 */
     val favoriteRemove: String,
+    /** 收藏夹（列表入口/对话框标题）。 */
+    val favoritesTitle: String,
     /** 收藏列表空态。 */
     val favoritesEmpty: String,
     /** 刷新。 */
@@ -710,6 +714,7 @@ private val EnStrings = AppStrings(
         holdToTalk = "Spoke too briefly — tap the mic key and talk",
         listening = "Listening…",
         menuLabel = "Voice input",
+        resetDone = "Voice button reset to center",
         providerEmpty = "No speech recognition service configured yet",
         providerAdd = "Add recognition service",
         providerEdit = "Edit",
@@ -753,6 +758,7 @@ private val EnStrings = AppStrings(
         renameTitle = "Rename",
         favoriteAdd = "Favorite this folder",
         favoriteRemove = "Remove from favorites",
+        favoritesTitle = "Favorites",
         favoritesEmpty = "No favorites yet",
         refresh = "Refresh",
     ),
@@ -1042,6 +1048,7 @@ private val ZhStrings = AppStrings(
         holdToTalk = "录音时间太短，请点开麦克风再说话",
         listening = "正在聆听…",
         menuLabel = "语音输入",
+        resetDone = "语音按钮已重置到屏幕中央",
         providerEmpty = "还没有配置语音识别服务",
         providerAdd = "添加识别服务",
         providerEdit = "编辑",
@@ -1085,6 +1092,7 @@ private val ZhStrings = AppStrings(
         renameTitle = "重命名",
         favoriteAdd = "收藏当前目录",
         favoriteRemove = "取消收藏当前目录",
+        favoritesTitle = "收藏夹",
         favoritesEmpty = "还没有收藏",
         refresh = "刷新",
     ),

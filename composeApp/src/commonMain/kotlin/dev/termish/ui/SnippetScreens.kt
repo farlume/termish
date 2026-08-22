@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -571,6 +572,8 @@ fun SnippetInsertSheet(
     var filterTagId by remember { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Snippet?>(null) }
     var pendingDelete by remember { mutableStateOf<Snippet?>(null) }
+    /** 空态「新建片段」对话框开关。 */
+    var adding by remember { mutableStateOf(false) }
 
     val q = query.trim()
     val filtered = snippets
@@ -649,14 +652,28 @@ fun SnippetInsertSheet(
             }
             if (snippets.isEmpty()) {
                 Box(
-                    Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                    Modifier.fillMaxWidth().padding(vertical = 32.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        s.snippetsEmpty,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = theme.foreground().copy(alpha = 0.4f),
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            s.snippetsEmpty,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = theme.foreground().copy(alpha = 0.4f),
+                        )
+                        Text(
+                            s.snippetsEmptyHint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = theme.foreground().copy(alpha = 0.35f),
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        // 空态新增入口：没有命令时也能直接建（不用绕到设置页）
+                        TextButton(onClick = { adding = true }) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.size(4.dp))
+                            Text(s.snippetsAdd)
+                        }
+                    }
                 }
             } else if (filtered.isEmpty()) {
                 Box(
@@ -751,6 +768,9 @@ fun SnippetInsertSheet(
         pendingDelete?.let { snippet ->
             AlertDialog(
                 onDismissRequest = { pendingDelete = null },
+                containerColor = theme.background(),
+                titleContentColor = theme.foreground(),
+                textContentColor = theme.foreground(),
                 title = { Text(s.snippetDeleteConfirm) },
                 confirmButton = {
                     TextButton(onClick = {
@@ -760,7 +780,74 @@ fun SnippetInsertSheet(
                     }) { Text(s.snippetDelete, color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingDelete = null }) { Text(s.terminalCancel) }
+                    TextButton(onClick = { pendingDelete = null }) { Text(s.terminalCancel, color = theme.foreground()) }
+                },
+            )
+        }
+
+        // 空态新增：名称 + 内容（轻量表单，保存后列表即时刷新可直接点用）
+        if (adding) {
+            var newName by remember { mutableStateOf("") }
+            var newContent by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { adding = false },
+                containerColor = theme.background(),
+                titleContentColor = theme.foreground(),
+                textContentColor = theme.foreground(),
+                title = { Text(s.snippetsAdd) },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = newName,
+                            onValueChange = { newName = it },
+                            label = { Text(s.snippetName) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = theme.foreground(),
+                                unfocusedTextColor = theme.foreground(),
+                                focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                                unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                                cursorColor = theme.cursor(),
+                            ),
+                        )
+                        OutlinedTextField(
+                            value = newContent,
+                            onValueChange = { newContent = it },
+                            label = { Text(s.snippetContent) },
+                            minLines = 3,
+                            textStyle = LocalTextStyle.current.copy(fontFamily = monospaceFontFamily()),
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = theme.foreground(),
+                                unfocusedTextColor = theme.foreground(),
+                                focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                                unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                                cursorColor = theme.cursor(),
+                            ),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        enabled = newName.isNotBlank() && newContent.isNotBlank(),
+                        onClick = {
+                            repository.upsertSnippet(
+                                Snippet(
+                                    id = newId(),
+                                    name = newName.trim(),
+                                    content = newContent.trim(),
+                                    tagIds = emptyList(),
+                                    updatedAt = Clock.System.now().toEpochMilliseconds(),
+                                ),
+                            )
+                            adding = false
+                            snippets = repository.listSnippets()
+                        },
+                    ) { Text(s.editSave, color = theme.cursor()) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { adding = false }) { Text(s.terminalCancel, color = theme.foreground()) }
                 },
             )
         }

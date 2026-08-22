@@ -145,6 +145,21 @@ class HostRepository(
         settings.putString(settingsKey, json.encodeToString(s))
     }
 
+    // ---------- 目录收藏（SFTP 文件管理器，按主机持久化） ----------
+
+    fun loadFavorites(hostId: String): List<String> {
+        val raw = settings.getStringOrNull("termish.favorites.$hostId") ?: return emptyList()
+        return try {
+            json.decodeFromString<List<String>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveFavorites(hostId: String, paths: List<String>) {
+        settings.putString("termish.favorites.$hostId", json.encodeToString(paths))
+    }
+
     // ---------- 最近会话（连接页列表持久化） ----------
 
     private val recentSessionsKey = "termish.recent_sessions.v1"

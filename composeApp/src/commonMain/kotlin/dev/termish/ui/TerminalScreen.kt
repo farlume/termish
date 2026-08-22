@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
@@ -168,6 +169,12 @@ fun TerminalScreen(
     onOpenSftpPicker: () -> Unit,
     /** 文件管理（菜单项）：直接打开当前主机的 SFTP 文件管理视图，定位到给定目录。 */
     onOpenSftpForHost: (Host, String?) -> Unit = { _, _ -> },
+    /** 收藏夹（菜单项）：列出当前主机收藏目录并跳转。 */
+    onOpenFavorites: (Host) -> Unit = {},
+    /** 收藏变更持久化（SFTP 页回调，AppRoot 落盘）。 */
+    onFavoritesChanged: (Host, List<String>) -> Unit = { _, _ -> },
+    /** SFTP 浏览路径即时持久化（崩溃/强杀不丢最后目录）。 */
+    onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
     /** SFTP 断线重连：重建会话后替换 tab 中的 session（由 AppRoot 实现）。 */
     onReconnectSftp: (SessionTab.Sftp) -> Unit = {},
 ) {
@@ -198,6 +205,9 @@ fun TerminalScreen(
                 repository = repository,
                 onBack = onBack,
                 onOpenSftpForHost = onOpenSftpForHost,
+                onOpenFavorites = onOpenFavorites,
+                onFavoritesChanged = onFavoritesChanged,
+                onSftpPathChanged = onSftpPathChanged,
             )
             is SessionTab.Sftp -> SftpContent(
                 host = tab.host,
@@ -205,6 +215,8 @@ fun TerminalScreen(
                 state = tab.uiState,
                 onBack = onBack,
                 onReconnect = { onReconnectSftp(tab) },
+                onFavoritesChanged = { favs -> onFavoritesChanged(tab.host, favs) },
+                onPathChanged = { p -> onSftpPathChanged(tab.host, p) },
             )
         }
     }
@@ -247,6 +259,12 @@ private fun TerminalBody(
     onBack: () -> Unit,
     /** 文件管理（菜单项）：打开当前主机的 SFTP 文件管理视图，定位到给定目录。 */
     onOpenSftpForHost: (Host, String?) -> Unit = { _, _ -> },
+    /** 收藏夹（菜单项）：列出当前主机收藏目录并跳转。 */
+    onOpenFavorites: (Host) -> Unit = {},
+    /** 收藏变更持久化（SFTP 页回调，AppRoot 落盘）。 */
+    onFavoritesChanged: (Host, List<String>) -> Unit = { _, _ -> },
+    /** SFTP 浏览路径即时持久化（崩溃/强杀不丢最后目录）。 */
+    onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
 ) {
     val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
@@ -300,7 +318,8 @@ private fun TerminalBody(
     /** 画布区域尺寸（录音组拖动钳制边界）。 */
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     /** 录音组拖拽偏移（水平居中初始位 + 偏移；会话内保持）。 */
-    var recordDrag by remember { mutableStateOf(Offset.Zero) }
+    // 语音按钮拖动偏移（待机/录音共用：位置连续；长按待机按钮可重置回中央）
+    var voiceDrag by remember { mutableStateOf(Offset.Zero) }
     val recorder = remember { MicrophoneRecorder() }
     /** 语音输入最长时长（防呆，到点自动发送）。 */
     val voiceMaxMs = 60_000L
@@ -438,7 +457,7 @@ private fun TerminalBody(
         }
     }
 
-    // 对讲机模式：静音自动结束（免持）。连续静音 ~2.4s 且已录 >800ms 时
+    // 对讲机模式：静音自动结束（免持）。连续静音 ~2.0s 且已录 >800ms 时
     // 自动结束发送——边说边看屏幕不用再点结束；阈值放宽容忍轻声说话
     //（RMS ~650 对应音量 0.02，正常说话 0.05-0.3）与句中 1-2s 停顿。
     LaunchedEffect(voiceState) {
@@ -450,7 +469,7 @@ private fun TerminalBody(
                 if (elapsed > 800L) {
                     if (voiceLevel < 0.02f) {
                         silentTicks++
-                        if (silentTicks >= 12) {
+                        if (silentTicks >= 10) {
                             endVoice()
                             break
                         }
@@ -765,6 +784,15 @@ private fun TerminalBody(
                             },
                         ),
                         CanvasMenuAction(
+                            id = "favorites",
+                            label = s.sftpExt.favoritesTitle,
+                            icon = Icons.Filled.Star,
+                            onClick = {
+                                toolMenuOpen = false
+                                onOpenFavorites(controller.host)
+                            },
+                        ),
+                        CanvasMenuAction(
                             id = "filemanager",
                             label = s.upload.fileManagerLabel,
                             icon = Icons.Filled.FolderOpen,
@@ -792,15 +820,56 @@ private fun TerminalBody(
             // 录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），整组可拖动
             //（向上拖到顶、不进入工具栏）。两态同位，点击后原地切换不跳动。
             if (voiceState == VoiceUiState.IDLE) {
+                var startSize by remember { mutableStateOf(IntSize.Zero) }
+                val density = LocalDensity.current
                 Box(
                     Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp }),
+                        .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp })
+                        .offset { IntOffset(voiceDrag.x.roundToInt(), voiceDrag.y.roundToInt()) }
+                        .onSizeChanged { startSize = it }
+                        // 拖动：位移钳制在画布内（不超出、不进入工具栏）
+                        .pointerInput(canvasSize, startSize) {
+                            detectDragGestures { change, drag ->
+                                change.consume()
+                                val w = startSize.width
+                                val h = startSize.height
+                                if (canvasSize.width <= 0 || w <= 0) return@detectDragGestures
+                                val margin = with(density) { 8.dp.toPx() }
+                                voiceDrag = Offset(
+                                    (voiceDrag.x + drag.x).coerceIn(
+                                        -(canvasSize.width - w) / 2f + margin,
+                                        (canvasSize.width - w) / 2f - margin,
+                                    ),
+                                    (voiceDrag.y + drag.y).coerceIn(
+                                        -(canvasSize.height - h - with(density) { 24.dp.toPx() }),
+                                        0f,
+                                    ),
+                                )
+                            }
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     VoiceStartButton(
                         onClick = { beginVoice() },
+                        // 长按：重置回屏幕水平中央默认位置
+                        onLongClick = {
+                            voiceDrag = Offset.Zero
+                            scope.launch { snackbar.showSnackbar(s.voice.resetDone) }
+                        },
                     )
+                    // 拖动过之后：右上角出现小重置角标（点击回中央）
+                    if (voiceDrag != Offset.Zero) {
+                        VoiceResetBadge(
+                            onClick = {
+                                voiceDrag = Offset.Zero
+                                scope.launch { snackbar.showSnackbar(s.voice.resetDone) }
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 3.dp, y = (-3).dp),
+                        )
+                    }
                 }
             } else if (voiceState == VoiceUiState.LISTENING || voiceState == VoiceUiState.RECOGNIZING) {
                 var recordGroupSize by remember { mutableStateOf(IntSize.Zero) }
@@ -809,7 +878,7 @@ private fun TerminalBody(
                     Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp })
-                        .offset { IntOffset(recordDrag.x.roundToInt(), recordDrag.y.roundToInt()) }
+                        .offset { IntOffset(voiceDrag.x.roundToInt(), voiceDrag.y.roundToInt()) }
                         .onSizeChanged { recordGroupSize = it }
                         .pointerInput(canvasSize, recordGroupSize) {
                             detectDragGestures { change, drag ->
@@ -818,13 +887,13 @@ private fun TerminalBody(
                                 val h = recordGroupSize.height
                                 if (canvasSize.width <= 0 || w <= 0) return@detectDragGestures
                                 val margin = with(density) { 16.dp.toPx() }
-                                recordDrag = Offset(
-                                    (recordDrag.x + drag.x).coerceIn(
+                                voiceDrag = Offset(
+                                    (voiceDrag.x + drag.x).coerceIn(
                                         -(canvasSize.width - w) / 2f + margin,
                                         (canvasSize.width - w) / 2f - margin,
                                     ),
                                     // 初始在底部（水平居中）：允许向上拖到顶，不允许拖进工具栏
-                                    (recordDrag.y + drag.y).coerceIn(
+                                    (voiceDrag.y + drag.y).coerceIn(
                                         -(canvasSize.height - h - with(density) { 24.dp.toPx() }),
                                         0f,
                                     ),
