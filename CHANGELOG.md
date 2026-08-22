@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-08-22
+
+### 修复
+
+- **语音按钮位置**：水平居中 + 垂直在底部（工具栏上方），不再遮挡终端中部输出
+  （1.2.2 误放垂直正中）
+
 ## [1.2.2] - 2026-08-22
 
 ### 新增
@@ -345,7 +352,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.3...HEAD
+[1.2.3]: https://github.com/ttermish/termish/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ttermish/termish/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ttermish/termish/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ttermish/termish/compare/v1.1.14...v1.2.0
