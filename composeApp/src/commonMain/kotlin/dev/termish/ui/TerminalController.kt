@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
+import dev.termish.herdr.HerdrMonitor
 import dev.termish.ssh.AuthPrompt
 import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.MoshSession
@@ -214,6 +215,36 @@ class TerminalController(
     internal var lastNetworkReconnectAtMs = 0L
 
     private val connector = SessionConnector(this, strings)
+
+    /**
+     * herdr agent 监控器（host.launchHerdr 时启用）：轮询 `herdr api snapshot`，
+     * blocked 经两轮确认后发 AGENT_TASK 通知（NotificationCenter 前台过滤）。
+     *
+     * 生命周期：连接就绪（finishConnected / installHerdr 成功）→ start；
+     * 会话关闭（[close]/[destroy]）→ stop。runCommand 每次执行时动态读取
+     * [session]：重连换新连接后无需重建 monitor。
+     * 当前无 agent 列表 UI（onEvents/onAgents 空回调）：轮询只为后台 blocked
+     * 通知；将来做 agent 面板时这两个回调即数据源。
+     */
+    private val herdrMonitor = HerdrMonitor(
+        hostName = host.name,
+        hostId = host.id,
+        runCommand = { cmd -> session?.runCommand(cmd, 10_000) },
+        scope = scope,
+        onEvents = {},
+        onAgents = {},
+    )
+
+    /** 连接就绪后启动 agent 监控（幂等；仅 launchHerdr 且 CONNECTED 时生效）。 */
+    internal fun startHerdrMonitor() {
+        if (!host.launchHerdr || status != ConnStatus.CONNECTED) return
+        herdrMonitor.start()
+    }
+
+    /** 会话关闭时停止监控（幂等；close 统一收口）。 */
+    internal fun stopHerdrMonitor() {
+        herdrMonitor.stop()
+    }
 
     init {
         // 终端默认前景/背景色：SSH 应答 OSC 10/11 与 Mosh 主题注入都依赖它。
@@ -439,6 +470,8 @@ class TerminalController(
     fun close() {
         status = ConnStatus.CLOSED
         linkLostSeconds = 0
+        // herdr agent 监控随会话停止（重连成功后再由 finishConnected 启动）
+        stopHerdrMonitor()
         // 取消挂起的自动重连，防止 close 后延迟任务又拉起连接
         reconnectJob?.cancel()
         reconnectJob = null

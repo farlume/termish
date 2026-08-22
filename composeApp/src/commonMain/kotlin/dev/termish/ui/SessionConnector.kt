@@ -448,6 +448,9 @@ internal class SessionConnector(
                 } else {
                     // SSH / 已降级条目：会话已 CONNECTED，直接注入 herdr 命令
                     s.sendData((probed.bin + "\n").encodeToByteArray())
+                    // 安装成功 → 启动 agent 监控（正常路径由 finishConnected 启动，
+                    // 但此分支在 installHerdr 后才恢复可监控状态）
+                    c.startHerdrMonitor()
                     c.frame++
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -638,6 +641,10 @@ internal class SessionConnector(
             }
             if (cmd != null) s.sendData((cmd + "\n").encodeToByteArray())
         }
+        // herdr 工作台：连接就绪后启动 agent 监控（blocked 通知的轮询源）。
+        // 未装 herdr 时走安装卡片路径（finishConnected 提前 return），不会到这；
+        // 安装成功后由 installHerdr 显式启动。stop 由 controller.close() 统一收口。
+        if (c.host.launchHerdr) c.startHerdrMonitor()
         c.frame++
     }
 
