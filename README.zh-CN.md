@@ -1,6 +1,6 @@
 # Termish
 
-> 手机上的 Mosh + SSH 终端——换网、漫游不掉线，任意 TUI agent（herdr · codex · claude）的口袋入口。
+> 手机上的 Mosh + SSH 终端——换网、漫游不掉线，任意 TUI agent（herdr · codex · claude）的口袋入口。**AI-friendly 天生自带**：随时盯 AI 干活、跟 AI 说话、审它的产出。
 > Mosh + SSH mobile terminal for your phone — sessions that survive roaming,
 > the pocket entry point to any TUI agent.
 

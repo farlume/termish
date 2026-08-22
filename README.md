@@ -2,7 +2,8 @@
 
 > Mosh + SSH mobile terminal for your phone — sessions that survive WiFi
 > switches and roaming, and the pocket entry point to any TUI agent
-> (herdr · codex · claude). 极致手机端 Mosh + SSH 终端。
+> (herdr · codex · claude). **AI-friendly by design**: watch agents work,
+> talk to them, review their output — from your pocket. 极致手机端 Mosh + SSH 终端。
 
 [中文文档](README.zh-CN.md) 丨 [🌐 官网 termish.dev](https://termish.dev)
 
