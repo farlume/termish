@@ -79,6 +79,20 @@ class SshSessionSshj(
         )
     }
 
+    override fun connectAuthOnly(): SessionInfo? {
+        try {
+            connectTransport()
+            return SessionInfo(
+                serverVersion = serverVersion,
+                hostKey = hostKeyInfo,
+                kexAlgorithm = hostKeyInfo?.algorithm ?: "",
+            )
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "connectAuthOnly failed: ${e.message}" }
+            return null
+        }
+    }
+
     private fun connectTransport() {
         client.addHostKeyVerifier(object : HostKeyVerifier {
             override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
@@ -182,6 +196,16 @@ class SshSessionSshj(
                     }
                 }
 
+                override fun readErr(): ByteArray? {
+                    return try {
+                        val buf = ByteArray(8192)
+                        val n = cmd.errorStream.read(buf)
+                        if (n < 0) null else buf.copyOf(n)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
                 override fun write(data: ByteArray) {
                     // 异步写：调用方可能是主线程（emulator.onResponse 应答 OSC 查询——
                     // herdr 启动连发 256 个 OSC 4 查询，同步 socket 写会把主线程卡死）
@@ -205,6 +229,67 @@ class SshSessionSshj(
             }
         } catch (e: Exception) {
             TermLog.w("ssh") { "startExec failed: ${e.message}" }
+            try {
+                s.close()
+            } catch (_: Exception) {
+            }
+            null
+        }
+    }
+
+    override fun startExecRaw(command: String): SshExecChannel? {
+        if (closed.get() || !client.isConnected) return null
+        val s = client.startSession()
+        return try {
+            // 无 PTY：二进制输出（屏幕帧流）不能被 pty 改写（\n 转换等）
+            val cmd = s.exec(command)
+            val mutex = Any()
+            object : SshExecChannel {
+                override fun read(): ByteArray? {
+                    return try {
+                        val buf = ByteArray(64 * 1024)
+                        val n = cmd.inputStream.read(buf)
+                        if (n < 0) null else buf.copyOf(n)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                override fun readErr(): ByteArray? {
+                    return try {
+                        val buf = ByteArray(8192)
+                        val n = cmd.errorStream.read(buf)
+                        if (n < 0) null else buf.copyOf(n)
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
+
+                override fun write(data: ByteArray) {
+                    scope.launch(writeDispatcher) {
+                        synchronized(mutex) {
+                            try {
+                                cmd.outputStream.write(data)
+                                cmd.outputStream.flush()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+
+                override fun close() {
+                    try {
+                        cmd.close()
+                    } catch (_: Exception) {
+                    }
+                    try {
+                        s.close()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "startExecRaw failed: ${e.message}" }
             try {
                 s.close()
             } catch (_: Exception) {

@@ -18,13 +18,13 @@ cat client.pub > authorized_keys
 
 cat > sshd_config <<EOF
 Port $PORT
-ListenAddress 127.0.0.1
+ListenAddress 0.0.0.0
 HostKey $DIR/hostkey
 AuthorizedKeysFile $DIR/authorized_keys
-PasswordAuthentication no
+PasswordAuthentication yes
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
-UsePAM no
+UsePAM yes
 StrictModes no
 ChallengeResponseAuthentication no
 PidFile $DIR/sshd.pid

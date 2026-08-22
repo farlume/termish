@@ -122,6 +122,12 @@ interface SshSession {
     /** 阻塞：连接 + 认证 + 打开 session 通道 + 启动 shell。 */
     fun connectAndStart(columns: Int, rows: Int): SessionInfo
 
+    /**
+     * 阻塞：仅连接 + 认证（不开 shell、不占交互通道）。
+     * 供 exec 型连接使用（屏幕推流等）；返回 null = 平台未实现。
+     */
+    fun connectAuthOnly(): SessionInfo? = null
+
     /** 通知远端窗口尺寸变化（字节/像素）。 */
     fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int)
 
@@ -154,6 +160,14 @@ interface SshSession {
      */
     fun startExec(command: String, columns: Int, rows: Int): SshExecChannel?
 
+    /**
+     * 无 PTY 的流式 exec 通道（如屏幕帧流：二进制输出不能被 pty 改写）。
+     * 不经交互 shell；stdout = 原始字节流，stdin = raw 输入。
+     * 返回通道（阻塞 read / write / close）；失败/未连接返回 null。
+     * 平台必须真正实现（不带 pty）；未实现返回 null。
+     */
+    fun startExecRaw(command: String): SshExecChannel? = null
+
     /** 主动关闭会话。 */
     fun close()
 
@@ -164,8 +178,11 @@ interface SshSession {
  * exec+pty 通道：stdout = 程序渲染字节流，stdin = raw 输入。
  */
 interface SshExecChannel {
-    /** 阻塞读下一块；EOF/关闭返回 null。 */
+    /** 阻塞读下一块（stdout）；EOF/关闭返回 null。 */
     fun read(): ByteArray?
+
+    /** 阻塞读下一块（stderr）；不读会因缓冲区满阻塞通道；默认不读。 */
+    fun readErr(): ByteArray? = null
 
     /** 写入远端（exec 通道 stdin）。 */
     fun write(data: ByteArray)

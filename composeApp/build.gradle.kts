@@ -107,6 +107,9 @@ kotlin {
             implementation(libs.bouncycastle.prov)
             implementation(libs.bouncycastle.pkix)
             implementation(libs.okhttp)
+            implementation(libs.androidx.media3.exoplayer)
+            implementation(libs.androidx.media3.ui)
+            implementation(libs.nanohttpd)
         }
 
         commonTest.dependencies {
@@ -133,7 +136,7 @@ compose.desktop.application {
     nativeDistributions {
         targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
         packageName = "Termish"
-        packageVersion = "1.3.0"
+        packageVersion = "1.4.0"
         macOS {
             iconFile.set(project.file("src/desktopMain/resources/icon.icns"))
         }
@@ -214,8 +217,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 25
-        versionName = "1.3.0"
+        versionCode = 26
+        versionName = "1.4.0"
     }
     packaging {
         resources {
