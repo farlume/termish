@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-08-22
+
 ### 新增
 
 - 远程画面小窗支持**双指捏合/张开缩放**（单指拖动移动、右下角把手缩放、点击全屏统一由手势层处理）
@@ -441,7 +443,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.5.1...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/ttermish/termish/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/ttermish/termish/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/ttermish/termish/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ttermish/termish/compare/v1.3.0...v1.4.0
