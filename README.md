@@ -23,6 +23,9 @@
   <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
 <p>
+  <img src="docs/screenshots/terminal-voice-zh.png" width="230" alt="Voice input (on-device)" />
+</p>
+<p>
   <img src="docs/screenshots/mosh-install-en.png" width="230" alt="mosh guided install" />
   <img src="docs/screenshots/herdr-install-en.png" width="230" alt="herdr guided install" />
 </p>
@@ -186,22 +189,43 @@ browser for desktop workflows while the phone stays native.
 - **Local echo prediction**: keystrokes render instantly on a predicted overlay
   and are reconciled by echo acks — typing stays snappy at high RTT
 
-**SFTP**
+**SFTP file manager**
 - File browser with upload / streaming download / recursive folder download,
   breadcrumb navigation with back-as-history, recursive cross-directory search
-- **Text preview** (md/txt/log/…): streams only the first 512 KB, auto-detects
-  binary files, renders in a full-screen monospace view with a truncation hint
-- Download: progress banner + completion notification (Android taps to open);
-  Android 10+ saves straight to the Download folder (auto-rename, no save-as
-  dialog), iOS exports to Files, desktop file chooser
+- **Multi-select** (long-press): batch download / delete / copy paths;
+  delete (recursive for folders) & rename; pull-to-refresh; folder favorites
+  (persisted per host, reachable from the terminal menu) with one-tap jump;
+  date grouping (Today / This week / Earlier); empty state
+- **Text & Markdown preview**: streams only the first 512 KB, auto-detects
+  binary files; **Markdown renders** (headings, code blocks, inline styles,
+  lists, quotes) with a preview ⇄ source toggle — no library, pure Kotlin
+- 20 color-coded file-type icons (APK, keys, archives, PDF, spreadsheets, …)
+- Download: floating progress card + completion notification (Android taps to
+  open); Android 10+ saves straight to the Download folder (auto-rename, no
+  save-as dialog), iOS exports to Files, desktop file chooser; browsing path
+  persists across restarts (saved on every navigation)
 
-**Input**
+**Input & terminal tools**
 - Fixed two-row key toolbar: `CTRL ALT ESC TAB ⌃C ↑ ⌃L ⌨` / `⌃D PST / ⌃E ← ↓ → ENT`
 - Sticky CTRL/ALT modifiers combine with the system keyboard (⌃A/⌃E/⌃R …);
   composition-safe IME handling; backspace works even with an empty input buffer
 - When a TUI enables mouse reporting, touch gestures map to terminal mouse
   events (tap = click, drag = motion / wheel) — herdr/vim/htop panes stay
   usable on a touchscreen
+- **Corner tool menu** (`+`): upload files (choose current dir / /tmp, stream
+  over SFTP, remote path auto-typed into the terminal), file manager (opens
+  SFTP at the terminal's working directory), favorites, Git panel
+- **Quick commands** panel: insert or run snippets; empty state lets you add
+  one right there
+
+**Voice input** (bring-your-own ASR)
+- Hold nothing — **one tap on the center mic button** to speak; live
+  transcription appears on screen with a sound wave and a timer
+- Auto-send after ~2 s of silence (or tap the red button); drag the button
+  anywhere, long-press or tap the reset badge to return it to center
+- **Plug-in ASR providers**: Volcano Engine streaming ASR ships as the first
+  engine; add/edit/remove providers (name, key, resource ID) in Settings —
+  keys live in the platform vault; new engines plug in behind one interface
 
 **App**
 - Hosts / Connections / Settings tabs; host search, tags, quick commands,
