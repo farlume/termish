@@ -308,6 +308,8 @@ data class AppStrings(
     val voice: VoiceStrings,
     // 终端文件上传
     val upload: UploadStrings,
+    // 远程屏幕（视频推流）
+    val screen: ScreenStrings,
     // SFTP 文件管理器扩展（多选/收藏/删除/分组等）
     val sftpExt: SftpExtStrings,
 )
@@ -377,6 +379,27 @@ data class VoiceStrings(
     val error: (String) -> String,
     /** 录音超时自动发送提示。 */
     val timeout: String,
+)
+
+/** 远程屏幕文案（H.264 推流播放，嵌套子类防 JVM 255 上限）。 */
+@Immutable
+data class ScreenStrings(
+    /** 功能菜单入口标签（终端「+」菜单项）。 */
+    val menuLabel: String,
+    /** 连接中。 */
+    val connecting: String,
+    /** 重连按钮。 */
+    val reconnect: String,
+    /** 远端缺 ffmpeg 的引导提示。 */
+    val ffmpegHint: String,
+    /** 推流服务安装引导卡片标题。 */
+    val serviceTitle: String,
+    /** 推流服务安装引导卡片说明。 */
+    val serviceHint: String,
+    /** 安装服务按钮。 */
+    val installService: String,
+    /** 安装中。 */
+    val installingService: String,
 )
 
 /** 终端文件上传文案（嵌套子类，同 GitStrings）。 */
@@ -731,6 +754,16 @@ private val EnStrings = AppStrings(
         error = { "Voice recognition failed: $it" },
         timeout = "Speaking time limit reached — sending what was recognized",
     ),
+    screen = ScreenStrings(
+        menuLabel = "Remote screen",
+        connecting = "Connecting to screen…",
+        reconnect = "Reconnect",
+        ffmpegHint = "Remote needs ffmpeg — install it on the Mac (e.g. `brew install ffmpeg` or download the static build), then reconnect.",
+        serviceTitle = "Install screen streaming service",
+        serviceHint = "macOS blocks screen capture from SSH sessions, so Termish runs a capture daemon on your Mac (GUI session). Tap install — takes about a minute, ffmpeg required.",
+        installService = "Install service",
+        installingService = "Installing…",
+    ),
     upload = UploadStrings(
         menuLabel = "Upload file",
         fileManagerLabel = "File manager",
@@ -1064,6 +1097,16 @@ private val ZhStrings = AppStrings(
         sent = { "已发送：$it" },
         error = { "语音识别失败：$it" },
         timeout = "说话时间到，已发送识别到的内容",
+    ),
+    screen = ScreenStrings(
+        menuLabel = "远程画面",
+        connecting = "正在连接画面…",
+        reconnect = "重新连接",
+        ffmpegHint = "远端需要 ffmpeg——在 Mac 上安装（如 `brew install ffmpeg` 或下载静态版）后重新连接。",
+        serviceTitle = "安装屏幕推流服务",
+        serviceHint = "macOS 禁止 SSH 会话直接录屏，Termish 会在你的 Mac 上安装一个常驻推流服务（跑在登录会话里）。点安装即可，约 1 分钟（需已装 ffmpeg）。",
+        installService = "安装服务",
+        installingService = "正在安装…",
     ),
     upload = UploadStrings(
         menuLabel = "上传文件",

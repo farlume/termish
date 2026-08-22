@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
@@ -105,6 +106,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import dev.termish.data.AppSettings
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
@@ -112,6 +114,8 @@ import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.asrKeyAccount
 import dev.termish.ssh.SftpSession
+import dev.termish.screen.ScreenSession
+import dev.termish.screen.ScreenUiState
 import dev.termish.ssh.AuthPrompt
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.StatusColors
@@ -141,6 +145,17 @@ sealed interface SessionTab {
         val uiState: SftpUiState = SftpUiState(),
     ) : SessionTab {
         override val id: String get() = "sftp:${host.id}:${session?.hashCode() ?: "restored"}"
+    }
+
+    /** 远程屏幕（H.264 推流播放）——现作为终端 tab 内的小窗/全屏，不再独立展示。 */
+    data class Screen(
+        val host: Host,
+        /** 归属的终端会话 id（小窗只在该 tab 显示）。 */
+        val ownerSessionId: String,
+        val session: ScreenSession?,
+        val uiState: ScreenUiState = ScreenUiState(),
+    ) : SessionTab {
+        override val id: String get() = "screen:${host.id}:${session?.hashCode() ?: "restored"}"
     }
 }
 
@@ -177,6 +192,18 @@ fun TerminalScreen(
     onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
     /** SFTP 断线重连：重建会话后替换 tab 中的 session（由 AppRoot 实现）。 */
     onReconnectSftp: (SessionTab.Sftp) -> Unit = {},
+    /** 屏幕（菜单项）：打开当前主机的远程画面。 */
+    onOpenScreen: (Host) -> Unit = {},
+    /** 屏幕断线重连：重建推流会话替换 tab。 */
+    onReconnectScreen: (SessionTab.Screen) -> Unit = {},
+    /** 屏幕重连（就地全屏用，按主机定位会话）。 */
+    onReconnectScreenForHost: (Host) -> Unit = {},
+    /** 屏幕推流服务安装（引导卡片按钮；按主机定位会话）。 */
+    onInstallScreenService: (Host) -> Unit = {},
+    /** 终端页小窗：当前主机活跃屏幕会话的 uiState（null = 不显示）；点击 = 就地全屏。 */
+    screenPip: ScreenUiState? = null,
+    /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
+    onCloseScreenPip: () -> Unit = {},
 ) {
     val s = LocalAppStrings.current
     // 关闭 tab 前确认：x 太容易误触
@@ -208,6 +235,11 @@ fun TerminalScreen(
                 onOpenFavorites = onOpenFavorites,
                 onFavoritesChanged = onFavoritesChanged,
                 onSftpPathChanged = onSftpPathChanged,
+                onOpenScreen = onOpenScreen,
+                screenPip = screenPip,
+                onCloseScreenPip = onCloseScreenPip,
+                onInstallScreenService = onInstallScreenService,
+                onReconnectScreenForHost = onReconnectScreenForHost,
             )
             is SessionTab.Sftp -> SftpContent(
                 host = tab.host,
@@ -218,6 +250,13 @@ fun TerminalScreen(
                 onFavoritesChanged = { favs -> onFavoritesChanged(tab.host, favs) },
                 onPathChanged = { p -> onSftpPathChanged(tab.host, p) },
             )
+            is SessionTab.Screen -> ScreenContent(
+                host = tab.host,
+                session = tab.session,
+                state = tab.uiState,
+                onBack = onBack,
+                onReconnect = { onReconnectScreen(tab) },
+            )
         }
     }
 
@@ -225,6 +264,7 @@ fun TerminalScreen(
         val host = when (tab) {
             is SessionTab.Terminal -> tab.controller.host
             is SessionTab.Sftp -> tab.host
+            is SessionTab.Screen -> tab.host
         }
         AlertDialog(
             onDismissRequest = { pendingClose = null },
@@ -265,6 +305,16 @@ private fun TerminalBody(
     onFavoritesChanged: (Host, List<String>) -> Unit = { _, _ -> },
     /** SFTP 浏览路径即时持久化（崩溃/强杀不丢最后目录）。 */
     onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
+    /** 屏幕（菜单项）：打开当前主机的远程画面。 */
+    onOpenScreen: (Host) -> Unit = {},
+    /** 终端页小窗：当前主机活跃屏幕会话的 uiState（点击 = 就地全屏）。 */
+    screenPip: ScreenUiState? = null,
+    /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
+    onCloseScreenPip: () -> Unit = {},
+    /** 屏幕推流服务安装（引导卡片按钮；就地全屏用当前主机）。 */
+    onInstallScreenService: (Host) -> Unit = {},
+    /** 屏幕重连（就地全屏用，按主机定位会话）。 */
+    onReconnectScreenForHost: (Host) -> Unit = {},
 ) {
     val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
@@ -301,6 +351,9 @@ private fun TerminalBody(
             }
         },
     )
+
+    // ---- 屏幕小窗：就地全屏状态（点击小窗展开，返回/✕ 收起）----
+    var pipFullscreen by remember { mutableStateOf(false) }
 
     // ---- 语音输入（画布悬浮麦克风 FAB，按住说话、松手发送）----
     val micPermission = rememberMicPermissionRequester()
@@ -542,6 +595,8 @@ private fun TerminalBody(
         )
     }
 
+    // 屏幕全屏时：返回先收起画面，不退回首页
+    PlatformBackHandler(enabled = pipFullscreen) { pipFullscreen = false }
     // 面板打开时拦截系统返回：先关面板，不直接退回首页
     PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
@@ -748,9 +803,38 @@ private fun TerminalBody(
                 modifier = Modifier.align(Alignment.Center).fillMaxSize(),
             )
 
+            // 屏幕小窗（画中画）：右上角悬浮远程画面，点击切到屏幕 tab
+            // 就地全屏：屏幕会话活跃且展开时，画布整体被远程画面覆盖（zIndex 最上层）
+            if (pipFullscreen && screenPip != null) {
+                ScreenContent(
+                    host = controller.host,
+                    session = null,
+                    state = screenPip,
+                    onBack = { pipFullscreen = false },
+                    onReconnect = { onReconnectScreenForHost(controller.host) },
+                    onInstallService = { onInstallScreenService(controller.host) },
+                    onClose = { pipFullscreen = false },
+                    modifier = Modifier.zIndex(100f),
+                )
+            }
+            // 小窗（画中画）：点击 = 在当前页展开全屏
+            if (!pipFullscreen) {
+                screenPip?.let { pipState ->
+                    ScreenPiP(
+                        state = pipState,
+                        onClick = { pipFullscreen = true },
+                        onClose = onCloseScreenPip,
+                        canvasSize = canvasSize,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = 8.dp, end = 8.dp),
+                    )
+                }
+            }
+
             // 右下角功能菜单：+ 展开（上传 / 文件管理 / Git，可扩展）。
-            // 语音已移至屏幕正中常驻按钮，不进菜单。
-            if (voiceState == VoiceUiState.IDLE) {
+            // 语音已移至屏幕正中常驻按钮，不进菜单。屏幕全屏时隐藏。
+            if (!pipFullscreen && voiceState == VoiceUiState.IDLE) {
                 CanvasToolMenu(
                     menuOpen = toolMenuOpen,
                     onMenuOpenChange = { toolMenuOpen = it },
@@ -781,6 +865,15 @@ private fun TerminalBody(
                                     }
                                     uploadDirDialog = true
                                 }
+                            },
+                        ),
+                        CanvasMenuAction(
+                            id = "screen",
+                            label = s.screen.menuLabel,
+                            icon = Icons.Filled.Monitor,
+                            onClick = {
+                                toolMenuOpen = false
+                                onOpenScreen(controller.host)
                             },
                         ),
                         CanvasMenuAction(
@@ -819,7 +912,8 @@ private fun TerminalBody(
             // 不遮挡终端中部输出）。待机 = 品牌绿大按钮（点一下开始）；
             // 录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），整组可拖动
             //（向上拖到顶、不进入工具栏）。两态同位，点击后原地切换不跳动。
-            if (voiceState == VoiceUiState.IDLE) {
+            // 屏幕全屏（pipFullscreen）时隐藏，避免盖住远程画面。
+            if (!pipFullscreen && voiceState == VoiceUiState.IDLE) {
                 var startSize by remember { mutableStateOf(IntSize.Zero) }
                 val density = LocalDensity.current
                 Box(
@@ -871,7 +965,7 @@ private fun TerminalBody(
                         )
                     }
                 }
-            } else if (voiceState == VoiceUiState.LISTENING || voiceState == VoiceUiState.RECOGNIZING) {
+            } else if (!pipFullscreen && (voiceState == VoiceUiState.LISTENING || voiceState == VoiceUiState.RECOGNIZING)) {
                 var recordGroupSize by remember { mutableStateOf(IntSize.Zero) }
                 val density = LocalDensity.current
                 Box(
@@ -1177,6 +1271,7 @@ private fun TerminalTabBar(
                     val host = when (tab) {
                         is SessionTab.Terminal -> tab.controller.host
                         is SessionTab.Sftp -> tab.host
+                        is SessionTab.Screen -> tab.host
                     }
                     // 同一主机的终端会话按**当前 tab 列表顺序**编号（1、2、3…）：
                     // 只看当前存活 tab，删除后自动重排（第 2 个删了，原第 3 个变 2）

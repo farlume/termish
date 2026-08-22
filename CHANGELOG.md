@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-08-22
+
+### 新增
+
+- **远程画面（macOS 屏幕推流）**：终端 + 菜单「远程画面」——SSH 通道实时观看 Mac 屏幕
+  - Mac 端一键安装常驻推流服务（LaunchAgent 跑在 GUI 域：avfoundation 抓屏受 TCC 限制，SSH 后台会话无法录屏，服务化绕行），服务缺失自动引导安装（流式日志）
+  - 手机端 ExoPlayer + 本地 HTTP 流（MPEG-TS）播放：硬件解码、Fit 缩放、帧率/分辨率角标；替换手写 MediaCodec 管线（OPPO/MTK 真机实测吞输入不出帧）
+  - 终端页小窗（画中画：拖动/缩放/关闭）+ 就地全屏，断线重连、同主机多会话互踢
+- **终端 tab 返回历史**：返回键优先回到上一个 tab（SFTP/屏幕 → 终端），栈空才回首页
+
+### 修复
+
+- 推流服务 relay 断线/重连处理：BSD nc 的 FIN 半关闭不再误判为断连（预热期 ffmpeg 被误杀）；新连接直接 SIGKILL 旧 ffmpeg + 首帧 45s/中途 20s 无数据自愈，修僵尸进程堆积占死抓屏设备；安装结果按 TERMISH_SCREEN_OK 判定
+- H264Stream Annex-B 解析器 start code 长度判定边界（3 字节 SC + NAL 头 0x01 不再误判）
+
 ## [1.3.0] - 2026-08-22
 
 ### 新增
@@ -381,7 +396,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/ttermish/termish/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ttermish/termish/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/ttermish/termish/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/ttermish/termish/compare/v1.2.2...v1.2.3
