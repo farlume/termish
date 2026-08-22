@@ -62,12 +62,15 @@ internal class SessionConnector(
         /** mosh 主题注入延迟：太早会被 shell readline 当输入回显成乱码，太晚 herdr 显示灰蒙层。 */
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
         /**
-         * herdr 启动命令注入延迟：登录 shell 的 PAM MOTD（Ubuntu landscape/ESM
-         * 检测）可能耗时 1-3s 且输出几十行——立即注入会被 readline 回显在 MOTD
-         * 中间，herdr 启动后 MOTD 迟到字节把画面顶上去（herdr 只显示头部一小块、
-         * 下方残留文案）。延迟到 MOTD 峰值过去再注入。
+         * herdr 注入时机：等终端输出静默（登录 shell 的 PAM MOTD——Ubuntu
+         * landscape/ESM 检测可能耗时 1-3s 且输出几十行——已打完）再注入。
+         * 静默阈值：连续这么久无新输出即认为 MOTD 结束。
          */
-        private const val HERDR_INJECT_DELAY_MS = 1_500L
+        private const val HERDR_OUTPUT_QUIET_MS = 250L
+        /** 静默检测轮询步长。 */
+        private const val HERDR_QUIET_POLL_MS = 50L
+        /** 静默等待上限：持续有输出的异常场景（如登录脚本在跑日志）到此强制注入。 */
+        private const val HERDR_INJECT_MAX_WAIT_MS = 3_000L
         /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
@@ -626,6 +629,9 @@ internal class SessionConnector(
     /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
     private fun finishConnected(s: SshSession, sendStartup: Boolean = true) {
         c.status = ConnStatus.CONNECTED
+        // 静默检测起点：从连接完成算起。MOTD 已打完 → 250ms 后注入 herdr；
+        // 还在打 → lastOutputAtMs 被消费循环持续刷新，等它打完再注入。
+        c.lastOutputAtMs = c.nowMs()
         c.reconnectAttempts = 0
         c.reconnectCount = 0
         c.errorMessage = null
@@ -666,23 +672,33 @@ internal class SessionConnector(
      * 经 shell 注入 herdr 启动命令（SSH / 降级路径；Mosh 路径由引导参数 `-- herdr`
      * 直接 exec，不经登录 shell 无此问题）。
      *
-     * 延迟 + 清屏两个手段叠加，解决 Ubuntu 主机 MOTD 残留：
+     * 等输出静默 + 清屏两个手段叠加，解决 Ubuntu 主机 MOTD 残留：
      * - 登录 shell 的 PAM MOTD（landscape/ESM 检测）可能耗时 1-3s 且输出几十行；
-     *   立即注入会被 readline 回显在 MOTD 中间
+     *   立即注入会被 readline 回显在 MOTD 中间，herdr 启动后 MOTD 迟到字节把画面
+     *   顶上去（herdr 只显示头部一小块、下方残留文案）
+     * - 注入时机 = 终端输出静默（[HERDR_OUTPUT_QUIET_MS] 无新输出，见
+     *   [TerminalController.lastOutputAtMs]）：无 MOTD 的主机 ~250ms 即注入（不
+     *   像固定延迟那样干等），有 MOTD 的等它打完再注入（干净）；持续输出场景
+     *   [HERDR_INJECT_MAX_WAIT_MS] 上限兜底
      * - 注入命令先清屏（当前屏 + scrollback）再启动 herdr：即使 MOTD 已打出，
-     *   herdr 的起始画面也是干净的；延迟窗口让迟到的 MOTD 在注入前打完
+     *   herdr 的起始画面也是干净的
      * - 清屏用 printf 八进制转义（POSIX \0ddd，dash/bash 均支持），不依赖
      *   /usr/bin/clear 是否存在
-     * 注入后会话若已关闭/重连（session 被替换）则放弃：新连接有自己的一次注入。
+     * 注入前若会话已关闭/重连（session 被替换）则放弃：新连接有自己的一次注入。
      */
     private fun sendHerdrLaunch(s: SshSession) {
         val bin = c.herdrBin ?: "herdr"
         c.scope.launch {
-            delay(HERDR_INJECT_DELAY_MS)
+            val t0 = c.nowMs()
+            while (c.nowMs() - c.lastOutputAtMs < HERDR_OUTPUT_QUIET_MS &&
+                c.nowMs() - t0 < HERDR_INJECT_MAX_WAIT_MS
+            ) {
+                delay(HERDR_QUIET_POLL_MS)
+            }
             if (c.session !== s || c.status != ConnStatus.CONNECTED) return@launch
             val launch = "printf '\\0033[2J\\0033[3J\\0033[H' && ${shSingleQuote(bin)}\n"
             s.sendData(launch.encodeToByteArray())
-            TermLog.i("herdr") { "injected herdr launch (delayed+clear) ${c.host.name}" }
+            TermLog.i("herdr") { "injected herdr launch (quiet+clear) ${c.host.name}" }
         }
     }
 

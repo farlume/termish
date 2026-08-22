@@ -209,6 +209,12 @@ class TerminalController(
     /** 单调钟：网络免疫期/防抖用单调毫秒，避免墙钟被用户改时间/NTP 校正干扰。 */
     private val mono = TimeSource.Monotonic.markNow()
     internal fun nowMs(): Long = mono.elapsedNow().inWholeMilliseconds
+    /**
+     * 最近一次终端输出落地时刻（单调钟；消费循环更新）。
+     * herdr 注入等待用：输出静默 = 登录 MOTD 打完，可安全清屏启动 herdr。
+     */
+    @Volatile
+    internal var lastOutputAtMs = 0L
     /** 连接成功后的网络事件免疫截止（单调毫秒）：期内不触发主动重连（防刚连上即断）。 */
     internal var networkImmuneUntilMs = 0L
     /** 最近一次主动重连时刻（单调毫秒）：15 秒防抖，避免网络抖动引发连续重连。 */
@@ -279,10 +285,12 @@ class TerminalController(
                 // 最多花屏，远好于会话永久失去响应
                 try {
                     emulator.write(first)
+                    lastOutputAtMs = nowMs()
                     val mark = TimeSource.Monotonic.markNow()
                     while (mark.elapsedNow().inWholeMilliseconds < OUTPUT_BATCH_BUDGET_MS) {
                         val next = outputQueue.tryReceive().getOrNull() ?: break
                         emulator.write(next)
+                        lastOutputAtMs = nowMs()
                     }
                 } catch (t: Throwable) {
                     TermLog.e("term") { "emulator.write 异常，丢弃该批次续跑: ${t.stackTraceToString()}" }
