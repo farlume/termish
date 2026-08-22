@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -44,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -76,22 +76,25 @@ fun ScreenContent(
     onInstallService: () -> Unit = {},
     /** 就地全屏模式：左上角返回按钮显示「收起」（不跳 tab）；否则显示「返回」。 */
     onClose: (() -> Unit)? = null,
+    /** 状态栏高度（px，沉浸式隐藏前的值）：顶部元素固定留白，不随状态栏隐藏跳动。 */
+    statusBarInsetTop: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
+    val density = LocalDensity.current
     Box(modifier.fillMaxSize().background(Color.Black)) {
         // 画面帧（播放器渲染面，Fit 缩放）
         state.player?.let { p ->
             ScreenVideoSurface(p, Modifier.fillMaxSize())
         }
 
-        // 帧率 / 分辨率角标（右上角小字）：状态栏未隐藏时避让（沉浸式下 inset=0 无影响）
+        // 帧率 / 分辨率角标（右上角小字）：顶部固定留白（状态栏高度 + 间距），
+        // 不随沉浸式隐藏状态栏上跳
         if (state.connected && (state.fps > 0 || state.frameSize.isNotBlank())) {
             Row(
                 Modifier
                     .align(Alignment.TopEnd)
-                    .statusBarsPadding()
-                    .padding(8.dp)
+                    .padding(top = with(density) { (statusBarInsetTop + 8).dp }, end = 8.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color.Black.copy(alpha = 0.55f))
                     .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -198,11 +201,14 @@ fun ScreenContent(
         Box(
             Modifier
                 .align(Alignment.TopStart)
-                // 状态栏未隐藏时避让（沉浸式正常时 inset=0，padding 无副作用）；
-                // 部分设备/系统行为下隐藏可能失效，双保险防按钮与状态栏重叠
-                .statusBarsPadding()
-                .padding(10.dp)
-                .zIndex(100f)
+                // 顶部固定留白（状态栏高度 + 间距）：沉浸式隐藏状态栏后 inset 归零，
+                // statusBarsPadding 会让按钮上跳；用进入全屏前记录的高度保持位置稳定
+                .padding(
+                    top = with(density) { (statusBarInsetTop + 10).dp },
+                    start = 10.dp,
+                    end = 10.dp,
+                    bottom = 10.dp,
+                ).zIndex(100f)
                 .size(40.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.Black.copy(alpha = 0.55f))
@@ -224,7 +230,7 @@ fun ScreenContent(
 /** 推流服务安装引导卡片：服务缺失时按具体原因（ffmpeg 缺失 / 服务未运行）引导一键安装，
  * 安装中实时日志；失败后保留日志尾巴可重试。 */
 @Composable
-private fun ScreenServiceGuide(
+internal fun ScreenServiceGuide(
     installing: Boolean,
     installLog: String,
     /** 缺失原因：true = 远端缺 ffmpeg；false = 服务未运行（端口无监听）。 */
@@ -379,6 +385,7 @@ fun ScreenPiP(
     // ownSize 为 key 会重启并中断正在进行的拖动手势（v1.4.0 回归：缩放拖不动）
     val ownSizeState = rememberUpdatedState(ownSize)
     val player = state.player
+    val s = LocalAppStrings.current
 
     Box(
         modifier
@@ -471,14 +478,37 @@ fun ScreenPiP(
             // 双指捏合位移小时会误判点击全屏——v1.4.0 回归）
             ScreenVideoSurface(player, Modifier.fillMaxSize())
         } else {
+            if (!state.serviceMissing) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "…",
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp,
+                    )
+                }
+            }
+        }
+        // 服务缺失：小窗中央提示（不再纯黑屏；点击进全屏看完整安装引导）
+        if (state.serviceMissing) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    "…",
-                    color = Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.Monitor,
+                        contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.75f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        s.screen.pipNeedInstall,
+                        color = Color.White.copy(alpha = 0.75f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
 

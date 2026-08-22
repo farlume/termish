@@ -123,6 +123,19 @@ class ScreenSession(
                                 running = false
                                 break
                             }
+                            // 非 macOS 主机：屏幕推流不支持（不引导安装，装了也无法推流）
+                            if (sb.contains("SCREEN_UNSUPPORTED_OS")) {
+                                val os =
+                                    sb
+                                        .toString()
+                                        .substringAfter("SCREEN_UNSUPPORTED_OS:")
+                                        .lineSequence()
+                                        .first()
+                                        .trim()
+                                uiState.error = "屏幕推流仅支持 macOS 主机（当前远端为 $os）"
+                                running = false
+                                break
+                            }
                             // Mac 息屏/锁屏提示（非错误）：推流可能无帧或为锁屏画面，
                             // 唤醒/解锁后自动恢复——不设 error（避免误入错误态/断流）
                             if (sb.contains("SCREEN_ASLEEP")) {
@@ -268,6 +281,13 @@ class ScreenSession(
         val READ_STREAM_SCRIPT =
             """
             PORT=$SCREEN_PORT
+            # 屏幕推流仅支持 macOS（avfoundation 抓屏）：其他系统（Linux 等）直接
+            # 提示不支持，不引导安装——装了也无法推流（v1.6.0 用户反馈：连 Ubuntu
+            # 却提示「Mac 上未安装服务」）
+            if [ "${'$'}(uname)" != "Darwin" ]; then
+              echo "SCREEN_UNSUPPORTED_OS:${'$'}(uname)" >&2
+              exit 1
+            fi
             # ffmpeg 查找：SSH 非交互会话 PATH 受限（无 brew 目录），command -v 常漏掉
             # brew 安装的 ffmpeg → 误报 FFMPEG_MISSING（v1.5.0 用户反馈：装过还提示安装）
             FF=""

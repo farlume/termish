@@ -401,6 +401,8 @@ data class ScreenStrings(
     val installingService: String,
     /** 安装失败提示（日志尾巴上方）。 */
     val installFailed: String,
+    /** 小窗服务缺失提示（点击进全屏看安装引导）。 */
+    val pipNeedInstall: String,
     /** 全屏返回按钮：就地全屏（小窗展开）时收起回终端。 */
     val collapse: String,
     /** 全屏返回按钮：屏幕 tab 模式返回上一 tab。 */
@@ -785,6 +787,7 @@ private val EnStrings =
                 installService = "Install service",
                 installingService = "Installing…",
                 installFailed = "Installation failed — check the log below and retry.",
+                pipNeedInstall = "Service not installed",
                 collapse = "Collapse",
                 back = "Back",
             ),
@@ -1139,6 +1142,7 @@ private val ZhStrings =
                 installService = "安装服务",
                 installingService = "正在安装…",
                 installFailed = "安装失败——查看下方日志后重试。",
+                pipNeedInstall = "服务未安装",
                 collapse = "收起",
                 back = "返回",
             ),

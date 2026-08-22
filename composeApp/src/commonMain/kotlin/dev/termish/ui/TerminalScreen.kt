@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -213,6 +214,13 @@ fun TerminalScreen(
     var pipFullscreen by remember { mutableStateOf(false) }
     // 切 tab 退出全屏（全屏状态提升后不再随 TerminalBody 销毁自动重置）
     LaunchedEffect(current) { pipFullscreen = false }
+    // 全屏沉浸式隐藏状态栏后 inset 归零：记录非全屏时的状态栏高度，
+    // 全屏画面顶部元素用固定留白——按钮不随状态栏隐藏上跳（用户反馈）
+    val screenDensity = LocalDensity.current
+    var lastStatusBarTop by remember { mutableIntStateOf(0) }
+    if (!pipFullscreen) {
+        lastStatusBarTop = WindowInsets.statusBars.getTop(screenDensity)
+    }
     // 全屏沉浸式：隐藏系统状态栏，画面铺满整个屏幕
     PlatformImmersiveMode(pipFullscreen)
     Box(Modifier.fillMaxSize().background(pageBackground)) {
@@ -312,6 +320,7 @@ fun TerminalScreen(
                     onReconnect = { onReconnectScreenForHost(pipHost) },
                     onInstallService = { onInstallScreenService(pipHost) },
                     onClose = { pipFullscreen = false },
+                    statusBarInsetTop = lastStatusBarTop,
                     modifier = Modifier.fillMaxSize().zIndex(100f),
                 )
             }
@@ -781,6 +790,20 @@ private fun TerminalBody(
                     }
                     controller.moshNeedsInstall || controller.moshInstalling -> {
                         MoshInstallGuide(controller, with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() })
+                    }
+                    // 屏幕推流服务缺失：终端画布中央显示安装引导（小窗同步显示
+                    // 提示；打开屏幕即可见，无需先进全屏——v1.6.0 用户反馈）
+                    screenPip?.serviceMissing == true -> {
+                        ScreenServiceGuide(
+                            installing = screenPip.installing,
+                            installLog = screenPip.installLog,
+                            ffmpegMissing = screenPip.ffmpegMissing,
+                            onInstall = { onInstallScreenService(controller.host) },
+                            modifier =
+                                Modifier.padding(
+                                    bottom = with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() },
+                                ),
+                        )
                     }
                     else -> {
                         TerminalView(
