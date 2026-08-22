@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.zIndex
 import kotlinx.datetime.Clock
 import kotlinx.datetime.DatePeriod
 
@@ -1114,11 +1115,10 @@ fun SftpContent(
                 subtitle = s.sftpDownload,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(16.dp),
+                    .padding(16.dp)
+                    .zIndex(10f),
             )
         }
-
-        TermishSnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
 
         // ---- 重命名 / 删除 / 收藏夹 对话框 ----
         state.renameTarget?.let { entry ->
