@@ -5,6 +5,27 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-08-22
+
+### 新增
+
+- **语音输入（可插拔 ASR）**：屏幕水平居中常驻麦克风按钮，点一下即说——实时转写上屏 + 声波 + 计时，静音约 2s 自动发送；按钮可拖动、长按或角标重置回中央
+  - 识别服务 Provider 化：设置页可添加/编辑/删除多个服务（火山引擎流式识别为首个），Key 存平台安全存储，旧配置自动迁移
+  - 未配置时点击提示 + 空态引导
+- **Markdown 预览**：SFTP 文件管理内 md 文件渲染展示（标题/代码块/行内样式/列表/引用，零依赖纯 Kotlin 渲染器），预览 ⇄ 源码一键切换
+- **终端工具菜单**：右下角 + 展开——上传文件（当前目录//tmp，传完自动把远端路径输入终端）、文件管理（定位到终端工作目录）、收藏夹、Git
+- **SFTP 文件管理器增强**：多选批量（下载/删除/复制路径）、删除（目录递归）与重命名（平台层 delete/rename，sshj+libssh2）、下拉刷新、目录收藏（按主机持久化）、日期分组、空态、20 类彩色文件图标
+- **快捷命令空态可新增**：终端 {} 面板无命令时可直接新建（名称+内容弹窗）
+- **全局品牌提示**：深色圆角 Snackbar + 翠绿操作，终端/文件管理/全局统一；进度控件统一（TransferProgressCard）
+
+### 修复
+
+- 语音静音自动结束过于敏感（阈值 0.05→0.02、窗口 1.6s→2.0s，轻声不误切）
+- SFTP 预览层遮挡下载进度与完成提示（zIndex + 去重 SnackbarHost）
+- 语音/片段对话框配色未跟随终端主题
+- 语音识别协议按实测修正（顶层 result、帧 flags 最终包、首包无 sequence）
+
+
 ## [1.2.4] - 2026-08-22
 
 ### 修复
@@ -360,7 +381,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.4...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ttermish/termish/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/ttermish/termish/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/ttermish/termish/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ttermish/termish/compare/v1.2.1...v1.2.2
