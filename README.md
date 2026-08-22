@@ -226,6 +226,29 @@ browser for desktop workflows while the phone stays native.
   engine; add/edit/remove providers (name, key, resource ID) in Settings —
   keys live in the platform vault; new engines plug in behind one interface
 
+**Screen mirroring (remote desktop, macOS)**
+- **Watch your Mac's screen live**: SSH transport carries an H.264 stream
+  (avfoundation capture → libx264 → MPEG-TS), decoded by ExoPlayer with Fit
+  scaling and a live FPS / resolution badge
+- **PiP window** on the terminal page: drag anywhere, resize with a corner
+  handle or **pinch with two fingers**, close with ✕ — position & size
+  survive fullscreen round-trips
+- **True fullscreen**: covers the tab bar and status bar (Android hides the
+  status bar via immersive mode); standard player-style back arrow
+- **Guided service install**: macOS TCC blocks screen capture from SSH
+  sessions, so a capture daemon runs as a LaunchAgent in your GUI session
+  (relay + ffmpeg, self-healing); when it's missing or ffmpeg can't be found
+  (SSH PATH hides Homebrew dirs), the app offers one-tap install with live
+  logs and keeps your existing setup
+- **Sleep / lock handling**: when the display sleeps, the relay holds the
+  connection instead of killing ffmpeg — wake the Mac and the picture
+  resumes automatically; the app shows a clear hint ("display asleep /
+  locked") instead of a generic connection error. Note: while locked, the
+  stream shows the macOS lock screen — that's an OS-level limitation, not a
+  bug (unlock to see the desktop)
+- Error diagnosis distinguishes missing ffmpeg, service not running, and
+  stream-drop reasons (relay reports the actual cause)
+
 **App**
 - Hosts / Connections / Settings tabs; host search, tags, quick commands,
   password / private-key / encrypted-private-key (PKCS#8, legacy PEM, OpenSSH —

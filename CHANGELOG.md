@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+### 新增
+
+- 远程画面小窗支持**双指捏合/张开缩放**（单指拖动移动、右下角把手缩放、点击全屏统一由手势层处理）
+- 全屏改为**真全屏**：覆盖 tab 栏与状态栏区域，Android 沉浸式隐藏状态栏；顶部元素避让状态栏（双保险）
+- 全屏返回按钮改为标准播放器风格（纯箭头，与全应用 `KeyboardArrowLeft` 统一），去掉「收起」文字
+- **息屏/锁屏处理**：relay 看门狗感知屏幕电源状态（`CGDisplayIsAsleep`），息屏时不 kill ffmpeg、不断连，唤醒后画面自动恢复；客户端显示明确提示（「Mac 屏幕已关闭，唤醒后自动恢复」/「锁屏状态，画面为锁屏界面」）而非笼统的「连接不上」
+
+### 修复
+
+- 横屏下终端键盘工具栏错位：`weight + aspectRatio` 在宽屏下产生超高键、文字截断（aspectRatio 无视高度约束），改为固定键高 48dp
+- Tab 返回历史：终端 tab 之间切换不再压栈（返回直接回主页）；补上 SFTP 从终端页进入的返回链
+- SFTP 选主机面板关闭叉号在 Dialog 中不跟随主题（LocalContentColor 平台默认黑色），显式指定 `onSurface`
+
+### 工程
+
+- 接入 **ktlint**（mavenCentral CLI + JavaExec 任务，不依赖插件门户）：`make lint-kt` / `./gradlew ktlintCheck`；CI checks 阶段加入；存量 175 文件格式化（import 排序/换行风格等），Compose 函数名与协议层常量按规则豁免，3 个文件重命名对齐类名
+
 ## [1.5.1] - 2026-08-22
 
 ### 修复
