@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-08-22
+
+### 修复
+
+- 推流服务装过仍提示安装：SSH 非交互会话 PATH 受限，`command -v ffmpeg` 漏掉 brew
+  安装的 ffmpeg → 误报缺失；查找路径扩展为显式探测 `/opt/homebrew/bin`、
+  `/usr/local/bin`、`~/bin`（读流检测与安装脚本一致）
+- 安装脚本 brew 分支装完重新定位 ffmpeg 真实路径（relay 不再拉起不存在的二进制）
+- 缺 ffmpeg（FFMPEG_MISSING）与服务未运行统一进安装引导卡片
+- 安装引导卡片不再叠加通用错误态：红色错误文案 + 「重新连接」按钮与「安装」
+  操作重复；卡片按具体原因显示文案，安装失败保留日志可重试
+
 ## [1.5.0] - 2026-08-22
 
 ### 新增
@@ -412,7 +424,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/ttermish/termish/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/ttermish/termish/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ttermish/termish/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ttermish/termish/compare/v1.2.4...v1.3.0
