@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-08-22
+
+### 修复
+
+- **语音输入静音自动结束过于敏感**：轻声说话（RMS ~1000）被旧阈值 0.05 误判为静音，
+  停顿 1.6s 即切断。阈值降至 0.02、静音窗口延至 2.4s，容忍句中 1-2s 停顿
+
 ## [1.2.0] - 2026-08-22
 
 ### 新增
@@ -331,7 +338,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/ttermish/termish/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ttermish/termish/compare/v1.1.14...v1.2.0
 [1.1.14]: https://github.com/ttermish/termish/compare/v1.1.13...v1.1.14
 [1.1.13]: https://github.com/ttermish/termish/compare/v1.1.12...v1.1.13
