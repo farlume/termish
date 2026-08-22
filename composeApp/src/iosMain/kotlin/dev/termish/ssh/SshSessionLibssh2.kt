@@ -46,6 +46,7 @@ import libssh2._LIBSSH2_USERAUTH_KBDINT_PROMPT
 import libssh2._LIBSSH2_USERAUTH_KBDINT_RESPONSE
 import libssh2.libssh2_channel_close
 import libssh2.libssh2_channel_free
+import libssh2.libssh2_channel_get_exit_status
 import libssh2.libssh2_channel_open_ex
 import libssh2.libssh2_channel_process_startup
 import libssh2.libssh2_channel_read_ex
@@ -488,7 +489,7 @@ class SshSessionLibssh2(
         }
     }
 
-    override fun runCommand(command: String, timeoutMs: Long): String? = runBlocking {
+    override fun runCommandDetailed(command: String, timeoutMs: Long): CommandOutput? = runBlocking {
         // libssh2 会话非线程安全：读循环/keepalive 在串行线程运行，
         // 控制面命令必须编组到同一线程，避免并发触碰 LIBSSH2_SESSION。
         withContext(serialDispatcher) { doRunCommand(command, timeoutMs) }
@@ -510,7 +511,7 @@ class SshSessionLibssh2(
     }
 
     /** 在已认证会话上开临时 exec 通道执行控制面命令，不重新认证、不打断交互 shell。 */
-    private fun doRunCommand(command: String, timeoutMs: Long): String? {
+    private fun doRunCommand(command: String, timeoutMs: Long): CommandOutput? {
         val s = session ?: return null
         if (closed || channel == null) return null
         val ch = openChannel(s) ?: return null
@@ -523,21 +524,45 @@ class SshSessionLibssh2(
             ) {
                 return null
             }
-            val chunks = ArrayList<ByteArray>()
+            val outChunks = ArrayList<ByteArray>()
+            val errChunks = ArrayList<ByteArray>()
             val buf = ByteArray(16 * 1024)
+            // 交替读 stdout(0)/stderr(1)：单流读满会让另一流阻塞通道。
+            // 非阻塞模式下返回 0 = 该流 EOF；两流均 EOF 即命令输出结束。
+            var outEof = false
+            var errEof = false
             val deadline = Clock.System.now().toEpochMilliseconds() + timeoutMs
-            while (Clock.System.now().toEpochMilliseconds() < deadline) {
-                val n = buf.usePinned { pinned ->
-                    libssh2_channel_read_ex(ch, 0, pinned.addressOf(0), buf.size.toULong())
+            while (Clock.System.now().toEpochMilliseconds() < deadline && !(outEof && errEof)) {
+                var progressed = false
+                if (!outEof) {
+                    val n = buf.usePinned { pinned ->
+                        libssh2_channel_read_ex(ch, 0, pinned.addressOf(0), buf.size.toULong())
+                    }
+                    when {
+                        n > 0L -> { outChunks.add(buf.copyOf(n.toInt())); progressed = true }
+                        n == 0L -> outEof = true
+                        n.toInt() == LIBSSH2_ERROR_EAGAIN -> Unit
+                        else -> break
+                    }
                 }
-                when {
-                    n > 0L -> chunks.add(buf.copyOf(n.toInt()))
-                    n == 0L -> break
-                    n.toInt() == LIBSSH2_ERROR_EAGAIN -> usleep(30_000u)
-                    else -> break
+                if (!errEof) {
+                    val n = buf.usePinned { pinned ->
+                        libssh2_channel_read_ex(ch, 1, pinned.addressOf(0), buf.size.toULong())
+                    }
+                    when {
+                        n > 0L -> { errChunks.add(buf.copyOf(n.toInt())); progressed = true }
+                        n == 0L -> errEof = true
+                        n.toInt() == LIBSSH2_ERROR_EAGAIN -> Unit
+                        else -> break
+                    }
                 }
+                if (!progressed) usleep(30_000u)
             }
-            chunks.joinToString("") { it.decodeToString() }
+            CommandOutput(
+                stdout = outChunks.joinToString("") { it.decodeToString() },
+                stderr = errChunks.joinToString("") { it.decodeToString() },
+                exitCode = libssh2_channel_get_exit_status(ch),
+            )
         } catch (_: Exception) {
             null
         } finally {

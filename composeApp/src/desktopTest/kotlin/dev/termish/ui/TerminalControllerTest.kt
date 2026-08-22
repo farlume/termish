@@ -4,6 +4,7 @@ import com.russhwolf.settings.PropertiesSettings
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
+import dev.termish.ssh.CommandOutput
 import dev.termish.ssh.CommandResult
 import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SessionInfo
@@ -114,7 +115,8 @@ class TerminalControllerTest {
         override fun connectAndRun(command: String, timeoutMs: Long): CommandResult =
             throw UnsupportedOperationException()
 
-        override fun runCommand(command: String, timeoutMs: Long): String? = commandHandler(command)
+        override fun runCommandDetailed(command: String, timeoutMs: Long): CommandOutput? =
+            commandHandler(command)?.let { CommandOutput(it, "", 0) }
 
         override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? {
             execCommands += command

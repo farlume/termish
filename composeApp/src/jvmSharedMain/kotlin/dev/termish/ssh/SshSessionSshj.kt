@@ -142,17 +142,27 @@ class SshSessionSshj(
         }
     }
 
-    override fun runCommand(command: String, timeoutMs: Long): String? {
+    override fun runCommandDetailed(command: String, timeoutMs: Long): CommandOutput? {
         if (closed.get() || !client.isConnected) return null
         var s: Session? = null
         return try {
             // 复用已认证连接：新开一个 exec 通道，不重新认证、不打断交互 shell
             s = client.startSession()
             val cmd = s.exec(command)
+            // stdout/stderr 必须并发读：sshj 流是阻塞的，单流满（远端 stderr 大量
+            // 输出）会让另一流阻塞到超时——只读 stdout 还会丢掉诊断信息
             val out = java.io.ByteArrayOutputStream()
-            cmd.inputStream.copyTo(out)
+            val err = java.io.ByteArrayOutputStream()
+            val outT = Thread { cmd.inputStream.copyTo(out) }.apply { start() }
+            val errT = Thread { cmd.errorStream.copyTo(err) }.apply { start() }
+            outT.join(10_000)
+            errT.join(10_000)
             cmd.join(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            out.toString(Charsets.UTF_8)
+            CommandOutput(
+                stdout = out.toString(Charsets.UTF_8),
+                stderr = err.toString(Charsets.UTF_8),
+                exitCode = cmd.exitStatus,
+            )
         } catch (_: Exception) {
             null
         } finally {

@@ -136,8 +136,19 @@ interface SshSession {
      * 失败/未连接/超时返回 null。不重新认证、不打断交互 shell。
      * 供控制面查询使用（系统探测、herdr api 等）；执行一次性命令且
      * 连接尚未建立时用 [connectAndRun]（连接+认证+执行+关闭）。
+     * 默认实现委托 [runCommandDetailed]（引擎只需实现后者）。
      */
-    fun runCommand(command: String, timeoutMs: Long = 15_000): String?
+    fun runCommand(command: String, timeoutMs: Long = 15_000): String? =
+        runCommandDetailed(command, timeoutMs)?.stdout
+
+    /**
+     * 执行单条命令并返回 stdout / stderr / 退出码。
+     * 诊断错误需要 stderr 与退出码：herdr CLI 失败时错误 JSON 走 stderr 且
+     * exit code 非零（如 `herdr agent prompt` 对无效 pane 返回 exit 1 +
+     * stderr `{"error":{...}}`）——只读 stdout 会把失败误判成成功。
+     * 平台实现必须读两个流（stderr 不读会因远端缓冲满阻塞通道）。
+     */
+    fun runCommandDetailed(command: String, timeoutMs: Long = 15_000): CommandOutput?
 
     /**
      * 探测远端系统（Termius 式自动识别）：在已认证连接上执行
@@ -163,6 +174,13 @@ interface SshSession {
 /**
  * exec+pty 通道：stdout = 程序渲染字节流，stdin = raw 输入。
  */
+/** 单条命令执行结果（stdout + stderr + 退出码；退出码不可得时为 null）。 */
+data class CommandOutput(
+    val stdout: String,
+    val stderr: String,
+    val exitCode: Int?,
+)
+
 interface SshExecChannel {
     /** 阻塞读下一块；EOF/关闭返回 null。 */
     fun read(): ByteArray?
