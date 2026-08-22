@@ -1,14 +1,18 @@
 package dev.termish.herdr
 
+import dev.termish.ssh.CommandOutput
+
 /**
  * herdr CLI 命令构造与输出解析（V1 控制面）。
  *
  * 全部经 SshSession.runCommand 在已认证连接上执行（复用连接、不打断 shell）。
- * 真实行为依据（herdr 0.8.0）：
+ * 真实行为依据（herdr 0.8.0，实测）：
  * - `herdr api snapshot`：JSON，含 result.snapshot（见 HerdrModels）
  * - `herdr pane read`：终端内容纯文本，无 JSON 包装（AgentDialog 上下文直接显示）
- * - `herdr agent prompt`：成功输出 CLI 包装 JSON；失败输出
- *   `{"error":{"code":"agent_not_found",...},"id":"cli:agent:prompt"}`（不退出非零）
+ * - `herdr agent prompt`：成功输出 CLI 包装 JSON；失败时**退出码非零（exit 1）
+ *   且错误 JSON 在 stderr**（如 `{"error":{"code":"agent_not_found",...},"id":"cli:agent:prompt"}`）——
+ *   必须经 [parseCommandError] 拿 [CommandOutput]（stderr + exitCode）判定，
+ *   只读 stdout 会把失败静默当成成功。
  */
 object HerdrApi {
     const val SNAPSHOT_CMD = "herdr api snapshot"
@@ -45,19 +49,31 @@ object HerdrApi {
     fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 
     /**
-     * 从 CLI 输出解析错误（`{"error":{...}}`）。成功输出不含 error 字段时返回 null。
-     * 解析失败（输出不是 JSON）也返回 null——调用方按"命令已执行"处理。
+     * 从命令结果解析 herdr CLI 错误（`{"error":{...}}`）。
+     *
+     * 判定顺序：
+     * 1. stderr/stdout 含 error JSON（herdr 失败时错误 JSON 走 stderr，如 agent_not_found）
+     * 2. 退出码非零但无 JSON → 合成错误（code = "exit_<n>"，保留退出码信息）
+     * 3. 连接级失败（输出为 null）→ 合成错误（code = "command_failed"），
+     *    避免调用方把「命令没跑成」误判为「已提交」
+     * 成功（退出码 0 且无 error JSON）返回 null。
      */
-    fun parseCliError(raw: String?): HerdrApiError? {
-        if (raw == null) return null
-        val idx = raw.indexOf("{\"error\"")
-        if (idx < 0) return null
-        // 只取 error 对象片段（CLI 包装尾部还有 id 字段，容错截断解析）
-        val candidate = raw.substring(idx)
-        return runCatching {
-            kotlinx.serialization.json.Json {
-                ignoreUnknownKeys = true
-            }.decodeFromString<HerdrCliResponse>(candidate).error
-        }.getOrNull()
+    fun parseCommandError(out: CommandOutput?): HerdrApiError? {
+        if (out == null) return HerdrApiError("command_failed", "ssh command failed or timed out")
+        val raw = listOf(out.stderr, out.stdout)
+            .firstOrNull { it.contains("{\"error\"") }
+            ?: ""
+        if (raw.isNotEmpty()) {
+            // 只取 error 对象片段（CLI 包装尾部还有 id 字段，容错截断解析）
+            val candidate = raw.substring(raw.indexOf("{\"error\""))
+            return runCatching {
+                kotlinx.serialization.json.Json {
+                    ignoreUnknownKeys = true
+                }.decodeFromString<HerdrCliResponse>(candidate).error
+            }.getOrNull() ?: HerdrApiError("unknown", "unparseable herdr error")
+        }
+        val exit = out.exitCode
+        if (exit != null && exit != 0) return HerdrApiError("exit_$exit", "command exited with code $exit")
+        return null
     }
 }
