@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-08-22
+
+### 新增
+
+- **小窗双指缩放**：远程画面小窗支持双指捏合/张开调整窗口大小（单指拖动移动、右下角把手缩放、点击全屏统一由手势层处理）
+
+### 修复
+
+- 小窗全屏后按返回直接跳主页：BackHandler 后注册者优先，全屏收起处理器须晚于 onBack 注册
+- 全屏返回按钮被视频面/错误态覆盖看不到点不到：按钮移到最顶层，改为毛玻璃「← 收起/返回」，文案入 AppStrings 双语
+- 小窗位置/尺寸在全屏往返后重置：状态提升到会话 key 块（组件内 remember 随全屏切换销毁）
+- 小窗可拖出屏幕：钳制范围按初始右上角位置修正（旧对称范围向右/上越界）
+- 小窗缩放把手拖不动：事件沿 hit path 父→子分发，把手独立手势被父节点抢走，改为统一手势按起点判定
+- 小窗贴屏幕右边缘时水平缩放被系统返回手势抢走：把手区域排除系统返回手势（跨平台 expect/actual）
+- 双指捏合时误触全屏：视频面 clickable 先于手势收到事件、位移小于 touch slop 判为点击，改由统一手势判定点击
+
 ## [1.4.0] - 2026-08-22
 
 ### 新增
@@ -396,7 +412,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/ttermish/termish/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/ttermish/termish/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/ttermish/termish/compare/v1.2.4...v1.3.0
 [1.2.4]: https://github.com/ttermish/termish/compare/v1.2.3...v1.2.4
