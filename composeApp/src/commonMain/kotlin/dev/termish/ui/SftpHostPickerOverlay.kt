@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +56,13 @@ fun SftpHostPickerOverlay(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onDismiss) {
-                    Icon(Icons.Filled.Close, contentDescription = s.navBack)
+                    // 显式 tint：Dialog 窗口的 LocalContentColor 是平台默认（黑），
+                    // 不指定会与 App 深色主题不匹配（用户反馈：深色主题下叉号是黑的）
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = s.navBack,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
                 Text(
                     s.sftpNewTitle,
@@ -85,24 +90,29 @@ fun SftpHostPickerOverlay(
 
 /** 选主机列表行：样式与首页卡片一致（头像 + IP + 连接详情），仅可点选。 */
 @Composable
-private fun SftpHostRow(host: Host, onClick: () -> Unit) {
+private fun SftpHostRow(
+    host: Host,
+    onClick: () -> Unit,
+) {
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
     val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
-    val detail = buildString {
-        append(if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh)
-        append(", ")
-        append(host.username)
-        if (host.system.isNotBlank()) {
+    val detail =
+        buildString {
+            append(if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh)
             append(", ")
-            append(host.system)
+            append(host.username)
+            if (host.system.isNotBlank()) {
+                append(", ")
+                append(host.system)
+            }
         }
-    }
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .clickable(onClick = onClick),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),

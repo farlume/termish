@@ -12,42 +12,39 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.IconButton
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.filled.Cable
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ASR_API_KEY_ACCOUNT
 import dev.termish.data.AppSettings
@@ -63,25 +60,24 @@ import dev.termish.data.asrKeyAccount
 import dev.termish.data.newId
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
-import dev.termish.notify.NotificationEvent
-import dev.termish.ssh.AuthPrompt
-import dev.termish.ssh.HostKeyInfo
-import dev.termish.ssh.SshCallbacks
-import dev.termish.ssh.SftpSession
-import dev.termish.ssh.SshConnection
-import dev.termish.ssh.createSftpSession
 import dev.termish.screen.ScreenSession
 import dev.termish.screen.ScreenUiState
-import dev.termish.ui.theme.TermishTheme
+import dev.termish.ssh.AuthPrompt
+import dev.termish.ssh.HostKeyInfo
+import dev.termish.ssh.SftpSession
+import dev.termish.ssh.SshCallbacks
+import dev.termish.ssh.SshConnection
+import dev.termish.ssh.createSftpSession
 import dev.termish.ui.theme.TerminalThemes
-import dev.termish.util.monospaceFontFamily
-import dev.termish.util.observeAppLifecycle
-import dev.termish.util.observeNetworkChange
+import dev.termish.ui.theme.TermishTheme
+import dev.termish.util.LocalTerminalFont
 import dev.termish.util.SessionKeepAlive
 import dev.termish.util.TermLog
 import dev.termish.util.TerminalFont
-import dev.termish.util.LocalTerminalFont
 import dev.termish.util.ioDispatcher
+import dev.termish.util.monospaceFontFamily
+import dev.termish.util.observeAppLifecycle
+import dev.termish.util.observeNetworkChange
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -121,7 +117,10 @@ private fun HomeTabItem(
 
 private sealed interface Screen {
     data object Home : Screen
-    data class Edit(val hostId: String?) : Screen
+
+    data class Edit(
+        val hostId: String?,
+    ) : Screen
 
     /** 直接持有 controller 引用：会话由 SessionManager 管理，跨页面存活。 */
     data object Terminal : Screen
@@ -129,7 +128,11 @@ private sealed interface Screen {
 
 /** 设置页二级页（统一由 AppRoot 管理开关：返回链 + 全屏 + 底部 tab 隐藏）。 */
 enum class SettingsSubPage {
-    TERMINAL, NOTIFICATION, DIAGNOSTICS, SNIPPETS, VOICE,
+    TERMINAL,
+    NOTIFICATION,
+    DIAGNOSTICS,
+    SNIPPETS,
+    VOICE,
 }
 
 @Composable
@@ -140,13 +143,14 @@ fun AppRoot(repository: HostRepository) {
         if (s.asrProviders.isNotEmpty() || s.asrResourceId.isBlank()) return s
         val legacyKey = SecretStore.get(SECRET_SERVICE, ASR_API_KEY_ACCOUNT)
         if (legacyKey.isNullOrBlank()) return s
-        val p = AsrProvider(
-            id = newId(),
-            type = AsrProviderType.VOLC_STREAMING,
-            name = "",
-            resourceId = s.asrResourceId,
-            enabled = true,
-        )
+        val p =
+            AsrProvider(
+                id = newId(),
+                type = AsrProviderType.VOLC_STREAMING,
+                name = "",
+                resourceId = s.asrResourceId,
+                enabled = true,
+            )
         SecretStore.set(SECRET_SERVICE, asrKeyAccount(p.id), legacyKey)
         return s.copy(asrProviders = listOf(p))
     }
@@ -164,12 +168,16 @@ fun AppRoot(repository: HostRepository) {
 
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
+
     /** tab 切换历史（tab id 栈）：返回时弹栈回到上一个 tab，栈空才回首页。 */
     val tabHistory = remember { mutableStateListOf<String>() }
+
     /** 等待连接完成后再跳转的会话（连接期间卡片头像转圈）。 */
     var pendingNavigate by remember { mutableStateOf<TerminalController?>(null) }
+
     /** 终端 + 菜单「收藏夹」对话框：host + 收藏路径列表（null = 关闭）。 */
     var favoritesDialog by remember { mutableStateOf<Pair<Host, List<String>>?>(null) }
+
     /** 屏幕会话条目（远程画面推流）。 */
     data class ScreenSessionEntry(
         val host: Host,
@@ -180,6 +188,7 @@ fun AppRoot(repository: HostRepository) {
     )
 
     val screenSessions = remember { mutableStateListOf<ScreenSessionEntry>() }
+
     /** SFTP：选主机覆盖层 / 当前会话 / 认证与主机密钥弹窗。 */
     var sftpPickerVisible by remember { mutableStateOf(false) }
     var sftpAuth by remember { mutableStateOf<AuthPromptRequest?>(null) }
@@ -193,63 +202,75 @@ fun AppRoot(repository: HostRepository) {
      * suspend：createSftpSession 是阻塞连接，必须切 IO 线程（调用方在 Main scope，
      * 否则重连按钮点击后 UI 冻结几秒——「点了没反应」）。
      */
-    suspend fun establishSftp(host: Host, onEstablished: (SftpSession, Any) -> Unit) {
+    suspend fun establishSftp(
+        host: Host,
+        onEstablished: (SftpSession, Any) -> Unit,
+    ) {
         // 本次连接的身份代次标识：onClosed 凭此区分「本代连接意外断开」与
         // 「重连/换新时旧连接被主动关闭」（close 会同步触发旧回调，
         // 不比对代次就会把断开 banner 误标回刚重连成功的会话）
         val connectionToken = Any()
         val (pw, key) = resolveCredentials(host)
-        val callbacks = object : SshCallbacks {
-            override suspend fun onOutput(data: ByteArray) {}
-            override suspend fun onStderr(data: ByteArray) {}
-            override fun onExitStatus(status: Int) {}
-            override fun onClosed(reason: String?) {
-                // SFTP 断开主动推送：立即置 disconnected（banner 红条 + 重连入口）。
-                // 代次比对：重连/换新/移除时被 close 的旧连接回调仍会触发，
-                // 但条目已登记新代次（或已移除）→ 忽略，不误标
-                val entry = sessionManager.sftpSessions
-                    .firstOrNull { it.host.id == host.id && it.session != null }
-                if (entry == null || entry.connectionToken !== connectionToken) return
-                scope.launch {
-                    TermLog.w("sftp") { "sftp closed ${host.name}: ${reason ?: "unknown"}" }
-                    entry.uiState.disconnected = true
+        val callbacks =
+            object : SshCallbacks {
+                override suspend fun onOutput(data: ByteArray) {}
+
+                override suspend fun onStderr(data: ByteArray) {}
+
+                override fun onExitStatus(status: Int) {}
+
+                override fun onClosed(reason: String?) {
+                    // SFTP 断开主动推送：立即置 disconnected（banner 红条 + 重连入口）。
+                    // 代次比对：重连/换新/移除时被 close 的旧连接回调仍会触发，
+                    // 但条目已登记新代次（或已移除）→ 忽略，不误标
+                    val entry =
+                        sessionManager.sftpSessions
+                            .firstOrNull { it.host.id == host.id && it.session != null }
+                    if (entry == null || entry.connectionToken !== connectionToken) return
+                    scope.launch {
+                        TermLog.w("sftp") { "sftp closed ${host.name}: ${reason ?: "unknown"}" }
+                        entry.uiState.disconnected = true
+                    }
                 }
-            }
-            override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-                val req = AuthPromptRequest(prompt)
-                sftpAuth = req
-                return req.deferred.await()
-            }
-            override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-                // 与终端连接同源：已授信指纹匹配自动通过，不重复弹窗
-                val known = repository.getHost(host.id)?.knownHostFingerprint
-                    ?: host.knownHostFingerprint
-                if (known != null) {
-                    if (known == hostKey.fingerprintSha256) return true
-                    // 指纹变更：弹窗让用户核对新旧指纹
-                    val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+
+                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+                    val req = AuthPromptRequest(prompt)
+                    sftpAuth = req
+                    return req.deferred.await()
+                }
+
+                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                    // 与终端连接同源：已授信指纹匹配自动通过，不重复弹窗
+                    val known =
+                        repository.getHost(host.id)?.knownHostFingerprint
+                            ?: host.knownHostFingerprint
+                    if (known != null) {
+                        if (known == hostKey.fingerprintSha256) return true
+                        // 指纹变更：弹窗让用户核对新旧指纹
+                        val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                        sftpHostKey = req
+                        val accepted = runBlocking { req.deferred.await() }
+                        if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                        return accepted
+                    }
+                    // 首次连接：设置关闭首次确认则直接信任
+                    if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
+                    val req = HostKeyRequest(hostKey)
                     sftpHostKey = req
                     val accepted = runBlocking { req.deferred.await() }
                     if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                     return accepted
                 }
-                // 首次连接：设置关闭首次确认则直接信任
-                if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
-                val req = HostKeyRequest(hostKey)
-                sftpHostKey = req
-                val accepted = runBlocking { req.deferred.await() }
-                if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
-                return accepted
             }
-        }
-        val conn = SshConnection(
-            host = host.hostname,
-            port = host.port,
-            username = host.username,
-            password = pw,
-            privateKeyPem = key,
-            keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
-        )
+        val conn =
+            SshConnection(
+                host = host.hostname,
+                port = host.port,
+                username = host.username,
+                password = pw,
+                privateKeyPem = key,
+                keepAliveSeconds = repository.loadSettings().keepaliveSeconds,
+            )
         val session = withContext(ioDispatcher()) { createSftpSession(conn, callbacks) }
         TermLog.i("sftp") { "connected ${host.name} ${host.hostname}:${host.port}" }
         onEstablished(session, connectionToken)
@@ -259,46 +280,57 @@ fun AppRoot(repository: HostRepository) {
      * 建立屏幕推流会话（认证/主机密钥确认走全局弹窗，与 SFTP 同模式）。
      * 成功后注册条目并切到屏幕 tab；失败由调用方提示。
      */
-    suspend fun establishScreen(host: Host, onEstablished: (ScreenSession, ScreenUiState) -> Unit) {
+    suspend fun establishScreen(
+        host: Host,
+        onEstablished: (ScreenSession, ScreenUiState) -> Unit,
+    ) {
         val (pw, key) = resolveCredentials(host)
-        val callbacks = object : SshCallbacks {
-            override suspend fun onOutput(data: ByteArray) {}
-            override suspend fun onStderr(data: ByteArray) {}
-            override fun onExitStatus(status: Int) {}
-            override fun onClosed(reason: String?) {}
-            override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-                val req = AuthPromptRequest(prompt)
-                sftpAuth = req
-                return req.deferred.await()
-            }
-            override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-                val known = repository.getHost(host.id)?.knownHostFingerprint
-                    ?: host.knownHostFingerprint
-                if (known != null) {
-                    if (known == hostKey.fingerprintSha256) return true
-                    val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+        val callbacks =
+            object : SshCallbacks {
+                override suspend fun onOutput(data: ByteArray) {}
+
+                override suspend fun onStderr(data: ByteArray) {}
+
+                override fun onExitStatus(status: Int) {}
+
+                override fun onClosed(reason: String?) {}
+
+                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+                    val req = AuthPromptRequest(prompt)
+                    sftpAuth = req
+                    return req.deferred.await()
+                }
+
+                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                    val known =
+                        repository.getHost(host.id)?.knownHostFingerprint
+                            ?: host.knownHostFingerprint
+                    if (known != null) {
+                        if (known == hostKey.fingerprintSha256) return true
+                        val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                        sftpHostKey = req
+                        val accepted = runBlocking { req.deferred.await() }
+                        if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
+                        return accepted
+                    }
+                    if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
+                    val req = HostKeyRequest(hostKey)
                     sftpHostKey = req
                     val accepted = runBlocking { req.deferred.await() }
                     if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                     return accepted
                 }
-                if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
-                val req = HostKeyRequest(hostKey)
-                sftpHostKey = req
-                val accepted = runBlocking { req.deferred.await() }
-                if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
-                return accepted
             }
-        }
-        val conn = SshConnection(
-            host = host.hostname,
-            port = host.port,
-            username = host.username,
-            password = pw,
-            privateKeyPem = key,
-            connectTimeoutMillis = 10_000,
-            keepAliveSeconds = 0,
-        )
+        val conn =
+            SshConnection(
+                host = host.hostname,
+                port = host.port,
+                username = host.username,
+                password = pw,
+                privateKeyPem = key,
+                connectTimeoutMillis = 10_000,
+                keepAliveSeconds = 0,
+            )
         val uiState = ScreenUiState()
         val session = ScreenSession(conn, callbacks, scope, uiState)
         withContext(ioDispatcher()) { session.start() }
@@ -388,6 +420,9 @@ fun AppRoot(repository: HostRepository) {
                         entry.uiState.path = initialPath
                     }
                     // 与 entry 共用同一 uiState：浏览路径变化能反映到持久化（退后台保存）
+                    // 从终端页进入：压当前终端 tab 进返回历史（返回时回到终端，
+                    // 而非直接回主页——与 tab 栏切换同一返回链）
+                    (currentTab as? SessionTab.Terminal)?.let { tabHistory.add(it.id) }
                     currentTab = SessionTab.Sftp(host, session, entry.uiState)
                     screen = Screen.Terminal
                 }
@@ -401,7 +436,7 @@ fun AppRoot(repository: HostRepository) {
         // TUI 会话（herdr 工作台 / 启动命令）不预连：列表页无终端画布只能
         // 80x24 起步，herdr/tmux 按错误尺寸布局后再 resize 会整体重排跳动；
         // 直接进终端页等画布量到实际尺寸后建连，首帧即正确布局
-        //（纯 shell 预连无此问题——resize 只是把提示符换行）
+        // （纯 shell 预连无此问题——resize 只是把提示符换行）
         if (target.host.launchHerdr || target.host.startupCommand.isNotBlank()) {
             currentTab = SessionTab.Terminal(target)
             screen = Screen.Terminal
@@ -437,11 +472,12 @@ fun AppRoot(repository: HostRepository) {
 
     // iOS：退到桌面后系统挂起进程、掐断 socket；回前台时自动重连活跃会话（缓冲保留）。
     // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
-    val disposeNetwork = observeNetworkChange { kind ->
-        // 网络事件：SSH 断开/切换都重连；mosh 断网与传输切换都靠 UDP 漫游自愈，不重建
-        // （实现与 NetworkChangeKind 注释一致：mosh 仅客户端异常退出时才走自动重连）
-        sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
-    }
+    val disposeNetwork =
+        observeNetworkChange { kind ->
+            // 网络事件：SSH 断开/切换都重连；mosh 断网与传输切换都靠 UDP 漫游自愈，不重建
+            // （实现与 NetworkChangeKind 注释一致：mosh 仅客户端异常退出时才走自动重连）
+            sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
+        }
     DisposableEffect(Unit) {
         // 通知中心：注入设置读取器；前后台状态供后台事件通知过滤；
         // 「重新连接」动作 → 找到该主机会话重连（无活跃会话则打开主机页）
@@ -461,24 +497,25 @@ fun AppRoot(repository: HostRepository) {
                     }
             }
         }
-        val dispose = observeAppLifecycle { foreground ->
-            TermLog.d("life") { "foreground=$foreground" }
-            NotificationCenter.foreground = foreground
-            if (foreground) {
-                sessionManager.reconnectDroppedSessions()
-                // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
-                // 回前台立即重新拉起，避免 wakelock 缺失导致锁屏断连。
-                // 只对【已连接】会话拉起：disconnect 的会话保留在列表里，误拉起会
-                // 造成计数无对应 stop 的服务空转；待重连的会话由 startKeepAlive 自己拉。
-                if (sessionManager.sessions.any { it.isConnected() } && !SessionKeepAlive.isActive()) {
-                    SessionKeepAlive.onSessionStart()
+        val dispose =
+            observeAppLifecycle { foreground ->
+                TermLog.d("life") { "foreground=$foreground" }
+                NotificationCenter.foreground = foreground
+                if (foreground) {
+                    sessionManager.reconnectDroppedSessions()
+                    // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
+                    // 回前台立即重新拉起，避免 wakelock 缺失导致锁屏断连。
+                    // 只对【已连接】会话拉起：disconnect 的会话保留在列表里，误拉起会
+                    // 造成计数无对应 stop 的服务空转；待重连的会话由 startKeepAlive 自己拉。
+                    if (sessionManager.sessions.any { it.isConnected() } && !SessionKeepAlive.isActive()) {
+                        SessionKeepAlive.onSessionStart()
+                    }
+                } else {
+                    sessionManager.noteBackgrounded()
+                    // 退后台即保存最新 SFTP 浏览路径：杀 App 重进后恢复到上次目录
+                    sessionManager.persistNow()
                 }
-            } else {
-                sessionManager.noteBackgrounded()
-                // 退后台即保存最新 SFTP 浏览路径：杀 App 重进后恢复到上次目录
-                sessionManager.persistNow()
             }
-        }
         onDispose {
             dispose()
             disposeNetwork()
@@ -486,7 +523,7 @@ fun AppRoot(repository: HostRepository) {
     }
 
     // 全局返回栈：非主页 → 回主页；设置二级页 → 关二级页回设置；主页非主机 tab → 回主机 tab
-    //（二级页状态必须提升到这里：此前藏在 SettingsScreen 内部，系统返回键/手势
+    // （二级页状态必须提升到这里：此前藏在 SettingsScreen 内部，系统返回键/手势
     // 直接跳回主机 tab——二级页开着却无处返回）
     var homeTab by remember { mutableStateOf(HomeTab.HOSTS) }
     var settingsSubPage by remember { mutableStateOf<SettingsSubPage?>(null) }
@@ -512,466 +549,585 @@ fun AppRoot(repository: HostRepository) {
             // 状态栏图标颜色只看当前页面实际背景亮度：
             // - 终端 tab → 按终端主题背景亮度
             // - 其余页面 → 按应用主题亮度
-            val pageDark = if (screen is Screen.Terminal && currentTab is SessionTab.Terminal) {
-                terminalTheme.background().luminance() < 0.5f
-            } else {
-                settings.theme != ThemeMode.LIGHT
-            }
+            val pageDark =
+                if (screen is Screen.Terminal && currentTab is SessionTab.Terminal) {
+                    terminalTheme.background().luminance() < 0.5f
+                } else {
+                    settings.theme != ThemeMode.LIGHT
+                }
             PlatformStatusBarIcons(lightIcons = pageDark)
             Box(Modifier.fillMaxSize()) {
-            // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
-            // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
-            sessionManager.sessions.forEach { controller ->
-                controller.authPrompt?.let { prompt ->
-                    AuthPromptDialog(prompt.prompt) { answers ->
-                        controller.respondToPrompt(answers)
+                // 会话级弹窗全局渲染：认证 / 主机密钥确认在首页连接等待时也能弹出，
+                // 不必先进入终端页（否则连接卡在转圈却看不到授权请求）
+                sessionManager.sessions.forEach { controller ->
+                    controller.authPrompt?.let { prompt ->
+                        AuthPromptDialog(prompt.prompt) { answers ->
+                            controller.respondToPrompt(answers)
+                        }
+                    }
+                    controller.hostKeyPrompt?.let { hk ->
+                        HostKeyDialog(
+                            key = hk.key,
+                            changed = hk.changed,
+                            previousFingerprint = hk.previousFingerprint,
+                        ) { accept ->
+                            controller.respondToHostKey(accept)
+                        }
                     }
                 }
-                controller.hostKeyPrompt?.let { hk ->
-                    HostKeyDialog(
-                        key = hk.key,
-                        changed = hk.changed,
-                        previousFingerprint = hk.previousFingerprint,
-                    ) { accept ->
-                        controller.respondToHostKey(accept)
-                    }
-                }
-            }
-            when (val s = screen) {
-                Screen.Home -> {
-                    Scaffold(
-                        // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
-                        // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
-                        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                        bottomBar = {
-                            // 设置二级页打开时全屏：隐藏底部 tab（二级页由返回链统一关闭）
-                            if (settingsSubPage == null) {
-                                // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
-                                val mono = monospaceFontFamily()
-                                Column {
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                    Row(
-                                        Modifier.fillMaxWidth()
-                                            .background(MaterialTheme.colorScheme.surface)
-                                            .navigationBarsPadding(),
-                                    ) {
-                                        HomeTabItem(appStrings.appTabHosts, Icons.Default.Dns, homeTab == HomeTab.HOSTS, mono, Modifier.weight(1f)) {
-                                            homeTab = HomeTab.HOSTS
-                                        }
-                                        HomeTabItem(appStrings.appTabConnections, Icons.Default.Cable, homeTab == HomeTab.CONNECTIONS, mono, Modifier.weight(1f), badge = sessionManager.sessions.size) {
-                                            homeTab = HomeTab.CONNECTIONS
-                                        }
-                                        HomeTabItem(appStrings.appTabSettings, Icons.Default.Settings, homeTab == HomeTab.SETTINGS, mono, Modifier.weight(1f)) {
-                                            homeTab = HomeTab.SETTINGS
+                when (val s = screen) {
+                    Screen.Home -> {
+                        Scaffold(
+                            // 各页面 Header 自行避让状态栏，底部 NavigationBar 自行避让导航条，
+                            // 外层不再重复施加（否则标题上方出现双倍状态栏高度）
+                            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+                            bottomBar = {
+                                // 设置二级页打开时全屏：隐藏底部 tab（二级页由返回链统一关闭）
+                                if (settingsSubPage == null) {
+                                    // 自绘极简底栏：无胶囊指示器，选中=主题绿，等宽字体小标签
+                                    val mono = monospaceFontFamily()
+                                    Column {
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                        Row(
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .background(MaterialTheme.colorScheme.surface)
+                                                .navigationBarsPadding(),
+                                        ) {
+                                            HomeTabItem(
+                                                appStrings.appTabHosts,
+                                                Icons.Default.Dns,
+                                                homeTab == HomeTab.HOSTS,
+                                                mono,
+                                                Modifier.weight(1f),
+                                            ) {
+                                                homeTab = HomeTab.HOSTS
+                                            }
+                                            HomeTabItem(
+                                                appStrings.appTabConnections,
+                                                Icons.Default.Cable,
+                                                homeTab == HomeTab.CONNECTIONS,
+                                                mono,
+                                                Modifier.weight(1f),
+                                                badge = sessionManager.sessions.size,
+                                            ) {
+                                                homeTab = HomeTab.CONNECTIONS
+                                            }
+                                            HomeTabItem(
+                                                appStrings.appTabSettings,
+                                                Icons.Default.Settings,
+                                                homeTab == HomeTab.SETTINGS,
+                                                mono,
+                                                Modifier.weight(1f),
+                                            ) {
+                                                homeTab = HomeTab.SETTINGS
+                                            }
                                         }
                                     }
                                 }
-                            }
-                        },
-                    ) { padding ->
-                        Box(Modifier.padding(padding)) {
-                            when (homeTab) {
-                                HomeTab.HOSTS -> HostListScreen(
-                                    hosts = hosts,
-                                    hostSessions = (
-                                        sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
-                                            sessionManager.sftpSessions.map { HostSessionItem.Sftp(it.host, it.session) }
-                                        ).groupBy { it.hostId },
-                                    onAdd = { screen = Screen.Edit(null) },
-                                    onEdit = { screen = Screen.Edit(it.id) },
-                                    onConnect = { host ->
-                                        // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建；
-                                        // 但配置/凭据已变更的旧会话不复用（用当前配置新建）
-                                        val connecting = sessionManager.sessions.firstOrNull {
-                                            it.host.id == host.id &&
-                                                (it.status == ConnStatus.CONNECTING || it.status == ConnStatus.AUTH) &&
-                                                it.credentialKey == sessionManager.signatureFor(host)
-                                        }
-                                        if (connecting != null) {
-                                            currentTab = SessionTab.Terminal(connecting)
-                                            screen = Screen.Terminal
-                                        } else {
-                                            val controller = sessionManager.open(host, settings.autoReconnect) {
-                                                hosts = repository.listHosts()
-                                            }
-                                            // 先留在列表：卡片头像转圈，连接完成后再跳转
-                                            pendingNavigate = controller
-                                        }
-                                    },
-                                    onConnectBatch = { batch ->
-                                        // 批处理连接：逐个建立会话（后台运行），不跳转终端页
-                                        batch.forEach { host ->
-                                            sessionManager.open(host, settings.autoReconnect) {
-                                                hosts = repository.listHosts()
-                                            }
-                                        }
-                                    },
-                                    onDisconnect = { host ->
-                                        // 断开该主机全部会话：终端断开保留 + SFTP 释放（与「全部关闭」一致）
-                                        sessionManager.closeAllForHost(host.id)
-                                    },
-                                    onOpenSession = { controller ->
-                                        // 卡片点击 = 用当前配置连这台主机：配置/凭据已变更的旧会话不复用，
-                                        // 用当前配置新建（旧会话保留在连接页，可手动关闭/重入）
-                                        if (controller.credentialKey != sessionManager.signatureFor(controller.host)) {
-                                            val fresh = sessionManager.open(controller.host, settings.autoReconnect) {
-                                                hosts = repository.listHosts()
-                                            }
-                                            pendingNavigate = fresh
-                                        } else {
-                                            currentTab = SessionTab.Terminal(controller)
-                                            screen = Screen.Terminal
-                                        }
-                                    },
-                                    onOpenSftp = { host, session ->
-                                        // 用 entry 的 uiState（若已存在）：重新进入不重置浏览状态/路径
-                                        val entry = sessionManager.sftpSessions.firstOrNull { it.host.id == host.id }
-                                        currentTab = SessionTab.Sftp(host, session, entry?.uiState ?: SftpUiState())
-                                        screen = Screen.Terminal
-                                    },
-                                    onCloseAllSessions = { host ->
-                                        // 关闭该主机全部会话：终端断开保留 + SFTP 释放
-                                        sessionManager.closeAllForHost(host.id)
-                                    },
-                                    onDelete = { host ->
-                                        sessionManager.closeForHost(host.id)
-                                        SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "password"))
-                                        SecretStore.delete(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"))
-                                        repository.deleteHost(host.id)
-                                        refreshHosts()
-                                    },
-                                )
-
-                                HomeTab.CONNECTIONS -> ConnectionsScreen(
-                                    sessions = sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
-                                        sessionManager.sftpSessions.map { HostSessionItem.Sftp(it.host, it.session) },
-                                    onOpen = { item ->
-                                        when (item) {
-                                            is HostSessionItem.Terminal -> {
-                                                currentTab = SessionTab.Terminal(item.controller)
-                                                screen = Screen.Terminal
-                                            }
-                                            is HostSessionItem.Sftp -> {
-                                                // 连接页重入：用 entry 的 uiState（浏览状态/路径保留）
-                                                val entry = sessionManager.sftpSessions.firstOrNull {
-                                                    it.host.id == item.host.id && it.session === item.session
+                            },
+                        ) { padding ->
+                            Box(Modifier.padding(padding)) {
+                                when (homeTab) {
+                                    HomeTab.HOSTS ->
+                                        HostListScreen(
+                                            hosts = hosts,
+                                            hostSessions =
+                                                (
+                                                    sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
+                                                        sessionManager.sftpSessions.map {
+                                                            HostSessionItem.Sftp(
+                                                                it.host,
+                                                                it.session,
+                                                            )
+                                                        }
+                                                ).groupBy { it.hostId },
+                                            onAdd = { screen = Screen.Edit(null) },
+                                            onEdit = { screen = Screen.Edit(it.id) },
+                                            onConnect = { host ->
+                                                // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建；
+                                                // 但配置/凭据已变更的旧会话不复用（用当前配置新建）
+                                                val connecting =
+                                                    sessionManager.sessions.firstOrNull {
+                                                        it.host.id == host.id &&
+                                                            (
+                                                                it.status == ConnStatus.CONNECTING ||
+                                                                    it.status == ConnStatus.AUTH
+                                                            ) &&
+                                                            it.credentialKey == sessionManager.signatureFor(host)
+                                                    }
+                                                if (connecting != null) {
+                                                    currentTab = SessionTab.Terminal(connecting)
+                                                    screen = Screen.Terminal
+                                                } else {
+                                                    val controller =
+                                                        sessionManager.open(host, settings.autoReconnect) {
+                                                            hosts = repository.listHosts()
+                                                        }
+                                                    // 先留在列表：卡片头像转圈，连接完成后再跳转
+                                                    pendingNavigate = controller
                                                 }
-                                                currentTab = SessionTab.Sftp(item.host, item.session, entry?.uiState ?: SftpUiState())
-                                                screen = Screen.Terminal
-                                            }
-                                        }
-                                    },
-                                    onClose = { item ->
-                                        when (item) {
-                                            is HostSessionItem.Terminal -> {
-                                                if (item.isActive) sessionManager.disconnect(item.controller)
-                                                else sessionManager.remove(item.controller)
-                                            }
-                                            is HostSessionItem.Sftp -> {
-                                                // 与终端同语义两段式：活跃=断开保留（重连恢复路径），
-                                                // 已断开（session=null）=从列表移除
-                                                val entry = sessionManager.sftpSessions
-                                                    .firstOrNull { it.session === item.session || (item.session == null && it.host.id == item.host.id) }
-                                                when {
-                                                    entry == null -> {}
-                                                    entry.session != null -> sessionManager.disconnectSftp(entry)
-                                                    else -> sessionManager.closeSftp(entry)
+                                            },
+                                            onConnectBatch = { batch ->
+                                                // 批处理连接：逐个建立会话（后台运行），不跳转终端页
+                                                batch.forEach { host ->
+                                                    sessionManager.open(host, settings.autoReconnect) {
+                                                        hosts = repository.listHosts()
+                                                    }
                                                 }
-                                            }
-                                        }
-                                    },
-                                )
+                                            },
+                                            onDisconnect = { host ->
+                                                // 断开该主机全部会话：终端断开保留 + SFTP 释放（与「全部关闭」一致）
+                                                sessionManager.closeAllForHost(host.id)
+                                            },
+                                            onOpenSession = { controller ->
+                                                // 卡片点击 = 用当前配置连这台主机：配置/凭据已变更的旧会话不复用，
+                                                // 用当前配置新建（旧会话保留在连接页，可手动关闭/重入）
+                                                if (controller.credentialKey !=
+                                                    sessionManager.signatureFor(controller.host)
+                                                ) {
+                                                    val fresh =
+                                                        sessionManager.open(controller.host, settings.autoReconnect) {
+                                                            hosts = repository.listHosts()
+                                                        }
+                                                    pendingNavigate = fresh
+                                                } else {
+                                                    currentTab = SessionTab.Terminal(controller)
+                                                    screen = Screen.Terminal
+                                                }
+                                            },
+                                            onOpenSftp = { host, session ->
+                                                // 用 entry 的 uiState（若已存在）：重新进入不重置浏览状态/路径
+                                                val entry =
+                                                    sessionManager.sftpSessions.firstOrNull {
+                                                        it.host.id ==
+                                                            host.id
+                                                    }
+                                                currentTab =
+                                                    SessionTab.Sftp(host, session, entry?.uiState ?: SftpUiState())
+                                                screen = Screen.Terminal
+                                            },
+                                            onCloseAllSessions = { host ->
+                                                // 关闭该主机全部会话：终端断开保留 + SFTP 释放
+                                                sessionManager.closeAllForHost(host.id)
+                                            },
+                                            onDelete = { host ->
+                                                sessionManager.closeForHost(host.id)
+                                                SecretStore.delete(
+                                                    SECRET_SERVICE,
+                                                    secretAccountFor(host.id, "password"),
+                                                )
+                                                SecretStore.delete(
+                                                    SECRET_SERVICE,
+                                                    secretAccountFor(host.id, "privateKey"),
+                                                )
+                                                repository.deleteHost(host.id)
+                                                refreshHosts()
+                                            },
+                                        )
 
-                                HomeTab.SETTINGS -> SettingsScreen(
-                                    settings = settings,
-                                    onChange = { new ->
-                                        // 即改即存
-                                        repository.saveSettings(new)
-                                        settings = new
-                                    },
-                                    repository = repository,
-                                    subPage = settingsSubPage,
-                                    onOpenSub = { settingsSubPage = it },
-                                )
+                                    HomeTab.CONNECTIONS ->
+                                        ConnectionsScreen(
+                                            sessions =
+                                                sessionManager.sessions.map { HostSessionItem.Terminal(it) } +
+                                                    sessionManager.sftpSessions.map {
+                                                        HostSessionItem.Sftp(
+                                                            it.host,
+                                                            it.session,
+                                                        )
+                                                    },
+                                            onOpen = { item ->
+                                                when (item) {
+                                                    is HostSessionItem.Terminal -> {
+                                                        currentTab = SessionTab.Terminal(item.controller)
+                                                        screen = Screen.Terminal
+                                                    }
+                                                    is HostSessionItem.Sftp -> {
+                                                        // 连接页重入：用 entry 的 uiState（浏览状态/路径保留）
+                                                        val entry =
+                                                            sessionManager.sftpSessions.firstOrNull {
+                                                                it.host.id == item.host.id &&
+                                                                    it.session === item.session
+                                                            }
+                                                        currentTab =
+                                                            SessionTab.Sftp(
+                                                                item.host,
+                                                                item.session,
+                                                                entry?.uiState ?: SftpUiState(),
+                                                            )
+                                                        screen = Screen.Terminal
+                                                    }
+                                                }
+                                            },
+                                            onClose = { item ->
+                                                when (item) {
+                                                    is HostSessionItem.Terminal -> {
+                                                        if (item.isActive) {
+                                                            sessionManager.disconnect(item.controller)
+                                                        } else {
+                                                            sessionManager.remove(item.controller)
+                                                        }
+                                                    }
+                                                    is HostSessionItem.Sftp -> {
+                                                        // 与终端同语义两段式：活跃=断开保留（重连恢复路径），
+                                                        // 已断开（session=null）=从列表移除
+                                                        val entry =
+                                                            sessionManager.sftpSessions
+                                                                .firstOrNull {
+                                                                    it.session === item.session ||
+                                                                        (
+                                                                            item.session == null &&
+                                                                                it.host.id == item.host.id
+                                                                        )
+                                                                }
+                                                        when {
+                                                            entry == null -> {}
+                                                            entry.session != null ->
+                                                                sessionManager.disconnectSftp(
+                                                                    entry,
+                                                                )
+                                                            else -> sessionManager.closeSftp(entry)
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                        )
+
+                                    HomeTab.SETTINGS ->
+                                        SettingsScreen(
+                                            settings = settings,
+                                            onChange = { new ->
+                                                // 即改即存
+                                                repository.saveSettings(new)
+                                                settings = new
+                                            },
+                                            repository = repository,
+                                            subPage = settingsSubPage,
+                                            onOpenSub = { settingsSubPage = it },
+                                        )
+                                }
                             }
                         }
                     }
-                }
 
-                is Screen.Edit -> {
-                    val existing = hosts.firstOrNull { it.id == s.hostId }
-                    HostEditScreen(
-                        existing = existing,
-                        repository = repository,
-                        onSave = { host, pw, key ->
-                            if (pw.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "password"), pw)
-                            if (key.isNotBlank()) SecretStore.set(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"), key)
-                            repository.upsertHost(host)
-                            refreshHosts()
-                            screen = Screen.Home
-                        },
-                        onCancel = { screen = Screen.Home },
-                    )
-                }
-
-                // 返回主页不断开：默认后台运行，会话保留在 SessionManager，
-                // 由前台服务保活，从「连接」页可重新进入（终端缓冲原样保留）
-                // 终端页 tabs = 全部会话（跨主机）：连任何主机都进同一个终端页，
-                // tab 栏以「user@host + 状态点」区分（Termius 式全局会话）
-                is Screen.Terminal -> {
-                    // 终端会话 tab 不过滤状态：断开/失败也保留（tab 内状态点体现），
-                    // 关闭 tab 时才从列表移除；否则创建 SFTP 后重组会把非活跃终端 tab 丢掉
-                    val terminalTabs = sessionManager.sessions.map { SessionTab.Terminal(it) }
-                    val sftpTabs = sessionManager.sftpSessions
-                        .map { SessionTab.Sftp(it.host, it.session, it.uiState) }
-                    val allTabs = terminalTabs + sftpTabs
-                    val current = currentTab?.takeIf { tab ->
-                        tab.id in allTabs.map { it.id }
-                    } ?: allTabs.firstOrNull()
-                    if (current != null) {
-                        val tabs = allTabs
-                        // 「+」新增会话归属：当前选中会话的主机（SFTP tab 用其主机）
-                        val currentHost = when (current) {
-                            is SessionTab.Terminal -> current.controller.host
-                            is SessionTab.Sftp -> current.host
-                            is SessionTab.Screen -> current.host
-                        }
-                        TerminalScreen(
-                            tabs = tabs,
-                            current = current,
-                            theme = terminalTheme,
-                            settings = settings,
+                    is Screen.Edit -> {
+                        val existing = hosts.firstOrNull { it.id == s.hostId }
+                        HostEditScreen(
+                            existing = existing,
                             repository = repository,
-                            onBack = {
-                                // 返回优先弹 tab 历史（SFTP/屏幕 → 回到上一个终端 tab），
-                                // 栈空才回首页
-                                val prevId = tabHistory.removeLastOrNull()
-                                val target = prevId?.let { id -> allTabs.firstOrNull { it.id == id } }
-                                if (target != null && target.id != currentTab?.id) {
-                                    currentTab = target
-                                } else {
-                                    currentTab = null
-                                    refreshHosts()
-                                    screen = Screen.Home
+                            onSave = { host, pw, key ->
+                                if (pw.isNotBlank()) {
+                                    SecretStore.set(
+                                        SECRET_SERVICE,
+                                        secretAccountFor(host.id, "password"),
+                                        pw,
+                                    )
                                 }
-                            },
-                            onSwitchTab = { it ->
-                                currentTab?.let { prev ->
-                                    if (prev.id != it.id) tabHistory.add(prev.id)
+                                if (key.isNotBlank()) {
+                                    SecretStore.set(
+                                        SECRET_SERVICE,
+                                        secretAccountFor(host.id, "privateKey"),
+                                        key,
+                                    )
                                 }
-                                currentTab = it
+                                repository.upsertHost(host)
+                                refreshHosts()
+                                screen = Screen.Home
                             },
-                            onAddSession = {
-                                val c = sessionManager.open(currentHost, settings.autoReconnect) {
-                                    hosts = repository.listHosts()
+                            onCancel = { screen = Screen.Home },
+                        )
+                    }
+
+                    // 返回主页不断开：默认后台运行，会话保留在 SessionManager，
+                    // 由前台服务保活，从「连接」页可重新进入（终端缓冲原样保留）
+                    // 终端页 tabs = 全部会话（跨主机）：连任何主机都进同一个终端页，
+                    // tab 栏以「user@host + 状态点」区分（Termius 式全局会话）
+                    is Screen.Terminal -> {
+                        // 终端会话 tab 不过滤状态：断开/失败也保留（tab 内状态点体现），
+                        // 关闭 tab 时才从列表移除；否则创建 SFTP 后重组会把非活跃终端 tab 丢掉
+                        val terminalTabs = sessionManager.sessions.map { SessionTab.Terminal(it) }
+                        val sftpTabs =
+                            sessionManager.sftpSessions
+                                .map { SessionTab.Sftp(it.host, it.session, it.uiState) }
+                        val allTabs = terminalTabs + sftpTabs
+                        val current =
+                            currentTab?.takeIf { tab ->
+                                tab.id in allTabs.map { it.id }
+                            } ?: allTabs.firstOrNull()
+                        if (current != null) {
+                            val tabs = allTabs
+                            // 「+」新增会话归属：当前选中会话的主机（SFTP tab 用其主机）
+                            val currentHost =
+                                when (current) {
+                                    is SessionTab.Terminal -> current.controller.host
+                                    is SessionTab.Sftp -> current.host
+                                    is SessionTab.Screen -> current.host
                                 }
-                                pendingNavigate = c
-                            },
-                            onCloseTab = { tab ->
-                                when (tab) {
-                                    is SessionTab.Terminal -> sessionManager.remove(tab.controller)
-                                    is SessionTab.Sftp -> {
-                                        sessionManager.sftpSessions
-                                            .firstOrNull { it.session === tab.session }
-                                            ?.let { sessionManager.closeSftp(it) }
+                            TerminalScreen(
+                                tabs = tabs,
+                                current = current,
+                                theme = terminalTheme,
+                                settings = settings,
+                                repository = repository,
+                                onBack = {
+                                    // 返回优先弹 tab 历史（SFTP/屏幕 → 回到上一个终端 tab），
+                                    // 栈空才回首页
+                                    val prevId = tabHistory.removeLastOrNull()
+                                    val target = prevId?.let { id -> allTabs.firstOrNull { it.id == id } }
+                                    if (target != null && target.id != currentTab?.id) {
+                                        currentTab = target
+                                    } else {
+                                        currentTab = null
+                                        refreshHosts()
+                                        screen = Screen.Home
                                     }
-                                    is SessionTab.Screen -> {
-                                        val entry = screenSessions.firstOrNull { it.session === tab.session }
+                                },
+                                onSwitchTab = { it ->
+                                    currentTab?.let { prev ->
+                                        // 终端 tab 之间是平级浏览：不产生返回历史（返回直接回主页）；
+                                        // 只有进入二级 tab（SFTP/屏幕）才记录返回链（用户反馈：
+                                        // 返回在不同 tab 间来回跳）
+                                        val bothTerminal = prev is SessionTab.Terminal && it is SessionTab.Terminal
+                                        if (prev.id != it.id && !bothTerminal) tabHistory.add(prev.id)
+                                    }
+                                    currentTab = it
+                                },
+                                onAddSession = {
+                                    val c =
+                                        sessionManager.open(currentHost, settings.autoReconnect) {
+                                            hosts = repository.listHosts()
+                                        }
+                                    pendingNavigate = c
+                                },
+                                onCloseTab = { tab ->
+                                    when (tab) {
+                                        is SessionTab.Terminal -> sessionManager.remove(tab.controller)
+                                        is SessionTab.Sftp -> {
+                                            sessionManager.sftpSessions
+                                                .firstOrNull { it.session === tab.session }
+                                                ?.let { sessionManager.closeSftp(it) }
+                                        }
+                                        is SessionTab.Screen -> {
+                                            val entry = screenSessions.firstOrNull { it.session === tab.session }
+                                            if (entry != null) {
+                                                entry.session?.close()
+                                                screenSessions.remove(entry)
+                                            }
+                                        }
+                                    }
+                                    // 清理历史栈中失效的 tab id（已关闭的会话）
+                                    val liveIds =
+                                        (
+                                            sessionManager.sessions
+                                                .map { SessionTab.Terminal(it) } +
+                                                sessionManager.sftpSessions
+                                                    .map { SessionTab.Sftp(it.host, it.session, it.uiState) } +
+                                                screenSessions.map {
+                                                    SessionTab.Screen(
+                                                        it.host,
+                                                        it.ownerSessionId,
+                                                        it.session,
+                                                        it.uiState,
+                                                    )
+                                                }
+                                        ).map { it.id }
+                                            .toSet()
+                                    tabHistory.removeAll { it !in liveIds }
+                                    val remaining =
+                                        (
+                                            sessionManager.sessions
+                                                .map { SessionTab.Terminal(it) } +
+                                                sessionManager.sftpSessions
+                                                    .map { SessionTab.Sftp(it.host, it.session, it.uiState) }
+                                        ).firstOrNull { it.id != tab.id }
+                                    currentTab = remaining
+                                    if (remaining == null) {
+                                        refreshHosts()
+                                        screen = Screen.Home
+                                    }
+                                },
+                                onOpenSftpPicker = { sftpPickerVisible = true },
+                                // 文件管理：直接对当前主机建 SFTP 会话并切到 SFTP tab
+                                // （复用 connectSftp 全流程：认证弹窗 / 主机密钥 / 断线重连）
+                                onOpenSftpForHost = connectSftp,
+                                // 收藏夹：读取持久化收藏，弹列表跳转（无收藏则提示）
+                                onOpenFavorites = { host ->
+                                    val favs = repository.loadFavorites(host.id)
+                                    if (favs.isEmpty()) {
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                appStrings.sftpExt.favoritesEmpty,
+                                            )
+                                        }
+                                    } else {
+                                        favoritesDialog = host to favs
+                                    }
+                                },
+                                // 屏幕：建推流会话并切到屏幕 tab
+                                onOpenScreen = openScreen,
+                                // 屏幕推流服务安装（引导卡片按钮）：流式日志 → 装完重建会话重连
+                                onInstallScreenService = installScreenService,
+                                // 屏幕重连（就地全屏）：按主机重建会话
+                                onReconnectScreenForHost = reconnectScreenForHost,
+                                // 屏幕断线重连：重建会话替换 tab
+                                onReconnectScreen = { tab ->
+                                    scope.launch {
+                                        try {
+                                            establishScreen(tab.host) { session, uiState ->
+                                                screenSessions
+                                                    .firstOrNull { it.host.id == tab.host.id }
+                                                    ?.session
+                                                    ?.close()
+                                                screenSessions.removeAll { it.host.id == tab.host.id }
+                                                screenSessions.add(
+                                                    ScreenSessionEntry(tab.host, tab.ownerSessionId, session, uiState),
+                                                )
+                                            }
+                                        } catch (e: Exception) {
+                                            snackbarHostState.showSnackbar(
+                                                appStrings.screen.connecting + " " + (e.message ?: ""),
+                                            )
+                                        }
+                                    }
+                                },
+                                // 终端页小窗：只显示**属于当前终端 tab** 的屏幕会话（切走即隐藏）
+                                screenPip =
+                                    (current as? SessionTab.Terminal)?.let { termTab ->
+                                        screenSessions
+                                            .firstOrNull {
+                                                it.ownerSessionId == termTab.controller.sessionId && it.session != null
+                                            }?.uiState
+                                    },
+                                // 小窗 ✕：关闭当前屏幕会话（销毁推流 + 移除条目）
+                                onCloseScreenPip = {
+                                    val ownerId = (current as? SessionTab.Terminal)?.controller?.sessionId
+                                    if (ownerId != null) {
+                                        val entry = screenSessions.firstOrNull { it.ownerSessionId == ownerId }
                                         if (entry != null) {
                                             entry.session?.close()
                                             screenSessions.remove(entry)
                                         }
                                     }
-                                }
-                                // 清理历史栈中失效的 tab id（已关闭的会话）
-                                val liveIds = (sessionManager.sessions
-                                    .map { SessionTab.Terminal(it) } +
-                                    sessionManager.sftpSessions
-                                        .map { SessionTab.Sftp(it.host, it.session, it.uiState) } +
-                                    screenSessions.map { SessionTab.Screen(it.host, it.ownerSessionId, it.session, it.uiState) })
-                                    .map { it.id }.toSet()
-                                tabHistory.removeAll { it !in liveIds }
-                                val remaining = (sessionManager.sessions
-                                    .map { SessionTab.Terminal(it) } +
-                                    sessionManager.sftpSessions
-                                        .map { SessionTab.Sftp(it.host, it.session, it.uiState) })
-                                    .firstOrNull { it.id != tab.id }
-                                currentTab = remaining
-                                if (remaining == null) {
-                                    refreshHosts()
-                                    screen = Screen.Home
-                                }
-                            },
-                            onOpenSftpPicker = { sftpPickerVisible = true },
-                            // 文件管理：直接对当前主机建 SFTP 会话并切到 SFTP tab
-                            //（复用 connectSftp 全流程：认证弹窗 / 主机密钥 / 断线重连）
-                            onOpenSftpForHost = connectSftp,
-                            // 收藏夹：读取持久化收藏，弹列表跳转（无收藏则提示）
-                            onOpenFavorites = { host ->
-                                val favs = repository.loadFavorites(host.id)
-                                if (favs.isEmpty()) {
-                                    scope.launch { snackbarHostState.showSnackbar(appStrings.sftpExt.favoritesEmpty) }
-                                } else {
-                                    favoritesDialog = host to favs
-                                }
-                            },
-                            // 屏幕：建推流会话并切到屏幕 tab
-                            onOpenScreen = openScreen,
-                            // 屏幕推流服务安装（引导卡片按钮）：流式日志 → 装完重建会话重连
-                            onInstallScreenService = installScreenService,
-                            // 屏幕重连（就地全屏）：按主机重建会话
-                            onReconnectScreenForHost = reconnectScreenForHost,
-                            // 屏幕断线重连：重建会话替换 tab
-                            onReconnectScreen = { tab ->
-                                scope.launch {
-                                    try {
-                                        establishScreen(tab.host) { session, uiState ->
-                                            screenSessions.firstOrNull { it.host.id == tab.host.id }?.session?.close()
-                                            screenSessions.removeAll { it.host.id == tab.host.id }
-                                            screenSessions.add(
-                                                ScreenSessionEntry(tab.host, tab.ownerSessionId, session, uiState),
-                                            )
+                                },
+                                // 收藏变更：SFTP 页增删收藏即落盘
+                                onFavoritesChanged = { host, favs ->
+                                    repository.saveFavorites(host.id, favs)
+                                },
+                                // 浏览路径即时持久化：导航即保存（退后台保存为兜底）
+                                onSftpPathChanged = { _, _ -> sessionManager.persistNow() },
+                                // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
+                                onReconnectSftp = { tab ->
+                                    // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，
+                                    // 避免多个 null-session 条目时错配
+                                    val entry =
+                                        sessionManager.sftpSessions.find {
+                                            it.host.id == tab.host.id && it.session === tab.session
                                         }
-                                    } catch (e: Exception) {
-                                        snackbarHostState.showSnackbar(appStrings.screen.connecting + " " + (e.message ?: ""))
-                                    }
-                                }
-                            },
-                            // 终端页小窗：只显示**属于当前终端 tab** 的屏幕会话（切走即隐藏）
-                            screenPip = (current as? SessionTab.Terminal)?.let { termTab ->
-                                screenSessions
-                                    .firstOrNull {
-                                        it.ownerSessionId == termTab.controller.sessionId && it.session != null
-                                    }
-                                    ?.uiState
-                            },
-                            // 小窗 ✕：关闭当前屏幕会话（销毁推流 + 移除条目）
-                            onCloseScreenPip = {
-                                val ownerId = (current as? SessionTab.Terminal)?.controller?.sessionId
-                                if (ownerId != null) {
-                                    val entry = screenSessions.firstOrNull { it.ownerSessionId == ownerId }
-                                    if (entry != null) {
-                                        entry.session?.close()
-                                        screenSessions.remove(entry)
-                                    }
-                                }
-                            },
-                            // 收藏变更：SFTP 页增删收藏即落盘
-                            onFavoritesChanged = { host, favs ->
-                                repository.saveFavorites(host.id, favs)
-                            },
-                            // 浏览路径即时持久化：导航即保存（退后台保存为兜底）
-                            onSftpPathChanged = { _, _ -> sessionManager.persistNow() },
-                            // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
-                            onReconnectSftp = { tab ->
-                                // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，
-                                // 避免多个 null-session 条目时错配
-                                val entry = sessionManager.sftpSessions.find {
-                                    it.host.id == tab.host.id && it.session === tab.session
-                                }
-                                scope.launch {
-                                    try {
-                                        establishSftp(tab.host) { newSession, token ->
-                                            entry?.let { sessionManager.reconnectSftp(it, newSession, token) }
-                                            currentTab = SessionTab.Sftp(tab.host, newSession, tab.uiState)
-                                            // 重连成功：清除重连中/断开状态，SftpContent 继续用原路径浏览
+                                    scope.launch {
+                                        try {
+                                            establishSftp(tab.host) { newSession, token ->
+                                                entry?.let { sessionManager.reconnectSftp(it, newSession, token) }
+                                                currentTab = SessionTab.Sftp(tab.host, newSession, tab.uiState)
+                                                // 重连成功：清除重连中/断开状态，SftpContent 继续用原路径浏览
+                                                tab.uiState.reconnecting = false
+                                                tab.uiState.disconnected = false
+                                            }
+                                        } catch (e: Exception) {
+                                            // 重连失败：保持 banner，用户可点按钮重试
                                             tab.uiState.reconnecting = false
-                                            tab.uiState.disconnected = false
+                                            tab.uiState.loadError = e.message
                                         }
-                                    } catch (e: Exception) {
-                                        // 重连失败：保持 banner，用户可点按钮重试
-                                        tab.uiState.reconnecting = false
-                                        tab.uiState.loadError = e.message
                                     }
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
-            }
 
-            // New SFTP connection 覆盖层（盖在当前页面之上）
-            if (sftpPickerVisible) {
-                SftpHostPickerOverlay(
-                    hosts = hosts,
-                    onDismiss = { sftpPickerVisible = false },
-                    onSelect = { host -> connectSftp(host, null) },
-                )
-            }
+                // New SFTP connection 覆盖层（盖在当前页面之上）
+                if (sftpPickerVisible) {
+                    SftpHostPickerOverlay(
+                        hosts = hosts,
+                        onDismiss = { sftpPickerVisible = false },
+                        onSelect = { host -> connectSftp(host, null) },
+                    )
+                }
 
-            // 收藏夹对话框（终端 + 菜单入口）：列收藏路径，点击直达
-            favoritesDialog?.let { (host, favs) ->
-                AlertDialog(
-                    onDismissRequest = { favoritesDialog = null },
-                    title = { Text(appStrings.sftpExt.favoritesTitle) },
-                    text = {
-                        Column {
-                            favs.forEach { fav ->
-                                Row(
-                                    Modifier.fillMaxWidth().clickable {
-                                        favoritesDialog = null
-                                        connectSftp(host, fav)
-                                    }.padding(vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Icon(
-                                        Icons.Filled.FolderOpen,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(18.dp),
-                                    )
-                                    Text(
-                                        fav,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                                    )
-                                    IconButton(
-                                        onClick = {
-                                            val remaining = favs - fav
-                                            favoritesDialog = host to remaining
-                                            repository.saveFavorites(host.id, remaining)
-                                        },
-                                        modifier = Modifier.size(28.dp),
+                // 收藏夹对话框（终端 + 菜单入口）：列收藏路径，点击直达
+                favoritesDialog?.let { (host, favs) ->
+                    AlertDialog(
+                        onDismissRequest = { favoritesDialog = null },
+                        title = { Text(appStrings.sftpExt.favoritesTitle) },
+                        text = {
+                            Column {
+                                favs.forEach { fav ->
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                favoritesDialog = null
+                                                connectSftp(host, fav)
+                                            }.padding(vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Icon(
-                                            Icons.Filled.Close,
+                                            Icons.Filled.FolderOpen,
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(14.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
                                         )
+                                        Text(
+                                            fav,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                                        )
+                                        IconButton(
+                                            onClick = {
+                                                val remaining = favs - fav
+                                                favoritesDialog = host to remaining
+                                                repository.saveFavorites(host.id, remaining)
+                                            },
+                                            modifier = Modifier.size(28.dp),
+                                        ) {
+                                            Icon(
+                                                Icons.Filled.Close,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { favoritesDialog = null }) { Text(appStrings.terminalCancel) }
-                    },
-                )
-            }
-
-            // SFTP 认证 / 主机密钥确认（复用全局弹窗）
-            sftpAuth?.let { req ->
-                AuthPromptDialog(req.prompt) { answers ->
-                    req.deferred.complete(answers)
-                    sftpAuth = null
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { favoritesDialog = null }) { Text(appStrings.terminalCancel) }
+                        },
+                    )
                 }
-            }
-            sftpHostKey?.let { req ->
-                HostKeyDialog(
-                    key = req.key,
-                    changed = req.changed,
-                    previousFingerprint = req.previousFingerprint,
-                ) { accept ->
-                    req.deferred.complete(accept)
-                    sftpHostKey = null
-                }
-            }
 
-            TermishSnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
+                // SFTP 认证 / 主机密钥确认（复用全局弹窗）
+                sftpAuth?.let { req ->
+                    AuthPromptDialog(req.prompt) { answers ->
+                        req.deferred.complete(answers)
+                        sftpAuth = null
+                    }
+                }
+                sftpHostKey?.let { req ->
+                    HostKeyDialog(
+                        key = req.key,
+                        changed = req.changed,
+                        previousFingerprint = req.previousFingerprint,
+                    ) { accept ->
+                        req.deferred.complete(accept)
+                        sftpHostKey = null
+                    }
+                }
+
+                TermishSnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
             }
         }
     }

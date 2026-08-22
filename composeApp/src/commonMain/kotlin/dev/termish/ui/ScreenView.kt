@@ -14,9 +14,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Monitor
@@ -31,7 +32,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -54,7 +54,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import dev.termish.data.Host
-import dev.termish.screen.ScreenPlayer
 import dev.termish.screen.ScreenSession
 import dev.termish.screen.ScreenUiState
 import dev.termish.screen.ScreenVideoSurface
@@ -86,11 +85,12 @@ fun ScreenContent(
             ScreenVideoSurface(p, Modifier.fillMaxSize())
         }
 
-        // 帧率 / 分辨率角标（右上角小字）
+        // 帧率 / 分辨率角标（右上角小字）：状态栏未隐藏时避让（沉浸式下 inset=0 无影响）
         if (state.connected && (state.fps > 0 || state.frameSize.isNotBlank())) {
             Row(
                 Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(8.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color.Black.copy(alpha = 0.55f))
@@ -148,7 +148,10 @@ fun ScreenContent(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
                         Text(
                             msg,
                             color = StatusColors.Error,
@@ -172,36 +175,48 @@ fun ScreenContent(
             }
         }
 
-        // 全屏顶部返回按钮：就地全屏（小窗展开）= 收起回终端；屏幕 tab = 返回上一 tab。
-        // ⚠️ 必须最后声明（最顶层）：视频面/错误态都是 fillMaxSize 覆盖层，
-        // 先声明会被盖住导致全屏无法返回（v1.4.0 回归：看不到也点不到）。
-        val backLabel = if (onClose != null) s.screen.collapse else s.screen.back
+        // 屏幕状态提示（息屏/锁屏，可恢复）：画面中央下方半透明小字，
+        // 画面到达自动清除（ScreenSession onReady）
+        state.screenHint?.let { hint ->
+            Text(
+                hint,
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.bodySmall,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+
+        // 全屏顶部返回按钮：标准播放器风格——圆形半透明底 + 返回箭头（无文字，
+        // 文案只作无障碍描述）。⚠️ 必须最后声明（最顶层）：视频面/错误态都是
+        // fillMaxSize 覆盖层，先声明会被盖住（v1.4.0 回归：看不到也点不到）。
         Box(
             Modifier
                 .align(Alignment.TopStart)
+                // 状态栏未隐藏时避让（沉浸式正常时 inset=0，padding 无副作用）；
+                // 部分设备/系统行为下隐藏可能失效，双保险防按钮与状态栏重叠
+                .statusBarsPadding()
                 .padding(10.dp)
                 .zIndex(100f)
-                .clip(RoundedCornerShape(10.dp))
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(Color.Black.copy(alpha = 0.55f))
-                .clickable(onClick = { (onClose ?: onBack)() })
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .clickable(onClick = { (onClose ?: onBack)() }),
+            contentAlignment = Alignment.Center,
         ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(16.dp),
-                )
-                Text(
-                    backLabel,
-                    color = Color.White.copy(alpha = 0.9f),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+            Icon(
+                // 与全应用统一：标准返回箭头 KeyboardArrowLeft
+                // （终端 tab 栏 / 设置二级页同款）
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = if (onClose != null) s.screen.collapse else s.screen.back,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
@@ -284,11 +299,12 @@ private fun ScreenServiceGuide(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 8,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(10.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(10.dp),
                         )
                     }
                 } else {
@@ -313,11 +329,12 @@ private fun ScreenServiceGuide(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 6,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(10.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .padding(10.dp),
                         )
                     }
                 }
@@ -329,6 +346,7 @@ private fun ScreenServiceGuide(
 /** 小窗默认尺寸（dp）。 */
 const val PIP_DEFAULT_W = 160f
 const val PIP_DEFAULT_H = 100f
+
 /** 缩放范围（dp）。 */
 private const val PIP_MIN_W = 120f
 private const val PIP_MIN_H = 75f
@@ -433,10 +451,11 @@ fun ScreenPiP(
                                         val maxLeft = (canvasSize.width - sz.width).toFloat()
                                         val maxDown = (canvasSize.height - sz.height).toFloat()
                                         if (maxLeft > 0f && maxDown > 0f) {
-                                            drag.value = Offset(
-                                                (drag.value.x + delta.x).coerceIn(-maxLeft + margin, 0f),
-                                                (drag.value.y + delta.y).coerceIn(0f, maxDown - margin),
-                                            )
+                                            drag.value =
+                                                Offset(
+                                                    (drag.value.x + delta.x).coerceIn(-maxLeft + margin, 0f),
+                                                    (drag.value.y + delta.y).coerceIn(0f, maxDown - margin),
+                                                )
                                         }
                                     }
                                 }
@@ -463,30 +482,44 @@ fun ScreenPiP(
             }
         }
 
-        // 关闭按钮（左上角）：✕ 销毁屏幕会话
-        Icon(
-            Icons.Filled.Close,
-            contentDescription = "close screen",
-            tint = Color.White.copy(alpha = 0.85f),
-            modifier = Modifier
+        // 关闭按钮（左上角）：✕ 销毁屏幕会话。圆角半透明胶囊底 + 居中图标，
+        // 与全屏页返回按钮同风格（黑 0.55 / 圆角 8dp / 白 0.9）
+        Box(
+            Modifier
                 .align(Alignment.TopStart)
                 .padding(5.dp)
-                .size(14.dp)
-                .background(Color.Black.copy(alpha = 0.45f))
+                .size(26.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
                 .clickable(onClick = onClose),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Close,
+                contentDescription = "close screen",
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.size(16.dp),
+            )
+        }
 
-        // 全屏角标（右上角）：点击 = 全屏（同点画面）
-        Icon(
-            Icons.Filled.Fullscreen,
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.55f),
-            modifier = Modifier
+        // 全屏角标（右上角）：点击 = 全屏（同点画面），与关闭按钮同款胶囊底
+        Box(
+            Modifier
                 .align(Alignment.TopEnd)
                 .padding(5.dp)
-                .size(14.dp)
+                .size(26.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
                 .clickable(onClick = onClick),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Filled.Fullscreen,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.9f),
+                modifier = Modifier.size(16.dp),
+            )
+        }
 
         // 右下角缩放把手（视觉）：拖拽调整窗口大小由小窗 Box 的手势统一处理——
         // 起点落在此 26dp 区域即缩放（独立手势会被父节点事件先发抢走）。
@@ -498,12 +531,13 @@ fun ScreenPiP(
                 .excludeSystemBackGesture(),
         ) {
             Canvas(Modifier.fillMaxSize()) {
-                val p = Path().apply {
-                    moveTo(size.width, size.height)
-                    lineTo(size.width - 13f, size.height)
-                    lineTo(size.width, size.height - 13f)
-                    close()
-                }
+                val p =
+                    Path().apply {
+                        moveTo(size.width, size.height)
+                        lineTo(size.width - 13f, size.height)
+                        lineTo(size.width, size.height - 13f)
+                        close()
+                    }
                 drawPath(p, Color.White.copy(alpha = 0.55f))
             }
         }

@@ -8,3 +8,10 @@ import androidx.compose.runtime.Composable
  */
 @Composable
 expect fun PlatformStatusBarIcons(lightIcons: Boolean)
+
+/**
+ * 沉浸式模式（视频全屏）：immersive=true 时隐藏系统状态栏，退出时恢复。
+ * 非 Android 平台为空实现（内容铺满由 Compose 层处理）。
+ */
+@Composable
+expect fun PlatformImmersiveMode(immersive: Boolean)

@@ -7,11 +7,11 @@ import dev.termish.ssh.createSshSession
 import dev.termish.util.TermLog
 import dev.termish.util.ioDispatcher
 import kotlin.concurrent.Volatile
-import kotlinx.datetime.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
 
 /**
  * 屏幕推流会话：独立 SSH 连接 + 无 pty exec 通道读远端推流服务，
@@ -62,9 +62,10 @@ class ScreenSession(
                 }
                 // 探测已并入读流脚本内部（lsof 检查端口）：同一连接上先 runCommand
                 // 再 startExecRaw 时第二个 exec 通道会立即 EOF（sshj 坑，实测复现）
-                val channel = withContext(ioDispatcher()) {
-                    session.startExecRaw(READ_STREAM_SCRIPT)
-                }
+                val channel =
+                    withContext(ioDispatcher()) {
+                        session.startExecRaw(READ_STREAM_SCRIPT)
+                    }
                 TermLog.i("screen") { "execRaw=${channel != null}" }
                 if (channel == null) {
                     uiState.error = "无法启动远端读流通道"
@@ -72,62 +73,74 @@ class ScreenSession(
                     return@launch
                 }
                 // 播放器接管解码/渲染（ExoPlayer 本地 HTTP 流）；首帧回调清超时
-                val p = ScreenPlayer(
-                    onReady = {
-                        firstFrameDeadline = 0
-                        scope.launch {
-                            uiState.videoReady = true
-                            if (uiState.error == FIRST_FRAME_TIMEOUT_MSG) uiState.error = null
-                        }
-                    },
-                    onError = { msg -> scope.launch { uiState.error = msg } },
-                )
+                val p =
+                    ScreenPlayer(
+                        onReady = {
+                            firstFrameDeadline = 0
+                            scope.launch {
+                                uiState.videoReady = true
+                                // 画面到达：清除超时与息屏/锁屏提示（可恢复状态）
+                                if (uiState.error == FIRST_FRAME_TIMEOUT_MSG) uiState.error = null
+                                uiState.screenHint = null
+                            }
+                        },
+                        onError = { msg -> scope.launch { uiState.error = msg } },
+                    )
                 player = p
                 uiState.player = p
                 p.start()
                 uiState.connected = true
                 firstFrameDeadline = Clock.System.now().toEpochMilliseconds() + 12_000
                 // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）
-                val timeoutJob = scope.launch {
-                    while (running && firstFrameDeadline > 0) {
-                        if (Clock.System.now().toEpochMilliseconds() > firstFrameDeadline) {
-                            if (running && !uiState.videoReady && uiState.error == null) {
-                                uiState.error = FIRST_FRAME_TIMEOUT_MSG
+                val timeoutJob =
+                    scope.launch {
+                        while (running && firstFrameDeadline > 0) {
+                            if (Clock.System.now().toEpochMilliseconds() > firstFrameDeadline) {
+                                if (running && !uiState.videoReady && uiState.error == null) {
+                                    uiState.error = FIRST_FRAME_TIMEOUT_MSG
+                                }
+                                break
                             }
-                            break
+                            delay(500)
                         }
-                        delay(500)
                     }
-                }
                 // stderr 独立协程消费：与 stdout 串行阻塞读会永久卡死主循环（黑屏）；
                 // 错误文本累计到 lastStderr，断流时透传给用户
-                val stderrJob = scope.launch {
-                    val sb = StringBuilder()
-                    while (running) {
-                        val err = withContext(ioDispatcher()) { channel.readErr() } ?: break
-                        val text = err.decodeToString()
-                        sb.append(text)
-                        if (sb.length > 8192) sb.deleteRange(0, sb.length - 8192)
-                        if (sb.contains("FFMPEG_MISSING")) {
-                            uiState.ffmpegMissing = true
-                            // 与 SCREEN_SERVICE_MISSING 一致进引导卡片：ffmpeg 缺失
-                            // 同样可一键安装（安装脚本会自动补装 ffmpeg）
-                            uiState.serviceMissing = true
-                            uiState.error = "远端未安装 ffmpeg"
-                            running = false
-                            break
+                val stderrJob =
+                    scope.launch {
+                        val sb = StringBuilder()
+                        while (running) {
+                            val err = withContext(ioDispatcher()) { channel.readErr() } ?: break
+                            val text = err.decodeToString()
+                            sb.append(text)
+                            if (sb.length > 8192) sb.deleteRange(0, sb.length - 8192)
+                            if (sb.contains("FFMPEG_MISSING")) {
+                                uiState.ffmpegMissing = true
+                                // 与 SCREEN_SERVICE_MISSING 一致进引导卡片：ffmpeg 缺失
+                                // 同样可一键安装（安装脚本会自动补装 ffmpeg）
+                                uiState.serviceMissing = true
+                                uiState.error = "远端未安装 ffmpeg"
+                                running = false
+                                break
+                            }
+                            // Mac 息屏/锁屏提示（非错误）：推流可能无帧或为锁屏画面，
+                            // 唤醒/解锁后自动恢复——不设 error（避免误入错误态/断流）
+                            if (sb.contains("SCREEN_ASLEEP")) {
+                                uiState.screenHint = "Mac 屏幕已关闭，唤醒后画面自动恢复"
+                            } else if (sb.contains("SCREEN_LOCKED")) {
+                                uiState.screenHint = "Mac 处于锁屏状态，画面为锁屏界面（解锁后恢复桌面）"
+                            }
+                            if (sb.contains("SCREEN_SERVICE_MISSING") ||
+                                sb.contains("Connection refused", ignoreCase = true)
+                            ) {
+                                uiState.serviceMissing = true
+                                uiState.error = "远端推流服务未运行"
+                                running = false
+                                break
+                            }
                         }
-                        if (sb.contains("SCREEN_SERVICE_MISSING") ||
-                            sb.contains("Connection refused", ignoreCase = true)
-                        ) {
-                            uiState.serviceMissing = true
-                            uiState.error = "远端推流服务未运行"
-                            running = false
-                            break
-                        }
+                        lastStderr = sb.toString()
                     }
-                    lastStderr = sb.toString()
-                }
                 // 读循环（阻塞读，跑 ioDispatcher）：原始 TS 字节喂播放器
                 var bytesRead = 0L
                 val readStart = Clock.System.now().toEpochMilliseconds()
@@ -139,7 +152,7 @@ class ScreenSession(
                         p.feed(data)
                     }
                     // 关闭通道：远端 nc 立即退出、relay 收尾释放 avfoundation
-                    //（否则 nc 挂在 FIN_WAIT_2 往死通道里写、relay 连接悬置
+                    // （否则 nc 挂在 FIN_WAIT_2 往死通道里写、relay 连接悬置
                     // 到下次连接才被踢，白占抓屏设备）
                     channel.close()
                 }
@@ -171,7 +184,10 @@ class ScreenSession(
      * → bootstrap 到用户 GUI 域并验证端口监听。与 herdr 安装引导同模式：
      * 流式输出进 [onLog]（UI 实时展示），完成后回调 [onComplete]。
      */
-    fun installService(onLog: (String) -> Unit, onComplete: (Boolean) -> Unit) {
+    fun installService(
+        onLog: (String) -> Unit,
+        onComplete: (Boolean) -> Unit,
+    ) {
         if (installing) return
         val s = ssh
         if (s == null) {
@@ -187,13 +203,14 @@ class ScreenSession(
                 val ch = withContext(ioDispatcher()) { s.startExecRaw(INSTALL_SCRIPT) }
                 if (ch != null) {
                     // stdout = 安装进度；stderr 错误合并进日志
-                    val errJob = scope.launch {
-                        while (true) {
-                            val err = withContext(ioDispatcher()) { ch.readErr() } ?: break
-                            log.append(err.decodeToString().replace("\r", ""))
-                            onLog(log.toString().takeLast(4096))
+                    val errJob =
+                        scope.launch {
+                            while (true) {
+                                val err = withContext(ioDispatcher()) { ch.readErr() } ?: break
+                                log.append(err.decodeToString().replace("\r", ""))
+                                onLog(log.toString().takeLast(4096))
+                            }
                         }
-                    }
                     withContext(ioDispatcher()) {
                         while (true) {
                             val data = ch.read() ?: break
@@ -232,10 +249,10 @@ class ScreenSession(
         ssh = null
     }
 
-
     companion object {
         /** 首帧超时提示文案（帧到达时清除，见 [onFrame]）。 */
         const val FIRST_FRAME_TIMEOUT_MSG = "画面数据未到达（检查远端推流服务 / ffmpeg）"
+
         /** 推流服务监听端口（LaunchAgent 常驻；手机 SSH 会话 nc 读流）。 */
         const val SCREEN_PORT = 17321
 
@@ -248,7 +265,8 @@ class ScreenSession(
          * < /dev/null：忽略 stdin——exec 通道 stdin 保持打开时 nc 会阻塞在 stdin 读
          * 而不读 socket（实测：sshj 通道下 0 字节立即 EOF）。
          */
-        val READ_STREAM_SCRIPT = """
+        val READ_STREAM_SCRIPT =
+            """
             PORT=$SCREEN_PORT
             # ffmpeg 查找：SSH 非交互会话 PATH 受限（无 brew 目录），command -v 常漏掉
             # brew 安装的 ffmpeg → 误报 FFMPEG_MISSING（v1.5.0 用户反馈：装过还提示安装）
@@ -260,8 +278,28 @@ class ScreenSession(
             if ! lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1; then
               echo "SCREEN_SERVICE_MISSING" >&2; exit 1
             fi
+            # 屏幕状态探测（仅提示，不阻断推流）：息屏时 avfoundation 无帧、
+            # 锁屏时画面为锁屏界面——客户端据此给出明确提示而非「连接不上」
+            /usr/bin/python3 -c '
+            import ctypes
+            cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+            cg.CGMainDisplayID.restype = ctypes.c_uint32
+            cg.CGDisplayIsAsleep.argtypes = [ctypes.c_uint32]
+            cg.CGDisplayIsAsleep.restype = ctypes.c_ubyte
+            if cg.CGDisplayIsAsleep(cg.CGMainDisplayID()):
+                print("SCREEN_ASLEEP")
+            cg.CGSessionCopyCurrentDictionary.restype = ctypes.c_void_p
+            cg.CFStringCreateWithCString.restype = ctypes.c_void_p
+            cg.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+            cg.CFDictionaryGetValue.restype = ctypes.c_void_p
+            cg.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            d = cg.CGSessionCopyCurrentDictionary()
+            key = cg.CFStringCreateWithCString(None, b"CGSSessionScreenIsLocked", 0x08000100)
+            if d and cg.CFDictionaryGetValue(d, key):
+                print("SCREEN_LOCKED")
+            ' 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
             nc 127.0.0.1 ${'$'}PORT < /dev/null
-        """.trimIndent()
+            """.trimIndent()
 
         /**
          * 推流服务安装脚本（幂等，远端执行）：检测/安装 ffmpeg（brew 或静态包
@@ -272,7 +310,8 @@ class ScreenSession(
          * GUI 域进程有屏幕录制权限（登录会话），SSH 后台会话没有——这是该架构
          * 存在的根本原因（TCC 对 sshd/ffmpeg 二进制授权均无效，实测）。
          */
-        val INSTALL_SCRIPT = """
+        val INSTALL_SCRIPT =
+            """
             set -e
             PORT=$SCREEN_PORT
             PLIST="${'$'}HOME/Library/LaunchAgents/dev.termish.screen.plist"
@@ -360,6 +399,7 @@ class ScreenSession(
                     last_data = time.time()
                     sent = 0
                     reason = "eof"
+                    waited_display = False
                     try:
                         while True:
                             r, _, _ = select.select([ff.stdout], [], [], 1.0)
@@ -376,9 +416,17 @@ class ScreenSession(
                             else:
                                 # 自愈看门狗：ffmpeg 卡死（设备被占/挂起）时无数据输出——
                                 # 首帧 45s / 中途 20s 无数据即放弃本连接，kill ffmpeg
-                                # 放客户端重连（否则僵尸 ffmpeg 堆积占死抓屏设备）
+                                # 放客户端重连（否则僵尸 ffmpeg 堆积占死抓屏设备）。
+                                # 例外：屏幕息屏时 ffmpeg 无帧源属正常——不 kill 不断连，
+                                # 等屏幕唤醒帧自动恢复（否则杀→重连→再超时循环）
                                 now = time.time()
                                 if (sent == 0 and now - started > 45) or (sent > 0 and now - last_data > 20):
+                                    if display_asleep():
+                                        if not waited_display:
+                                            errf.write("[%s] display asleep, waiting for wake\n" % time.strftime("%H:%M:%S"))
+                                            errf.flush()
+                                            waited_display = True
+                                        continue
                                     reason = "ffmpeg-stall"
                                     break
                                 # 1 秒无数据（ffmpeg 预热/静默期）：探测对端真实状态。
@@ -428,6 +476,21 @@ class ScreenSession(
                         conn.close()
                 except Exception:
                     pass
+
+            def display_asleep():
+                # 主显示器是否睡眠（CGDisplayIsAsleep）。
+                # 息屏时 avfoundation 无帧源，ffmpeg 挂起不输出属正常——看门狗靠它
+                # 区分「真卡死」与「屏幕关了」（v1.5.1 用户反馈：息屏后客户端连接不上）。
+                # 不用 pmset powerstate：输出格式随 macOS 版本不稳定
+                try:
+                    import ctypes
+                    cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+                    cg.CGMainDisplayID.restype = ctypes.c_uint32
+                    cg.CGDisplayIsAsleep.argtypes = [ctypes.c_uint32]
+                    cg.CGDisplayIsAsleep.restype = ctypes.c_ubyte
+                    return bool(cg.CGDisplayIsAsleep(cg.CGMainDisplayID()))
+                except Exception:
+                    return False
 
             def send_all(conn, data):
                 # 非阻塞发送 + select 等待可写：客户端消费慢（解码慢）时不超时误断；
@@ -503,18 +566,19 @@ class ScreenSession(
               echo "==> 服务未启动（检查 ~/Library/Logs/termish-screen.err）" >&2
               exit 1
             fi
-        """.trimIndent()
+            """.trimIndent()
 
         /**
          * 测试用推流脚本：lavfi 测试图源（不依赖屏幕录制权限）。
          * 集成测试用它回归「exec raw 通道 + stderr 协程 + NAL 解析」链路。
          */
-        val LAVFI_SCRIPT = """
+        val LAVFI_SCRIPT =
+            """
             FF=${'$'}(command -v ffmpeg 2>/dev/null || echo "${'$'}HOME/bin/ffmpeg")
             if [ ! -x "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
             exec "${'$'}FF" -hide_banner -loglevel error -f lavfi -i testsrc=size=640x360:rate=30 \
               -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 60 \
               -f h264 -flush_packets 1 -
-        """.trimIndent()
+            """.trimIndent()
     }
 }
