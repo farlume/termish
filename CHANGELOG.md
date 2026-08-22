@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [1.2.4] - 2026-08-22
+
+### 修复
+
+- **SFTP 预览面板打开时下载提示被遮挡**：二进制文件（apk 等）进预览后，全屏
+  覆盖层盖住了下载进度卡与完成提示。删除被盖的重复 SnackbarHost、进度卡
+  zIndex 提升至预览层之上
+
 ## [1.2.3] - 2026-08-22
 
 ### 修复
@@ -352,7 +360,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.3...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.4...HEAD
+[1.2.4]: https://github.com/ttermish/termish/compare/v1.2.3...v1.2.4
 [1.2.3]: https://github.com/ttermish/termish/compare/v1.2.2...v1.2.3
 [1.2.2]: https://github.com/ttermish/termish/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ttermish/termish/compare/v1.2.0...v1.2.1
