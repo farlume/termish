@@ -202,6 +202,22 @@ class TerminalControllerTest {
         }
     }
 
+    /** 等待 shell 注入 herdr 启动命令（延迟 + 清屏前缀形态；带超时）。 */
+    private fun awaitHerdrLaunch(f: FakeSsh, bin: String) = runBlocking {
+        withTimeout(5_000) {
+            while (f.sent.none {
+                it.decodeToString().contains("printf") && it.decodeToString().contains(bin)
+            }) {
+                delay(10)
+                scheduler.advanceUntilIdle()
+            }
+        }
+    }
+
+    private fun herdrLaunchIn(f: FakeSsh, bin: String): String? =
+        f.sent.firstOrNull { it.decodeToString().contains("printf") && it.decodeToString().contains(bin) }
+            ?.decodeToString()
+
     private fun TerminalController.bufferText(): String = buildString {
         val b = buffer
         for (r in 0 until b.rows) {
@@ -388,13 +404,26 @@ class TerminalControllerTest {
         assertTrue(c.herdrNeedsInstall)
 
         c.installHerdr()
-        // 安装成功后：退出待安装态，经 shell 注入 herdr（探测命中的裸命令）
+        // 安装成功后：退出待安装态，经 shell 注入 herdr（延迟 + 清屏前缀，
+        // 防 Ubuntu MOTD 迟到输出顶掉 herdr 画面）
         runBlocking { withTimeout(5_000) { while (!(!c.herdrInstalling && !c.herdrNeedsInstall)) delay(10) } }
 
         assertTrue(!c.herdrNeedsInstall, "安装成功应退出待安装状态")
         assertTrue(!c.herdrInstalling)
         assertTrue(f.execCommands.any { it.contains("install.sh") }, "应执行安装脚本")
-        assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "安装后应经 shell 注入 herdr，实际: ${f.sent}")
+        // 注入带 1.5s 延迟：轮询等待（scheduler 推进虚拟时间），断言清屏前缀 + 二进制路径
+        runBlocking {
+            withTimeout(5_000) {
+                while (f.sent.none { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") }) {
+                    delay(10)
+                    scheduler.advanceUntilIdle()
+                }
+            }
+        }
+        val injected = f.sent.first { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") }
+            .decodeToString()
+        assertTrue(injected.contains("\\0033[2J"), "注入应先清屏（含 scrollback），实际: $injected")
+        assertTrue(injected.endsWith("'herdr'\n") || injected.endsWith("herdr\n"), "注入应以 herdr 启动命令结尾，实际: $injected")
         c.destroy()
     }
 
@@ -457,9 +486,11 @@ class TerminalControllerTest {
         c.moshDegradedToSsh = true
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
-        awaitSent(f, "herdr\n")
+        awaitHerdrLaunch(f, "herdr")
 
-        assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "应经 shell 注入 herdr 命令")
+        val injected = herdrLaunchIn(f, "herdr")
+        assertTrue(injected != null, "应经 shell 注入 herdr 命令")
+        assertTrue(injected!!.contains("\\0033[2J"), "注入应先清屏")
         c.destroy()
     }
 
@@ -488,9 +519,10 @@ class TerminalControllerTest {
         assertEquals(3, probed.size)
         assertTrue(probed[0].startsWith("herdr "))
         assertTrue(probed[2].startsWith("/usr/local/bin/herdr "))
-        // 命中路径贯穿注入（非裸 herdr）
+        // 命中路径贯穿注入（非裸 herdr）；注入带 1.5s 延迟，需轮询等待
+        awaitHerdrLaunch(f, "/usr/local/bin/herdr")
         assertTrue(
-            f.sent.any { it.decodeToString() == "/usr/local/bin/herdr\n" },
+            herdrLaunchIn(f, "/usr/local/bin/herdr") != null,
             "应注入命中的全路径，实际: ${f.sent.map { it.decodeToString() }}",
         )
         c.destroy()
@@ -523,9 +555,10 @@ class TerminalControllerTest {
         awaitStatus(c, ConnStatus.CONNECTED)
 
         assertTrue(commands.contains("echo \$HOME"), "命中 \$HOME 候选后应解析绝对路径")
-        awaitSent(f, "/root/.local/bin/herdr\n")
+        awaitHerdrLaunch(f, "/root/.local/bin/herdr")
+        val injected = herdrLaunchIn(f, "/root/.local/bin/herdr")
         assertTrue(
-            f.sent.any { it.decodeToString() == "/root/.local/bin/herdr\n" },
+            injected != null,
             "应注入解析后的绝对路径，实际: ${f.sent.map { it.decodeToString() }}",
         )
         c.destroy()
@@ -637,8 +670,8 @@ class TerminalControllerTest {
 
         // 用户点「降级 SSH」：注入 herdr（探到的裸命令）
         c.degradeMoshToSsh()
-        awaitSent(f, "herdr\n")
-        assertTrue(f.sent.any { it.decodeToString() == "herdr\n" }, "降级应注入 herdr 命令，实际: ${f.sent.map { it.decodeToString() }}")
+        awaitHerdrLaunch(f, "herdr")
+        assertTrue(herdrLaunchIn(f, "herdr") != null, "降级应注入 herdr 命令，实际: ${f.sent.map { it.decodeToString() }}")
         assertTrue(c.moshDegradedToSsh, "降级应置 sticky 标记")
 
         // 断链 → 自动重连 → 直走 SSH shell 注入 herdr（无 mosh 引导）
@@ -646,11 +679,20 @@ class TerminalControllerTest {
         fake.callbacks.onClosed("lost")
         awaitStatus(c, ConnStatus.CONNECTING)
         awaitStatus(c, ConnStatus.CONNECTED)
+        // 第二次注入带 1.5s 延迟：轮询等到计数为 2 再断言
+        runBlocking {
+            withTimeout(5_000) {
+                while (f.sent.count { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") } < 2) {
+                    delay(10)
+                    scheduler.advanceUntilIdle()
+                }
+            }
+        }
 
         assertEquals(1, bootstrapCount, "重连不应再次引导 mosh-server（首次引导除外）")
         assertEquals(
             2,
-            f.sent.count { it.decodeToString() == "herdr\n" },
+            f.sent.count { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") },
             "重连后应再次注入 herdr（共 2 次）",
         )
         c.destroy()

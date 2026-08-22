@@ -61,6 +61,13 @@ internal class SessionConnector(
         private const val MOSH_STABLE_RESET_MS = 30_000L
         /** mosh 主题注入延迟：太早会被 shell readline 当输入回显成乱码，太晚 herdr 显示灰蒙层。 */
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
+        /**
+         * herdr 启动命令注入延迟：登录 shell 的 PAM MOTD（Ubuntu landscape/ESM
+         * 检测）可能耗时 1-3s 且输出几十行——立即注入会被 readline 回显在 MOTD
+         * 中间，herdr 启动后 MOTD 迟到字节把画面顶上去（herdr 只显示头部一小块、
+         * 下方残留文案）。延迟到 MOTD 峰值过去再注入。
+         */
+        private const val HERDR_INJECT_DELAY_MS = 1_500L
         /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
@@ -447,7 +454,9 @@ internal class SessionConnector(
                     doConnectMosh(existingSession = s)
                 } else {
                     // SSH / 已降级条目：会话已 CONNECTED，直接注入 herdr 命令
-                    s.sendData((probed.bin + "\n").encodeToByteArray())
+                    //（延迟 + 清屏，与 finishConnected 的注入路径一致：登录 shell
+                    //  的 MOTD 迟到输出会把 herdr 画面顶上去）
+                    sendHerdrLaunch(s)
                     // 安装成功 → 启动 agent 监控（正常路径由 finishConnected 启动，
                     // 但此分支在 installHerdr 后才恢复可监控状态）
                     c.startHerdrMonitor()
@@ -593,7 +602,12 @@ internal class SessionConnector(
             c.host.startupCommand.trim().takeIf { it.isNotBlank() }
         }
         if (cmd != null) {
-            c.session?.sendData((cmd + "\n").encodeToByteArray())
+            if (c.host.launchHerdr) {
+                // herdr 注入统一走延迟 + 清屏路径（防 MOTD 迟到输出顶掉画面）
+                sendHerdrLaunch(c.session ?: return)
+            } else {
+                c.session?.sendData((cmd + "\n").encodeToByteArray())
+            }
         }
         c.frame++
     }
@@ -634,18 +648,42 @@ internal class SessionConnector(
         // 启动入口：herdr 工作台开关优先（herdr 即入口，探测拿到的完整路径）；
         // 否则启动命令（如 tmux new -A -s main，实现会话现场恢复）
         if (sendStartup) {
-            val cmd = if (c.host.launchHerdr) {
-                c.herdrBin ?: "herdr"
+            if (c.host.launchHerdr) {
+                sendHerdrLaunch(s)
             } else {
-                c.host.startupCommand.trim().takeIf { it.isNotBlank() }
+                val cmd = c.host.startupCommand.trim().takeIf { it.isNotBlank() }
+                if (cmd != null) s.sendData((cmd + "\n").encodeToByteArray())
             }
-            if (cmd != null) s.sendData((cmd + "\n").encodeToByteArray())
         }
         // herdr 工作台：连接就绪后启动 agent 监控（blocked 通知的轮询源）。
         // 未装 herdr 时走安装卡片路径（finishConnected 提前 return），不会到这；
         // 安装成功后由 installHerdr 显式启动。stop 由 controller.close() 统一收口。
         if (c.host.launchHerdr) c.startHerdrMonitor()
         c.frame++
+    }
+
+    /**
+     * 经 shell 注入 herdr 启动命令（SSH / 降级路径；Mosh 路径由引导参数 `-- herdr`
+     * 直接 exec，不经登录 shell 无此问题）。
+     *
+     * 延迟 + 清屏两个手段叠加，解决 Ubuntu 主机 MOTD 残留：
+     * - 登录 shell 的 PAM MOTD（landscape/ESM 检测）可能耗时 1-3s 且输出几十行；
+     *   立即注入会被 readline 回显在 MOTD 中间
+     * - 注入命令先清屏（当前屏 + scrollback）再启动 herdr：即使 MOTD 已打出，
+     *   herdr 的起始画面也是干净的；延迟窗口让迟到的 MOTD 在注入前打完
+     * - 清屏用 printf 八进制转义（POSIX \0ddd，dash/bash 均支持），不依赖
+     *   /usr/bin/clear 是否存在
+     * 注入后会话若已关闭/重连（session 被替换）则放弃：新连接有自己的一次注入。
+     */
+    private fun sendHerdrLaunch(s: SshSession) {
+        val bin = c.herdrBin ?: "herdr"
+        c.scope.launch {
+            delay(HERDR_INJECT_DELAY_MS)
+            if (c.session !== s || c.status != ConnStatus.CONNECTED) return@launch
+            val launch = "printf '\\0033[2J\\0033[3J\\0033[H' && ${shSingleQuote(bin)}\n"
+            s.sendData(launch.encodeToByteArray())
+            TermLog.i("herdr") { "injected herdr launch (delayed+clear) ${c.host.name}" }
+        }
     }
 
     /** 降级 banner：提示降级原因，几秒后自动消失（常驻会压住终端顶部）。
