@@ -595,10 +595,6 @@ private fun TerminalBody(
         )
     }
 
-    // 屏幕全屏时：返回先收起画面，不退回首页
-    PlatformBackHandler(enabled = pipFullscreen) { pipFullscreen = false }
-    // 面板打开时拦截系统返回：先关面板，不直接退回首页
-    PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
     // 底部悬浮工具栏内容高度（不含导航条/键盘 padding），用于计算画布平移量
     // （键盘弹起时展开行的覆盖增量）
     var toolbarHeightPx by remember { mutableFloatStateOf(0f) }
@@ -636,6 +632,13 @@ private fun TerminalBody(
     // 返回即退到列表：会话默认在后台保持运行（SessionManager/前台服务保活），
     // 不弹保留策略选择。拦截系统返回（手势/返回键）与点击返回按钮一致。
     PlatformBackHandler(enabled = true, onBack = onBack)
+    // ⚠️ Compose 返回链 LIFO：后注册的 enabled handler 先触发——以下覆盖层
+    // 处理器必须晚于上面的 onBack 注册，否则全屏/面板打开时系统返回会直接
+    // 命中 onBack 退回主页（v1.4.0 回归：小窗全屏按返回直接回首页）
+    // 屏幕全屏时：返回先收起画面，不退回首页
+    PlatformBackHandler(enabled = pipFullscreen) { pipFullscreen = false }
+    // 面板打开时拦截系统返回：先关面板，不直接退回首页
+    PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 
@@ -674,6 +677,12 @@ private fun TerminalBody(
             // 工具栏展开行 3/4（会话内保持）：状态上提至调用方，画布按常驻高度
             // 布局、展开行覆盖画布（不 resize 不闪）；记忆在 key 块内随会话独立
             var toolbarExpanded by remember { mutableStateOf(false) }
+            // 屏幕小窗位置/尺寸（会话内保持）：必须放 key 块内、if 块外——
+            // 全屏展开/收起时小窗组件离开组合，若状态在组件内部或条件块内
+            // 会重置回右上角默认大小（v1.4.0 回归）
+            val pipDrag = remember { mutableStateOf(Offset.Zero) }
+            val pipSizeW = remember { mutableStateOf(PIP_DEFAULT_W) }
+            val pipSizeH = remember { mutableStateOf(PIP_DEFAULT_H) }
 
         // 顶部 banner 文案：错误/断开/失联（连接中走画布居中指示器，见下）
         val bannerText = when {
@@ -824,6 +833,9 @@ private fun TerminalBody(
                         state = pipState,
                         onClick = { pipFullscreen = true },
                         onClose = onCloseScreenPip,
+                        drag = pipDrag,
+                        pipW = pipSizeW,
+                        pipH = pipSizeH,
                         canvasSize = canvasSize,
                         modifier = Modifier
                             .align(Alignment.TopEnd)

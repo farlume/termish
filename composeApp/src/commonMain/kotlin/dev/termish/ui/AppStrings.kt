@@ -400,6 +400,10 @@ data class ScreenStrings(
     val installService: String,
     /** 安装中。 */
     val installingService: String,
+    /** 全屏返回按钮：就地全屏（小窗展开）时收起回终端。 */
+    val collapse: String,
+    /** 全屏返回按钮：屏幕 tab 模式返回上一 tab。 */
+    val back: String,
 )
 
 /** 终端文件上传文案（嵌套子类，同 GitStrings）。 */
@@ -763,6 +767,8 @@ private val EnStrings = AppStrings(
         serviceHint = "macOS blocks screen capture from SSH sessions, so Termish runs a capture daemon on your Mac (GUI session). Tap install — takes about a minute, ffmpeg required.",
         installService = "Install service",
         installingService = "Installing…",
+        collapse = "Collapse",
+        back = "Back",
     ),
     upload = UploadStrings(
         menuLabel = "Upload file",
@@ -1107,6 +1113,8 @@ private val ZhStrings = AppStrings(
         serviceHint = "macOS 禁止 SSH 会话直接录屏，Termish 会在你的 Mac 上安装一个常驻推流服务（跑在登录会话里）。点安装即可，约 1 分钟（需已装 ffmpeg）。",
         installService = "安装服务",
         installingService = "正在安装…",
+        collapse = "收起",
+        back = "返回",
     ),
     upload = UploadStrings(
         menuLabel = "上传文件",

@@ -3,7 +3,8 @@ package dev.termish.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Monitor
@@ -27,10 +29,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +52,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import dev.termish.data.Host
 import dev.termish.screen.ScreenPlayer
 import dev.termish.screen.ScreenSession
@@ -70,30 +75,12 @@ fun ScreenContent(
     onReconnect: () -> Unit,
     /** 服务缺失时的一键安装（引导卡片按钮）。 */
     onInstallService: () -> Unit = {},
-    /** 就地全屏模式：右上角显示 ✕ 关闭按钮（不跳 tab）。 */
+    /** 就地全屏模式：左上角返回按钮显示「收起」（不跳 tab）；否则显示「返回」。 */
     onClose: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
     Box(modifier.fillMaxSize().background(Color.Black)) {
-        // 就地全屏：右上角 ✕ 收起回终端
-        if (onClose != null) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .clickable(onClick = onClose)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            ) {
-                Text(
-                    "✕ 收起",
-                    color = Color.White.copy(alpha = 0.85f),
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
         // 画面帧（播放器渲染面，Fit 缩放）
         state.player?.let { p ->
             ScreenVideoSurface(p, Modifier.fillMaxSize())
@@ -181,6 +168,38 @@ fun ScreenContent(
                 }
             }
         }
+
+        // 全屏顶部返回按钮：就地全屏（小窗展开）= 收起回终端；屏幕 tab = 返回上一 tab。
+        // ⚠️ 必须最后声明（最顶层）：视频面/错误态都是 fillMaxSize 覆盖层，
+        // 先声明会被盖住导致全屏无法返回（v1.4.0 回归：看不到也点不到）。
+        val backLabel = if (onClose != null) s.screen.collapse else s.screen.back
+        Box(
+            Modifier
+                .align(Alignment.TopStart)
+                .padding(10.dp)
+                .zIndex(100f)
+                .clip(RoundedCornerShape(10.dp))
+                .background(Color.Black.copy(alpha = 0.55f))
+                .clickable(onClick = { (onClose ?: onBack)() })
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    backLabel,
+                    color = Color.White.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+        }
     }
 }
 
@@ -266,8 +285,8 @@ private fun ScreenServiceGuide(
 }
 
 /** 小窗默认尺寸（dp）。 */
-private const val PIP_DEFAULT_W = 160f
-private const val PIP_DEFAULT_H = 100f
+const val PIP_DEFAULT_W = 160f
+const val PIP_DEFAULT_H = 100f
 /** 缩放范围（dp）。 */
 private const val PIP_MIN_W = 120f
 private const val PIP_MIN_H = 75f
@@ -275,51 +294,121 @@ private const val PIP_MAX_W = 360f
 private const val PIP_MAX_H = 240f
 
 /**
- * 终端页小窗（画中画）：**可拖动 + 右下角拖拽缩放 + ✕ 关闭**；点击切到屏幕 tab 全屏。
- * 拖动偏移与尺寸在会话内保持（remember 于 key(controller.sessionId) 块内）。
+ * 终端页小窗（画中画）：**可拖动 + 右下角拖拽缩放 + ✕ 关闭**；点击切全屏。
+ * [drag]/[pipW]/[pipH] 由调用方持有（remember 于会话 key 块内）：全屏展开/收起时
+ * 本组件销毁重建也不会重置位置/尺寸（rememberSaveable 只在 Activity 重建时恢复，
+ * 普通的离开组合不保存——v1.4.0 回归：全屏返回后小窗回到右上角默认大小）。
  */
 @Composable
 fun ScreenPiP(
     state: ScreenUiState,
     onClick: () -> Unit,
     onClose: () -> Unit,
+    /** 拖动偏移（会话内保持）。 */
+    drag: MutableState<Offset>,
+    /** 窗口宽度（dp，会话内保持）。 */
+    pipW: MutableState<Float>,
+    /** 窗口高度（dp，会话内保持）。 */
+    pipH: MutableState<Float>,
     modifier: Modifier = Modifier,
     /** 画布尺寸（钳制边界，px）。 */
     canvasSize: IntSize = IntSize.Zero,
 ) {
-    var drag by remember { mutableStateOf(Offset.Zero) }
-    var pipW by remember { mutableFloatStateOf(PIP_DEFAULT_W) }
-    var pipH by remember { mutableFloatStateOf(PIP_DEFAULT_H) }
     var ownSize by remember { mutableStateOf(IntSize.Zero) }
+    // 钳制边界读最新值但不重启手势：缩放导致尺寸变化时，若 pointerInput 以
+    // ownSize 为 key 会重启并中断正在进行的拖动手势（v1.4.0 回归：缩放拖不动）
+    val ownSizeState = rememberUpdatedState(ownSize)
     val player = state.player
 
     Box(
         modifier
-            .offset { IntOffset(drag.x.roundToInt(), drag.y.roundToInt()) }
-            .size(pipW.dp, pipH.dp)
+            .offset { IntOffset(drag.value.x.roundToInt(), drag.value.y.roundToInt()) }
+            .size(pipW.value.dp, pipH.value.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Color.Black)
             .onSizeChanged { ownSize = it }
-            // 拖动：钳制在画布内（初始右上角，可全画布移动）
-            .pointerInput(canvasSize, ownSize) {
-                detectDragGestures { change, delta ->
-                    change.consume()
-                    if (canvasSize.width <= 0 || ownSize.width <= 0) return@detectDragGestures
-                    val margin = 4f
-                    val maxX = (canvasSize.width - ownSize.width).toFloat()
-                    val maxY = (canvasSize.height - ownSize.height).toFloat()
-                    drag = Offset(
-                        (drag.x + delta.x).coerceIn(-maxX + margin, maxX - margin),
-                        (drag.y + delta.y).coerceIn(-maxY + margin, maxY - margin),
-                    )
+            // 手势统一处理：单指拖动移动（起点在右下角把手区则缩放尺寸）；
+            // 双指捏合/张开缩放尺寸（v1.4.0 回归：把手拖不动 + 水平缩放被系统返回抢走）。
+            // 不用 detectDragGestures：把手独立手势会被父节点事件先发抢走；
+            // 双指缩放需要自定义手势（transform 无法区分把手起点）。
+            .pointerInput(canvasSize) {
+                val slop = viewConfiguration.touchSlop
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    val sz0 = ownSizeState.value
+                    val handlePx = 26.dp.toPx()
+                    val p = down.position
+                    // ✕ / 全屏角标区域（左上/右上角）交给各自 clickable，不参与手势
+                    val iconPx = 24.dp.toPx()
+                    if ((p.x < iconPx && p.y < iconPx) || (p.x > sz0.width - iconPx && p.y < iconPx)) {
+                        return@awaitEachGesture
+                    }
+                    // 单指起点落在右下角把手区（26dp）→ 单指拖动为缩放
+                    var resizing = p.x >= sz0.width - handlePx && p.y >= sz0.height - handlePx
+                    var moved = false
+                    var multiTouch = false
+                    var total = Offset.Zero
+                    var prevDist = -1f
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) {
+                            // 全部抬起：无移动且未多指 → 点击全屏。替代视频面 clickable：
+                            // clickable 先于本手势收到事件，双指捏合位移小时会误判点击（v1.4.0）
+                            if (!moved && !multiTouch) onClick()
+                            break
+                        }
+                        if (pressed.size >= 2) {
+                            multiTouch = true
+                            // 双指：捏合/张开缩放（以尺寸左上角为锚点，不移动小窗）
+                            val p1 = pressed[0].position
+                            val p2 = pressed[1].position
+                            val dist = (p2 - p1).getDistance()
+                            if (prevDist > 0f && dist > 0f) {
+                                val zoom = dist / prevDist
+                                pipW.value = (pipW.value * zoom).coerceIn(PIP_MIN_W, PIP_MAX_W)
+                                pipH.value = (pipH.value * zoom).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                event.changes.forEach { it.consume() }
+                            }
+                            prevDist = dist
+                        } else {
+                            val change = pressed[0]
+                            val delta = change.position - change.previousPosition
+                            total += delta
+                            if (!moved && total.x * total.x + total.y * total.y > slop * slop) moved = true
+                            if (moved) {
+                                if (resizing) {
+                                    // 单指把手：delta 是 px、pip 尺寸是 dp，除以 density 换算
+                                    pipW.value = (pipW.value + delta.x / density).coerceIn(PIP_MIN_W, PIP_MAX_W)
+                                    pipH.value = (pipH.value + delta.y / density).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                } else {
+                                    // 移动：钳制在画布内（初始右上角，可全画布移动）
+                                    val sz = ownSizeState.value
+                                    if (canvasSize.width > 0 && sz.width > 0) {
+                                        val margin = 4f
+                                        // 初始位置 = 画布右上角（调用方 TopEnd + padding）：
+                                        // 向左最多到左边缘、向下最多到画布底；向右/向上不可（已贴边）
+                                        val maxLeft = (canvasSize.width - sz.width).toFloat()
+                                        val maxDown = (canvasSize.height - sz.height).toFloat()
+                                        if (maxLeft > 0f && maxDown > 0f) {
+                                            drag.value = Offset(
+                                                (drag.value.x + delta.x).coerceIn(-maxLeft + margin, 0f),
+                                                (drag.value.y + delta.y).coerceIn(0f, maxDown - margin),
+                                            )
+                                        }
+                                    }
+                                }
+                                change.consume()
+                            }
+                        }
+                    }
                 }
             },
     ) {
         if (player != null) {
-            ScreenVideoSurface(
-                player,
-                Modifier.fillMaxSize().clickable(onClick = onClick),
-            )
+            // 无 clickable：点击=全屏由父手势统一判定（clickable 先于手势收到事件，
+            // 双指捏合位移小时会误判点击全屏——v1.4.0 回归）
+            ScreenVideoSurface(player, Modifier.fillMaxSize())
         } else {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -357,18 +446,14 @@ fun ScreenPiP(
                 .clickable(onClick = onClick),
         )
 
-        // 右下角缩放把手：拖拽调整窗口大小
+        // 右下角缩放把手（视觉）：拖拽调整窗口大小由小窗 Box 的手势统一处理——
+        // 起点落在此 26dp 区域即缩放（独立手势会被父节点事件先发抢走）。
+        // 排除系统返回手势：把手贴屏幕右边缘时水平缩放会被边缘返回抢走
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
                 .size(26.dp)
-                .pointerInput(ownSize) {
-                    detectDragGestures { change, delta ->
-                        change.consume()
-                        pipW = (pipW + delta.x).coerceIn(PIP_MIN_W, PIP_MAX_W)
-                        pipH = (pipH + delta.y).coerceIn(PIP_MIN_H, PIP_MAX_H)
-                    }
-                },
+                .excludeSystemBackGesture(),
         ) {
             Canvas(Modifier.fillMaxSize()) {
                 val p = Path().apply {
