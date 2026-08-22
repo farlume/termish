@@ -1,6 +1,9 @@
 package dev.termish.ssh
 import dev.termish.util.TermLog
-
+import java.io.StringReader
+import java.security.MessageDigest
+import java.security.PublicKey
+import java.util.Base64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,10 +28,6 @@ import net.schmizz.sshj.userauth.method.AuthPublickey
 import net.schmizz.sshj.userauth.method.ChallengeResponseProvider
 import net.schmizz.sshj.userauth.password.PasswordFinder
 import net.schmizz.sshj.userauth.password.Resource
-import java.io.StringReader
-import java.security.MessageDigest
-import java.security.PublicKey
-import java.util.Base64
 
 /**
  * sshj 引擎（Android / desktop 共用）。传输层、KEX、认证、加密全部交给
@@ -42,27 +41,33 @@ class SshSessionSshj(
      *  否则 write/list 挂在无线等待上，断线后 UI 永远“传输中”。 */
     private val readTimeoutMs: Long = 0L,
 ) : SshSession {
-
     private val client = SSHClient()
     private var session: Session? = null
     private var shell: Session.Shell? = null
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     // 单线程写调度器：既避免在主线程做 socket 写（Android 会抛 NetworkOnMainThreadException），又保证输入顺序
     private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
+
     // 单线程读调度器：stdout/stderr 两个 reader 若并发回调 onOutput/onStderr，
     // 会同时进入无锁的 TerminalEmulator 状态机（转义序列被打断、UTF-8 跨块错乱），
     // 必须串行喂给上层。onOutput/onStderr 是挂起回调（可做背压），在 reader
     // 协程里调用，挂起时释放本调度器线程
     private val readerDispatcher = Dispatchers.IO.limitedParallelism(1)
 
-    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val closed =
+        java.util.concurrent.atomic
+            .AtomicBoolean(false)
 
     private var hostKeyInfo: HostKeyInfo? = null
     private var serverVersion: String = ""
     private var privateKeyError: String? = null
 
-    override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
+    override fun connectAndStart(
+        columns: Int,
+        rows: Int,
+    ): SessionInfo {
         connectTransport()
         val s = client.startSession()
         session = s
@@ -94,20 +99,30 @@ class SshSessionSshj(
     }
 
     private fun connectTransport() {
-        client.addHostKeyVerifier(object : HostKeyVerifier {
-            override fun verify(hostname: String, port: Int, key: PublicKey): Boolean {
-                val algorithm = keyTypeName(key)
-                val info = HostKeyInfo(
-                    algorithm = algorithm,
-                    fingerprintSha256 = fingerprintSha256(key),
-                    fingerprintMd5 = fingerprintMd5(key),
-                )
-                hostKeyInfo = info
-                return callbacks.verifyHostKey(info)
-            }
+        client.addHostKeyVerifier(
+            object : HostKeyVerifier {
+                override fun verify(
+                    hostname: String,
+                    port: Int,
+                    key: PublicKey,
+                ): Boolean {
+                    val algorithm = keyTypeName(key)
+                    val info =
+                        HostKeyInfo(
+                            algorithm = algorithm,
+                            fingerprintSha256 = fingerprintSha256(key),
+                            fingerprintMd5 = fingerprintMd5(key),
+                        )
+                    hostKeyInfo = info
+                    return callbacks.verifyHostKey(info)
+                }
 
-            override fun findExistingAlgorithms(hostname: String, port: Int): List<String> = emptyList()
-        })
+                override fun findExistingAlgorithms(
+                    hostname: String,
+                    port: Int,
+                ): List<String> = emptyList()
+            },
+        )
 
         client.setConnectTimeout(connection.connectTimeoutMillis.toInt())
         client.setTimeout(readTimeoutMs.toInt()) // 交互 shell=0 不限时；SFTP 请求-响应式限时
@@ -120,7 +135,7 @@ class SshSessionSshj(
         callbacks.onTraceStep("auth")
 
         // 空闲保活（<=0 关闭）：统一放这里，所有连接路径生效
-        //（此前只在终端 shell 路径设置，SFTP 连接无保活、断线完全无感知）
+        // （此前只在终端 shell 路径设置，SFTP 连接无保活、断线完全无感知）
         try {
             if (connection.keepAliveSeconds > 0) {
                 client.connection.keepAlive.setKeepAliveInterval(connection.keepAliveSeconds)
@@ -132,17 +147,25 @@ class SshSessionSshj(
         // 终端路径有 startReaders 的通道 join 兜底，SFTP 等无 shell 的会话
         // 此前没有注册任何监听，断线后 UI 无感知（只能靠下次操作失败暴露）
         try {
-            client.transport.setDisconnectListener(object : DisconnectListener {
-                override fun notifyDisconnect(reason: DisconnectReason, message: String) {
-                    TermLog.w("ssh") { "transport disconnect $reason: $message" }
-                    handleClosed()
-                }
-            })
+            client.transport.setDisconnectListener(
+                object : DisconnectListener {
+                    override fun notifyDisconnect(
+                        reason: DisconnectReason,
+                        message: String,
+                    ) {
+                        TermLog.w("ssh") { "transport disconnect $reason: $message" }
+                        handleClosed()
+                    }
+                },
+            )
         } catch (_: Exception) {
         }
     }
 
-    override fun connectAndRun(command: String, timeoutMs: Long): CommandResult {
+    override fun connectAndRun(
+        command: String,
+        timeoutMs: Long,
+    ): CommandResult {
         connectTransport()
         return try {
             val s = client.startSession()
@@ -156,7 +179,10 @@ class SshSessionSshj(
         }
     }
 
-    override fun runCommandDetailed(command: String, timeoutMs: Long): CommandOutput? {
+    override fun runCommandDetailed(
+        command: String,
+        timeoutMs: Long,
+    ): CommandOutput? {
         if (closed.get() || !client.isConnected) return null
         var s: Session? = null
         return try {
@@ -187,7 +213,11 @@ class SshSessionSshj(
         }
     }
 
-    override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? {
+    override fun startExec(
+        command: String,
+        columns: Int,
+        rows: Int,
+    ): SshExecChannel? {
         if (closed.get() || !client.isConnected) return null
         val s = client.startSession()
         return try {
@@ -196,25 +226,23 @@ class SshSessionSshj(
             val cmd = s.exec(command)
             val mutex = Any()
             object : SshExecChannel {
-                override fun read(): ByteArray? {
-                    return try {
+                override fun read(): ByteArray? =
+                    try {
                         val buf = ByteArray(8192)
                         val n = cmd.inputStream.read(buf)
                         if (n < 0) null else buf.copyOf(n)
                     } catch (e: Exception) {
                         null
                     }
-                }
 
-                override fun readErr(): ByteArray? {
-                    return try {
+                override fun readErr(): ByteArray? =
+                    try {
                         val buf = ByteArray(8192)
                         val n = cmd.errorStream.read(buf)
                         if (n < 0) null else buf.copyOf(n)
                     } catch (e: Exception) {
                         null
                     }
-                }
 
                 override fun write(data: ByteArray) {
                     // 异步写：调用方可能是主线程（emulator.onResponse 应答 OSC 查询——
@@ -255,25 +283,23 @@ class SshSessionSshj(
             val cmd = s.exec(command)
             val mutex = Any()
             object : SshExecChannel {
-                override fun read(): ByteArray? {
-                    return try {
+                override fun read(): ByteArray? =
+                    try {
                         val buf = ByteArray(64 * 1024)
                         val n = cmd.inputStream.read(buf)
                         if (n < 0) null else buf.copyOf(n)
                     } catch (e: Exception) {
                         null
                     }
-                }
 
-                override fun readErr(): ByteArray? {
-                    return try {
+                override fun readErr(): ByteArray? =
+                    try {
                         val buf = ByteArray(8192)
                         val n = cmd.errorStream.read(buf)
                         if (n < 0) null else buf.copyOf(n)
                     } catch (e: Exception) {
                         null
                     }
-                }
 
                 override fun write(data: ByteArray) {
                     scope.launch(writeDispatcher) {
@@ -323,10 +349,12 @@ class SshSessionSshj(
             loadKeyProvider(pem)?.let { methods.add(AuthPublickey(it)) }
         }
         connection.password?.let { pw ->
-            val finder = object : PasswordFinder {
-                override fun reqPassword(resource: Resource<*>?): CharArray = pw.toCharArray()
-                override fun shouldRetry(resource: Resource<*>?): Boolean = false
-            }
+            val finder =
+                object : PasswordFinder {
+                    override fun reqPassword(resource: Resource<*>?): CharArray = pw.toCharArray()
+
+                    override fun shouldRetry(resource: Resource<*>?): Boolean = false
+                }
             methods.add(AuthPassword(finder))
         }
         // keyboard-interactive：作为密码/二次验证的兜底
@@ -344,25 +372,29 @@ class SshSessionSshj(
 
     private fun loadKeyProvider(pem: String): FileKeyProvider? {
         val isOpenSsh = pem.contains("OPENSSH PRIVATE KEY")
-        fun newProvider(): FileKeyProvider = if (isOpenSsh) {
-            com.hierynomus.sshj.userauth.keyprovider.OpenSSHKeyV1KeyFile()
-        } else {
-            PKCS8KeyFile()
-        }
+
+        fun newProvider(): FileKeyProvider =
+            if (isOpenSsh) {
+                com.hierynomus.sshj.userauth.keyprovider
+                    .OpenSSHKeyV1KeyFile()
+            } else {
+                PKCS8KeyFile()
+            }
 
         // 加密私钥：sshj 的 init 对加密 key 不会抛异常（解密延迟到认证时），
         // 必须先静态判断并提示用户输入口令
         if (isEncryptedPem(pem)) {
-            val passphrase = runBlocking {
-                callbacks.onPrompt(
-                    AuthPrompt(
-                        method = SshAuthMethod.PASSPHRASE,
-                        name = "私钥口令",
-                        instruction = "该私钥已加密（passphrase-protected），请输入口令。",
-                        prompts = listOf(PromptField("Passphrase", echo = false)),
+            val passphrase =
+                runBlocking {
+                    callbacks.onPrompt(
+                        AuthPrompt(
+                            method = SshAuthMethod.PASSPHRASE,
+                            name = "私钥口令",
+                            instruction = "该私钥已加密（passphrase-protected），请输入口令。",
+                            prompts = listOf(PromptField("Passphrase", echo = false)),
+                        ),
                     )
-                )
-            }?.firstOrNull()
+                }?.firstOrNull()
             if (passphrase.isNullOrEmpty()) {
                 privateKeyError = "加密私钥需要口令，已取消输入"
                 return null
@@ -374,6 +406,7 @@ class SshSessionSshj(
                     null,
                     object : PasswordFinder {
                         override fun reqPassword(resource: Resource<*>?): CharArray = passphrase.toCharArray()
+
                         override fun shouldRetry(resource: Resource<*>?): Boolean = false
                     },
                 )
@@ -397,38 +430,49 @@ class SshSessionSshj(
         }
     }
 
-    private val kbiProvider = object : ChallengeResponseProvider {
-        @Volatile private var cancelled = false
-        @Volatile private var name = ""
-        @Volatile private var instruction = ""
+    private val kbiProvider =
+        object : ChallengeResponseProvider {
+            @Volatile private var cancelled = false
 
-        override fun getSubmethods(): List<String> = emptyList()
+            @Volatile private var name = ""
 
-        override fun init(resource: Resource<*>, name: String, instruction: String) {
-            this.name = name
-            this.instruction = instruction
-        }
+            @Volatile private var instruction = ""
 
-        override fun getResponse(prompt: String, echo: Boolean): CharArray {
-            val answers = runBlocking {
-                callbacks.onPrompt(
-                    AuthPrompt(
-                        method = SshAuthMethod.KEYBOARD_INTERACTIVE,
-                        name = name,
-                        instruction = instruction,
-                        prompts = listOf(PromptField(prompt, echo)),
-                    )
-                )
+            override fun getSubmethods(): List<String> = emptyList()
+
+            override fun init(
+                resource: Resource<*>,
+                name: String,
+                instruction: String,
+            ) {
+                this.name = name
+                this.instruction = instruction
             }
-            if (answers.isNullOrEmpty()) {
-                cancelled = true
-                return CharArray(0)
-            }
-            return answers.first().toCharArray()
-        }
 
-        override fun shouldRetry(): Boolean = !cancelled
-    }
+            override fun getResponse(
+                prompt: String,
+                echo: Boolean,
+            ): CharArray {
+                val answers =
+                    runBlocking {
+                        callbacks.onPrompt(
+                            AuthPrompt(
+                                method = SshAuthMethod.KEYBOARD_INTERACTIVE,
+                                name = name,
+                                instruction = instruction,
+                                prompts = listOf(PromptField(prompt, echo)),
+                            ),
+                        )
+                    }
+                if (answers.isNullOrEmpty()) {
+                    cancelled = true
+                    return CharArray(0)
+                }
+                return answers.first().toCharArray()
+            }
+
+            override fun shouldRetry(): Boolean = !cancelled
+        }
 
     // ---------- 数据收发 ----------
 
@@ -488,7 +532,12 @@ class SshSessionSshj(
         callbacks.onClosed(null)
     }
 
-    override fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
+    override fun resize(
+        columns: Int,
+        rows: Int,
+        widthPx: Int,
+        heightPx: Int,
+    ) {
         scope.launch(writeDispatcher) {
             try {
                 shell?.changeWindowDimensions(columns, rows, widthPx, heightPx)
@@ -532,11 +581,12 @@ class SshSessionSshj(
 
     // ---------- 指纹 ----------
 
-    private fun keyTypeName(key: PublicKey): String = try {
-        KeyType.fromKey(key).toString()
-    } catch (_: Exception) {
-        key.algorithm
-    }
+    private fun keyTypeName(key: PublicKey): String =
+        try {
+            KeyType.fromKey(key).toString()
+        } catch (_: Exception) {
+            key.algorithm
+        }
 
     private fun fingerprintSha256(key: PublicKey): String {
         val blob = Buffer.PlainBuffer().putPublicKey(key).compactData

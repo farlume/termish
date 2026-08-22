@@ -8,9 +8,10 @@ import androidx.compose.runtime.Composable
  * - [VoiceWebSocket]：二进制 WebSocket 客户端
  * - [rememberMicPermissionRequester]：麦克风权限请求（Android 运行时权限弹窗；
  *   iOS 走 AVAudioSession 内部请求；桌面恒授予）
+ *
+ * 麦克风权限请求器：request 幂等，已授予立即回调 true。
  */
 
-/** 麦克风权限请求器：request 幂等，已授予立即回调 true。 */
 interface MicPermissionRequester {
     fun request(onResult: (Boolean) -> Unit)
 }
@@ -25,7 +26,11 @@ expect fun rememberMicPermissionRequester(): MicPermissionRequester
  */
 expect class MicrophoneRecorder() {
     /** 启动录音；返回 false 表示无法启动（无设备/未授权，错误经 [onError] 给出）。 */
-    fun start(onData: (ByteArray) -> Unit, onError: (String) -> Unit): Boolean
+    fun start(
+        onData: (ByteArray) -> Unit,
+        onError: (String) -> Unit,
+    ): Boolean
+
     fun stop()
 }
 
@@ -39,7 +44,9 @@ interface VoiceWebSocket {
         onError: (String) -> Unit,
         onClosed: () -> Unit,
     )
+
     fun send(bytes: ByteArray)
+
     fun close()
 }
 

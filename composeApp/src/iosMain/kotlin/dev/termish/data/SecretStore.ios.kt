@@ -1,8 +1,8 @@
 package dev.termish.data
 
-import kotlinx.cinterop.MemScope
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.MemScope
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArrayOf
 import kotlinx.cinterop.convert
@@ -20,11 +20,11 @@ import platform.CoreFoundation.kCFBooleanTrue
 import platform.Foundation.CFBridgingRelease
 import platform.Foundation.CFBridgingRetain
 import platform.Foundation.NSData
+import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSLog
 import platform.Foundation.NSSearchPathForDirectoriesInDomains
 import platform.Foundation.NSString
-import platform.Foundation.NSDocumentDirectory
 import platform.Foundation.NSUTF8StringEncoding
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.create
@@ -55,53 +55,63 @@ import platform.Security.kSecValueData
  */
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 actual object SecretStore {
-
     /** errSecMissingEntitlement：app 未签名/未配置 keychain-access-groups 时 Keychain 不可用。 */
     private const val ERR_SEC_MISSING_ENTITLEMENT = -34018
 
-    actual fun get(service: String, account: String): String? = withCfRetain(service, account) { cfService, cfAccount ->
-        val query = cfDictionaryOf(
-            kSecClass to kSecClassGenericPassword,
-            kSecAttrService to cfService,
-            kSecAttrAccount to cfAccount,
-            kSecReturnData to kCFBooleanTrue,
-            kSecMatchLimit to kSecMatchLimitOne,
-        )
-        val result = alloc<CFTypeRefVar>()
-        val status = SecItemCopyMatching(query, result.ptr)
-        CFBridgingRelease(query)
-        // 只记状态不记 service/account：避免把 host id 与凭据类型的映射写进系统日志
-        NSLog("Termish-KEYCHAIN get status=$status")
-        if (status != errSecSuccess) {
-            if (status == ERR_SEC_MISSING_ENTITLEMENT) {
-                NSLog("Termish-KEYCHAIN get fallback to file (missing entitlement)")
-                return@withCfRetain fallbackRead(account)
+    actual fun get(
+        service: String,
+        account: String,
+    ): String? =
+        withCfRetain(service, account) { cfService, cfAccount ->
+            val query =
+                cfDictionaryOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrService to cfService,
+                    kSecAttrAccount to cfAccount,
+                    kSecReturnData to kCFBooleanTrue,
+                    kSecMatchLimit to kSecMatchLimitOne,
+                )
+            val result = alloc<CFTypeRefVar>()
+            val status = SecItemCopyMatching(query, result.ptr)
+            CFBridgingRelease(query)
+            // 只记状态不记 service/account：避免把 host id 与凭据类型的映射写进系统日志
+            NSLog("Termish-KEYCHAIN get status=$status")
+            if (status != errSecSuccess) {
+                if (status == ERR_SEC_MISSING_ENTITLEMENT) {
+                    NSLog("Termish-KEYCHAIN get fallback to file (missing entitlement)")
+                    return@withCfRetain fallbackRead(account)
+                }
+                return@withCfRetain null
             }
-            return@withCfRetain null
+            val data = CFBridgingRelease(result.value) as? NSData
+            NSLog("Termish-KEYCHAIN get data=${data?.length} bytes")
+            data?.let { NSString.create(it, NSUTF8StringEncoding)?.toString() }
         }
-        val data = CFBridgingRelease(result.value) as? NSData
-        NSLog("Termish-KEYCHAIN get data=${data?.length} bytes")
-        data?.let { NSString.create(it, NSUTF8StringEncoding)?.toString() }
-    }
 
-    actual fun set(service: String, account: String, value: String) {
+    actual fun set(
+        service: String,
+        account: String,
+        value: String,
+    ) {
         val data = NSString.create(string = value).dataUsingEncoding(NSUTF8StringEncoding) ?: return
         withCfRetain(service, account, data) { cfService, cfAccount, cfData ->
-            val query = cfDictionaryOf(
-                kSecClass to kSecClassGenericPassword,
-                kSecAttrService to cfService,
-                kSecAttrAccount to cfAccount,
-            )
+            val query =
+                cfDictionaryOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrService to cfService,
+                    kSecAttrAccount to cfAccount,
+                )
             val del = SecItemDelete(query)
             CFBridgingRelease(query)
             NSLog("Termish-KEYCHAIN set delete=$del")
 
-            val attrs = cfDictionaryOf(
-                kSecClass to kSecClassGenericPassword,
-                kSecAttrService to cfService,
-                kSecAttrAccount to cfAccount,
-                kSecValueData to cfData,
-            )
+            val attrs =
+                cfDictionaryOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrService to cfService,
+                    kSecAttrAccount to cfAccount,
+                    kSecValueData to cfData,
+                )
             val add = SecItemAdd(attrs, null)
             CFBridgingRelease(attrs)
             NSLog("Termish-KEYCHAIN set add=$add")
@@ -112,13 +122,17 @@ actual object SecretStore {
         }
     }
 
-    actual fun delete(service: String, account: String) {
+    actual fun delete(
+        service: String,
+        account: String,
+    ) {
         withCfRetain(service, account) { cfService, cfAccount ->
-            val query = cfDictionaryOf(
-                kSecClass to kSecClassGenericPassword,
-                kSecAttrService to cfService,
-                kSecAttrAccount to cfAccount,
-            )
+            val query =
+                cfDictionaryOf(
+                    kSecClass to kSecClassGenericPassword,
+                    kSecAttrService to cfService,
+                    kSecAttrAccount to cfAccount,
+                )
             val del = SecItemDelete(query)
             CFBridgingRelease(query)
             NSLog("Termish-KEYCHAIN delete status=$del")
@@ -134,21 +148,25 @@ actual object SecretStore {
     // 便于开发调试；正式签名（Xcode/真机）后自动走 Keychain，不会用到这段。
 
     private fun fallbackDir(): String {
-        val docs = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true)
-            .firstOrNull() as? String ?: return ""
+        val docs =
+            NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, true)
+                .firstOrNull() as? String ?: return ""
         val dir = (docs as NSString).stringByAppendingPathComponent("termish-secrets")
         NSFileManager.defaultManager.createDirectoryAtPath(dir, true, null, null)
         return dir
     }
 
-    private fun fallbackPath(account: String): String =
-        (fallbackDir() as NSString).stringByAppendingPathComponent("$account.txt")
+    private fun fallbackPath(account: String): String = (fallbackDir() as NSString).stringByAppendingPathComponent("$account.txt")
 
     private fun fallbackRead(account: String): String? =
-        NSString.create(contentsOfFile = fallbackPath(account), encoding = NSUTF8StringEncoding, error = null)
+        NSString
+            .create(contentsOfFile = fallbackPath(account), encoding = NSUTF8StringEncoding, error = null)
             ?.toString()
 
-    private fun fallbackWrite(account: String, value: String) {
+    private fun fallbackWrite(
+        account: String,
+        value: String,
+    ) {
         NSString.create(string = value).writeToFile(fallbackPath(account), true, NSUTF8StringEncoding, null)
     }
 
@@ -179,16 +197,17 @@ private inline fun <T> withCfRetain(
     value1: Any?,
     value2: Any?,
     block: MemScope.(CFTypeRef?, CFTypeRef?) -> T,
-): T = memScoped {
-    val cfValue1 = CFBridgingRetain(value1)
-    val cfValue2 = CFBridgingRetain(value2)
-    try {
-        block(cfValue1, cfValue2)
-    } finally {
-        CFBridgingRelease(cfValue1)
-        CFBridgingRelease(cfValue2)
+): T =
+    memScoped {
+        val cfValue1 = CFBridgingRetain(value1)
+        val cfValue2 = CFBridgingRetain(value2)
+        try {
+            block(cfValue1, cfValue2)
+        } finally {
+            CFBridgingRelease(cfValue1)
+            CFBridgingRelease(cfValue2)
+        }
     }
-}
 
 @OptIn(ExperimentalForeignApi::class)
 private inline fun <T> withCfRetain(
@@ -196,15 +215,16 @@ private inline fun <T> withCfRetain(
     value2: Any?,
     value3: Any?,
     block: MemScope.(CFTypeRef?, CFTypeRef?, CFTypeRef?) -> T,
-): T = memScoped {
-    val cfValue1 = CFBridgingRetain(value1)
-    val cfValue2 = CFBridgingRetain(value2)
-    val cfValue3 = CFBridgingRetain(value3)
-    try {
-        block(cfValue1, cfValue2, cfValue3)
-    } finally {
-        CFBridgingRelease(cfValue1)
-        CFBridgingRelease(cfValue2)
-        CFBridgingRelease(cfValue3)
+): T =
+    memScoped {
+        val cfValue1 = CFBridgingRetain(value1)
+        val cfValue2 = CFBridgingRetain(value2)
+        val cfValue3 = CFBridgingRetain(value3)
+        try {
+            block(cfValue1, cfValue2, cfValue3)
+        } finally {
+            CFBridgingRelease(cfValue1)
+            CFBridgingRelease(cfValue2)
+            CFBridgingRelease(cfValue3)
+        }
     }
-}

@@ -6,7 +6,9 @@ package dev.termish.mosh
  *
  * 仅实现 mosh 需要的 AE_ENCRYPT / AE_DECRYPT 全量消息接口。
  */
-internal class Ocb(key: ByteArray) {
+internal class Ocb(
+    key: ByteArray,
+) {
     private val aes = Aes128(key)
 
     /** L_* = double(double(zero)) = ENC(0) 的两次加倍；L_$ 与 L[0..] 见下。 */
@@ -25,7 +27,10 @@ internal class Ocb(key: ByteArray) {
     }
 
     /** GF(2^128) 上的乘 2：左移一位，最高位溢出则异或 0x87。 */
-    private fun doubleBlock(input: ByteArray, output: ByteArray) {
+    private fun doubleBlock(
+        input: ByteArray,
+        output: ByteArray,
+    ) {
         var carry = 0
         for (i in 15 downTo 0) {
             val v = input[i].toInt() and 0xff
@@ -45,11 +50,24 @@ internal class Ocb(key: ByteArray) {
         return c
     }
 
-    private fun xorBlock(a: ByteArray, aOff: Int, b: ByteArray, out: ByteArray, outOff: Int) {
+    private fun xorBlock(
+        a: ByteArray,
+        aOff: Int,
+        b: ByteArray,
+        out: ByteArray,
+        outOff: Int,
+    ) {
         for (i in 0..15) out[outOff + i] = (a[aOff + i].toInt() xor b[i].toInt()).toByte()
     }
 
-    private fun xor3(a: ByteArray, aOff: Int, b: ByteArray, c: ByteArray, out: ByteArray, outOff: Int) {
+    private fun xor3(
+        a: ByteArray,
+        aOff: Int,
+        b: ByteArray,
+        c: ByteArray,
+        out: ByteArray,
+        outOff: Int,
+    ) {
         for (i in 0..15) out[outOff + i] = (a[aOff + i].toInt() xor b[i].toInt() xor c[i].toInt()).toByte()
     }
 
@@ -82,11 +100,12 @@ internal class Ocb(key: ByteArray) {
             val idx = i + byteShift
             val b1 = stretch[idx].toInt() and 0xff
             val b2 = if (idx + 1 < 24) stretch[idx + 1].toInt() and 0xff else 0
-            offset[i] = if (bitShift == 0) {
-                b1.toByte()
-            } else {
-                (((b1 shl bitShift) and 0xff) or (b2 ushr (8 - bitShift))).toByte()
-            }
+            offset[i] =
+                if (bitShift == 0) {
+                    b1.toByte()
+                } else {
+                    (((b1 shl bitShift) and 0xff) or (b2 ushr (8 - bitShift))).toByte()
+                }
         }
         return offset
     }
@@ -94,7 +113,10 @@ internal class Ocb(key: ByteArray) {
     /**
      * 加密：plaintext → ciphertext || tag(16B)。
      */
-    fun encrypt(nonce: ByteArray, plaintext: ByteArray): ByteArray {
+    fun encrypt(
+        nonce: ByteArray,
+        plaintext: ByteArray,
+    ): ByteArray {
         val out = ByteArray(plaintext.size + 16)
         val offset = initialOffset(nonce)
         val checksum = ByteArray(16)
@@ -133,7 +155,10 @@ internal class Ocb(key: ByteArray) {
      * 解密并校验 tag；失败返回 null（对应 ae_decrypt 的 AE_INVALID）。
      * 输入为 ciphertext || tag(16B)。
      */
-    fun decrypt(nonce: ByteArray, ciphertextAndTag: ByteArray): ByteArray? {
+    fun decrypt(
+        nonce: ByteArray,
+        ciphertextAndTag: ByteArray,
+    ): ByteArray? {
         require(ciphertextAndTag.size >= 16)
         val ctLen = ciphertextAndTag.size - 16
         val plain = ByteArray(ctLen)
@@ -171,11 +196,18 @@ internal class Ocb(key: ByteArray) {
         return plain
     }
 
-    private fun xorInto(acc: ByteArray, other: ByteArray) {
+    private fun xorInto(
+        acc: ByteArray,
+        other: ByteArray,
+    ) {
         for (i in 0..15) acc[i] = (acc[i].toInt() xor other[i].toInt()).toByte()
     }
 
-    private fun xorInto(acc: ByteArray, other: ByteArray, otherOff: Int) {
+    private fun xorInto(
+        acc: ByteArray,
+        other: ByteArray,
+        otherOff: Int,
+    ) {
         for (i in 0..15) acc[i] = (acc[i].toInt() xor other[otherOff + i].toInt()).toByte()
     }
 }

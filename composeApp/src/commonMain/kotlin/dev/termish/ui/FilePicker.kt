@@ -15,6 +15,4 @@ data class PickedFile(
  * Android SAF（OpenMultipleDocuments）/ iOS UIDocumentPicker（多选）/ 桌面 JFileChooser。
  */
 @Composable
-expect fun rememberFilePicker(
-    onPicked: (PickedFile) -> Unit,
-): () -> Unit
+expect fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit

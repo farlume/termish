@@ -4,10 +4,13 @@ package dev.termish.crypto
  * ChaCha20 (RFC 8439) — pure Kotlin.
  */
 object ChaCha20 {
-
     private const val ROUNDS = 20
 
-    fun block(key: ByteArray, counter: Long, nonce: ByteArray): ByteArray {
+    fun block(
+        key: ByteArray,
+        counter: Long,
+        nonce: ByteArray,
+    ): ByteArray {
         require(key.size == 32 && nonce.size == 12)
         val state = IntArray(16)
         state[0] = 0x61707865
@@ -38,22 +41,42 @@ object ChaCha20 {
         return out
     }
 
-    private fun qr(x: IntArray, a: Int, b: Int, c: Int, d: Int) {
-        x[a] += x[b]; x[d] = rotl(x[d] xor x[a], 16)
-        x[c] += x[d]; x[b] = rotl(x[b] xor x[c], 12)
-        x[a] += x[b]; x[d] = rotl(x[d] xor x[a], 8)
-        x[c] += x[d]; x[b] = rotl(x[b] xor x[c], 7)
+    private fun qr(
+        x: IntArray,
+        a: Int,
+        b: Int,
+        c: Int,
+        d: Int,
+    ) {
+        x[a] += x[b]
+        x[d] = rotl(x[d] xor x[a], 16)
+        x[c] += x[d]
+        x[b] = rotl(x[b] xor x[c], 12)
+        x[a] += x[b]
+        x[d] = rotl(x[d] xor x[a], 8)
+        x[c] += x[d]
+        x[b] = rotl(x[b] xor x[c], 7)
     }
 
-    private fun rotl(v: Int, n: Int): Int = (v shl n) or (v ushr (32 - n))
+    private fun rotl(
+        v: Int,
+        n: Int,
+    ): Int = (v shl n) or (v ushr (32 - n))
 
-    private fun le32(b: ByteArray, off: Int): Int =
+    private fun le32(
+        b: ByteArray,
+        off: Int,
+    ): Int =
         (b[off].toInt() and 0xff) or
-                ((b[off + 1].toInt() and 0xff) shl 8) or
-                ((b[off + 2].toInt() and 0xff) shl 16) or
-                ((b[off + 3].toInt() and 0xff) shl 24)
+            ((b[off + 1].toInt() and 0xff) shl 8) or
+            ((b[off + 2].toInt() and 0xff) shl 16) or
+            ((b[off + 3].toInt() and 0xff) shl 24)
 
-    private fun putLe32(out: ByteArray, off: Int, v: Int) {
+    private fun putLe32(
+        out: ByteArray,
+        off: Int,
+        v: Int,
+    ) {
         out[off] = v.toByte()
         out[off + 1] = (v shr 8).toByte()
         out[off + 2] = (v shr 16).toByte()

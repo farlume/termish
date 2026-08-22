@@ -5,16 +5,15 @@ package dev.termish.ssh
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.addressOf
-import kotlinx.cinterop.convert
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.reinterpret
-import kotlinx.cinterop.usePinned
 import kotlinx.cinterop.toKString
+import kotlinx.cinterop.usePinned
 import libssh2.LIBSSH2_ERROR_EAGAIN
 import libssh2.LIBSSH2_FXF_CREAT
 import libssh2.LIBSSH2_FXF_READ
@@ -23,12 +22,10 @@ import libssh2.LIBSSH2_FXF_WRITE
 import libssh2.LIBSSH2_SFTP
 import libssh2.LIBSSH2_SFTP_ATTRIBUTES
 import libssh2.LIBSSH2_SFTP_HANDLE
-import libssh2.LIBSSH2_SFTP_S_IFDIR
-import libssh2.LIBSSH2_SFTP_S_IFMT
-import libssh2.LIBSSH2_SFTP_STAT
 import libssh2.LIBSSH2_SFTP_OPENDIR
 import libssh2.LIBSSH2_SFTP_REALPATH
-import libssh2.libssh2_sftp_init
+import libssh2.LIBSSH2_SFTP_STAT
+import libssh2.LIBSSH2_SFTP_S_IFDIR
 import libssh2.libssh2_sftp_close_handle
 import libssh2.libssh2_sftp_fstat_ex
 import libssh2.libssh2_sftp_mkdir_ex
@@ -37,16 +34,17 @@ import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
 import libssh2.libssh2_sftp_rename_ex
 import libssh2.libssh2_sftp_rmdir_ex
+import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_stat_ex
 import libssh2.libssh2_sftp_symlink_ex
-import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_unlink_ex
-import libssh2.libssh2_sftp_write
 import platform.posix.usleep
 import sftp_write.termish_sftp_write
 
-actual fun createSftpSession(connection: SshConnection, callbacks: SshCallbacks): SftpSession =
-    SftpSessionLibssh2(connection, callbacks)
+actual fun createSftpSession(
+    connection: SshConnection,
+    callbacks: SshCallbacks,
+): SftpSession = SftpSessionLibssh2(connection, callbacks)
 
 /**
  * libssh2 SFTP 实现（iOS）：复用 [SshSessionLibssh2] 的认证链路，
@@ -61,31 +59,38 @@ private class SftpSessionLibssh2(
 
     private fun sftpOrThrow(): CPointer<LIBSSH2_SFTP> =
         sftp ?: ssh.openSftp()?.also { sftp = it }
-        ?: throw SshException("SFTP 通道打开失败")
+            ?: throw SshException("SFTP 通道打开失败")
 
     override fun list(path: String): List<SftpEntry> {
         val s = sftpOrThrow()
         // cinterop String 参数按 UTF-8 编码：长度必须传字节数（.length 是字符数，
         // 中文文件名/路径会被截断——目录打不开、下载/删除/新建全失败）
         val pathLen = path.encodeToByteArray().size
-        val handle = memScoped {
-            var h: CPointer<LIBSSH2_SFTP_HANDLE>? = null
-            var guard = 0
-            while (h == null && guard++ < 200) {
-                h = libssh2_sftp_open_ex(s, path, pathLen.toUInt(), 0uL, 0L, LIBSSH2_SFTP_OPENDIR)
-                if (h == null) usleep(30_000u)
+        val handle =
+            memScoped {
+                var h: CPointer<LIBSSH2_SFTP_HANDLE>? = null
+                var guard = 0
+                while (h == null && guard++ < 200) {
+                    h = libssh2_sftp_open_ex(s, path, pathLen.toUInt(), 0uL, 0L, LIBSSH2_SFTP_OPENDIR)
+                    if (h == null) usleep(30_000u)
+                }
+                h ?: throw SshException("SFTP 打开目录失败: $path")
             }
-            h ?: throw SshException("SFTP 打开目录失败: $path")
-        }
         return try {
             val entries = ArrayList<SftpEntry>()
             memScoped {
                 val buf = allocArray<ByteVar>(4096)
                 val longBuf = allocArray<ByteVar>(512)
                 while (true) {
-                    val n = libssh2_sftp_readdir_ex(
-                        handle, buf, 4096uL, longBuf, 512uL, null,
-                    )
+                    val n =
+                        libssh2_sftp_readdir_ex(
+                            handle,
+                            buf,
+                            4096uL,
+                            longBuf,
+                            512uL,
+                            null,
+                        )
                     when {
                         n > 0 -> {
                             val name = buf.readBytes(n.toInt()).decodeToString()
@@ -113,7 +118,10 @@ private class SftpSessionLibssh2(
      * 解析 readdir 的 longentry（权限/大小），时间降级为空（Android/desktop 有完整属性）。
      * 类型字符无法识别（longentry 缺失/格式异常）时返回 null，由 [statEntry] 兜底。
      */
-    private fun parseLongEntry(name: String, long: String): SftpEntry? {
+    private fun parseLongEntry(
+        name: String,
+        long: String,
+    ): SftpEntry? {
         // longentry 格式：perm links owner group size date… name（OpenSSH 实测）。
         // size 取正数第 5 列：尾部列数随名字含空格/日期格式浮动（实测
         // "带 空格 的 文件.txt" 会把倒数第 5 列错位到 Aug/12:28），头部固定。
@@ -134,7 +142,10 @@ private class SftpSessionLibssh2(
     }
 
     /** longentry 缺失时的类型兜底：stat 拿真实类型（目录/文件/链接），并带上大小/时间。 */
-    private fun statEntry(dirPath: String, name: String): SftpEntry {
+    private fun statEntry(
+        dirPath: String,
+        name: String,
+    ): SftpEntry {
         val s = sftpOrThrow()
         val full = if (dirPath == "/") "/$name" else "$dirPath/$name"
         val fullLen = full.encodeToByteArray().size
@@ -160,8 +171,12 @@ private class SftpSessionLibssh2(
                 }
                 // stat 失败：按普通文件处理（下载/进入时自然会再报错），不中断整个列表
                 return SftpEntry(
-                    name = name, isDirectory = false, permissions = "-rw-r--r--",
-                    size = 0L, modifiedAt = 0L, isHidden = name.startsWith("."),
+                    name = name,
+                    isDirectory = false,
+                    permissions = "-rw-r--r--",
+                    size = 0L,
+                    modifiedAt = 0L,
+                    isHidden = name.startsWith("."),
                 )
             }
         }
@@ -189,11 +204,15 @@ private class SftpSessionLibssh2(
         deleteRecursive(sftpOrThrow(), path)
     }
 
-    private fun deleteRecursive(s: CPointer<LIBSSH2_SFTP>, path: String) {
-        val isDir = runCatching { list(path) }.getOrNull()?.let {
-            // list 成功 = 目录（文件 list 会抛错）；也可能返回空列表（空目录）
-            true
-        } ?: false
+    private fun deleteRecursive(
+        s: CPointer<LIBSSH2_SFTP>,
+        path: String,
+    ) {
+        val isDir =
+            runCatching { list(path) }.getOrNull()?.let {
+                // list 成功 = 目录（文件 list 会抛错）；也可能返回空列表（空目录）
+                true
+            } ?: false
         val pathLen = path.encodeToByteArray().size.toUInt()
         if (isDir) {
             // 递归删除子项（list 内部已跳过 . / ..）
@@ -208,12 +227,20 @@ private class SftpSessionLibssh2(
         }
     }
 
-    override fun rename(oldPath: String, newPath: String) {
+    override fun rename(
+        oldPath: String,
+        newPath: String,
+    ) {
         val s = sftpOrThrow()
-        val rc = libssh2_sftp_rename_ex(
-            s, oldPath, oldPath.encodeToByteArray().size.toUInt(),
-            newPath, newPath.encodeToByteArray().size.toUInt(), 0,
-        )
+        val rc =
+            libssh2_sftp_rename_ex(
+                s,
+                oldPath,
+                oldPath.encodeToByteArray().size.toUInt(),
+                newPath,
+                newPath.encodeToByteArray().size.toUInt(),
+                0,
+            )
         if (rc != 0) {
             throw SshException("SFTP 重命名失败: $oldPath")
         }
@@ -226,10 +253,13 @@ private class SftpSessionLibssh2(
             while (true) {
                 val n = libssh2_sftp_symlink_ex(s, ".", 1u, buf, 4096u, LIBSSH2_SFTP_REALPATH)
                 if (n >= 0) {
-                    val path = buf.readBytes(n).decodeToString()
-                        .trimEnd('\u0000')
-                        .trimEnd('/')
-                        .ifEmpty { "/" }
+                    val path =
+                        buf
+                            .readBytes(n)
+                            .decodeToString()
+                            .trimEnd('\u0000')
+                            .trimEnd('/')
+                            .ifEmpty { "/" }
                     return path
                 }
                 if (n.toInt() == LIBSSH2_ERROR_EAGAIN) {
@@ -249,8 +279,9 @@ private class SftpSessionLibssh2(
     ) {
         val s = sftpOrThrow()
         val flags = (LIBSSH2_FXF_WRITE or LIBSSH2_FXF_CREAT or LIBSSH2_FXF_TRUNC).toULong()
-        val h = libssh2_sftp_open_ex(s, remotePath, remotePath.encodeToByteArray().size.toUInt(), flags, 0x1A4L, 0)
-            ?: throw SshException("SFTP 打开文件失败: $remotePath")
+        val h =
+            libssh2_sftp_open_ex(s, remotePath, remotePath.encodeToByteArray().size.toUInt(), flags, 0x1A4L, 0)
+                ?: throw SshException("SFTP 打开文件失败: $remotePath")
         try {
             // 拉取分块逐块写：内存峰值 = 单块大小，与 download 对称
             var sent = 0L
@@ -263,9 +294,12 @@ private class SftpSessionLibssh2(
                     while (written < chunk.size) {
                         var guard = 0
                         while (true) {
-                            val n = termish_sftp_write(
-                                h, pinned.addressOf(written).reinterpret(), (chunk.size - written).toULong(),
-                            )
+                            val n =
+                                termish_sftp_write(
+                                    h,
+                                    pinned.addressOf(written).reinterpret(),
+                                    (chunk.size - written).toULong(),
+                                )
                             if (n > 0) {
                                 written += n.toInt()
                                 break
@@ -292,8 +326,16 @@ private class SftpSessionLibssh2(
         onChunk: (ByteArray) -> Unit,
     ) {
         val s = sftpOrThrow()
-        val h = libssh2_sftp_open_ex(s, remotePath, remotePath.encodeToByteArray().size.toUInt(), LIBSSH2_FXF_READ.toULong(), 0L, 0)
-            ?: throw SshException("SFTP 打开文件失败: $remotePath")
+        val h =
+            libssh2_sftp_open_ex(
+                s,
+                remotePath,
+                remotePath.encodeToByteArray().size.toUInt(),
+                LIBSSH2_FXF_READ.toULong(),
+                0L,
+                0,
+            )
+                ?: throw SshException("SFTP 打开文件失败: $remotePath")
         try {
             val total = fileSize(h)
             memScoped {
@@ -341,5 +383,4 @@ private class SftpSessionLibssh2(
         sftp = null
         ssh.close()
     }
-
 }

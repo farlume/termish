@@ -15,7 +15,10 @@ data class AuthPrompt(
     val prompts: List<PromptField>,
 )
 
-data class PromptField(val label: String, val echo: Boolean)
+data class PromptField(
+    val label: String,
+    val echo: Boolean,
+)
 
 /**
  * 判断 PEM 私钥是否加密（passphrase-protected）：
@@ -39,9 +42,10 @@ internal fun isEncryptedPem(pem: String): Boolean {
         val clen = readIntBE(bytes, off)
         off += 4
         // ciphername 为 ASCII；跨平台不能用 JVM 的 Charsets
-        val cipher = buildString {
-            for (b in bytes.copyOfRange(off, off + clen)) append(b.toInt().toChar())
-        }
+        val cipher =
+            buildString {
+                for (b in bytes.copyOfRange(off, off + clen)) append(b.toInt().toChar())
+            }
         cipher != "none"
     } catch (_: Exception) {
         // 解析失败按明文处理，认证阶段自然失败后再提示口令
@@ -49,7 +53,10 @@ internal fun isEncryptedPem(pem: String): Boolean {
     }
 }
 
-private fun readIntBE(b: ByteArray, at: Int): Int =
+private fun readIntBE(
+    b: ByteArray,
+    at: Int,
+): Int =
     ((b[at].toInt() and 0xFF) shl 24) or
         ((b[at + 1].toInt() and 0xFF) shl 16) or
         ((b[at + 2].toInt() and 0xFF) shl 8) or
@@ -100,8 +107,11 @@ data class SshConnection(
  */
 interface SshCallbacks {
     suspend fun onOutput(data: ByteArray)
+
     suspend fun onStderr(data: ByteArray)
+
     fun onExitStatus(status: Int)
+
     fun onClosed(reason: String?)
 
     suspend fun onPrompt(prompt: AuthPrompt): List<String>?
@@ -120,7 +130,10 @@ interface SshCallbacks {
  */
 interface SshSession {
     /** 阻塞：连接 + 认证 + 打开 session 通道 + 启动 shell。 */
-    fun connectAndStart(columns: Int, rows: Int): SessionInfo
+    fun connectAndStart(
+        columns: Int,
+        rows: Int,
+    ): SessionInfo
 
     /**
      * 阻塞：仅连接 + 认证（不开 shell、不占交互通道）。
@@ -129,13 +142,21 @@ interface SshSession {
     fun connectAuthOnly(): SessionInfo? = null
 
     /** 通知远端窗口尺寸变化（字节/像素）。 */
-    fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int)
+    fun resize(
+        columns: Int,
+        rows: Int,
+        widthPx: Int,
+        heightPx: Int,
+    )
 
     /** 向远端 shell 写入字节（键盘输入）。 */
     fun sendData(data: ByteArray)
 
     /** 执行单条命令并等待退出（Mosh 引导等一次性调用；非交互 exec 通道）。 */
-    fun connectAndRun(command: String, timeoutMs: Long = 15_000): CommandResult
+    fun connectAndRun(
+        command: String,
+        timeoutMs: Long = 15_000,
+    ): CommandResult
 
     /**
      * 在已认证的同一连接上开临时 exec 通道执行命令，返回 stdout；
@@ -144,8 +165,10 @@ interface SshSession {
      * 连接尚未建立时用 [connectAndRun]（连接+认证+执行+关闭）。
      * 默认实现委托 [runCommandDetailed]（引擎只需实现后者）。
      */
-    fun runCommand(command: String, timeoutMs: Long = 15_000): String? =
-        runCommandDetailed(command, timeoutMs)?.stdout
+    fun runCommand(
+        command: String,
+        timeoutMs: Long = 15_000,
+    ): String? = runCommandDetailed(command, timeoutMs)?.stdout
 
     /**
      * 执行单条命令并返回 stdout / stderr / 退出码。
@@ -154,7 +177,10 @@ interface SshSession {
      * stderr `{"error":{...}}`）——只读 stdout 会把失败误判成成功。
      * 平台实现必须读两个流（stderr 不读会因远端缓冲满阻塞通道）。
      */
-    fun runCommandDetailed(command: String, timeoutMs: Long = 15_000): CommandOutput?
+    fun runCommandDetailed(
+        command: String,
+        timeoutMs: Long = 15_000,
+    ): CommandOutput?
 
     /**
      * 探测远端系统（Termius 式自动识别）：在已认证连接上执行
@@ -169,7 +195,11 @@ interface SshSession {
      * 返回通道（阻塞 read / write / close）；失败/未连接返回 null。
      * 注意：exec 通道的 pty 尺寸无法后续调整（固定为分配时的尺寸）。
      */
-    fun startExec(command: String, columns: Int, rows: Int): SshExecChannel?
+    fun startExec(
+        command: String,
+        columns: Int,
+        rows: Int,
+    ): SshExecChannel?
 
     /**
      * 无 PTY 的流式 exec 通道（如屏幕帧流：二进制输出不能被 pty 改写）。
@@ -187,8 +217,10 @@ interface SshSession {
 
 /**
  * exec+pty 通道：stdout = 程序渲染字节流，stdin = raw 输入。
+ *
+ * 单条命令执行结果（stdout + stderr + 退出码；退出码不可得时为 null）。
  */
-/** 单条命令执行结果（stdout + stderr + 退出码；退出码不可得时为 null）。 */
+
 data class CommandOutput(
     val stdout: String,
     val stderr: String,
@@ -210,6 +242,12 @@ interface SshExecChannel {
 }
 
 /** 平台工厂：创建对应引擎的 [SshSession]。 */
-expect fun createSshSession(connection: SshConnection, callbacks: SshCallbacks): SshSession
+expect fun createSshSession(
+    connection: SshConnection,
+    callbacks: SshCallbacks,
+): SshSession
 
-class SshException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class SshException(
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)

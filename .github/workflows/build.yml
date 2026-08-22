@@ -65,6 +65,7 @@ jobs:
       - name: Run checks (unit tests + lint)
         run: |
           ./gradlew \
+            ktlintCheck \
             :composeApp:testDebugUnitTest \
             :composeApp:lintRelease
 

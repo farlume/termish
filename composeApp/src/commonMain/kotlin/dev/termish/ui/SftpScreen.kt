@@ -1,42 +1,16 @@
 package dev.termish.ui
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.material.icons.filled.Album
-import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.Article
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Notes
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Slideshow
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material.icons.filled.TableChart
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.zIndex
-import kotlinx.datetime.Clock
-import kotlinx.datetime.DatePeriod
-
-import dev.termish.util.TermLog
-
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,48 +32,60 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Album
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.DataUsage
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Slideshow
 import androidx.compose.material.icons.filled.SortByAlpha
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.StarBorder
+import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material.icons.filled.ZoomOut
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -113,7 +99,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
@@ -123,24 +110,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import dev.termish.data.Host
-import dev.termish.ssh.SftpEntry
-import dev.termish.ssh.SftpSession
-import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.folder
 import dev.termish.notify.showDownloadDoneNotification
+import dev.termish.ssh.SftpEntry
+import dev.termish.ssh.SftpSession
+import dev.termish.ui.theme.StatusColors
+import dev.termish.util.TermLog
 import dev.termish.util.decodeImage
-import dev.termish.util.monospaceFontFamily
 import dev.termish.util.ioDispatcher
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.foundation.Image
+import dev.termish.util.monospaceFontFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.Clock
+import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
@@ -159,11 +148,14 @@ class SftpUiState {
     var path by mutableStateOf("")
     var entries by mutableStateOf<List<SftpEntry>?>(null)
     var loadError by mutableStateOf<String?>(null)
+
     /** 底层连接已断开（onClosed 主动推送）：banner 立即显示，可手动重连。
      *  此前断开无感知（onClosed 空实现），只能靠切 tab 重组后 reload 失败才暴露。 */
     var disconnected by mutableStateOf(false)
+
     /** 断线重连中：顶部显示琥珀色「重新连接中…」banner（同终端重连样式）。 */
     var reconnecting by mutableStateOf(false)
+
     /** 断线自动重连是否已尝试：跨重组保留，整个会话生命周期只自动一次（防循环）。 */
     var autoReconnectAttempted by mutableStateOf(false)
     var sort by mutableStateOf(SftpSort.NAME)
@@ -171,36 +163,52 @@ class SftpUiState {
     var searching by mutableStateOf(false)
     var query by mutableStateOf("")
     var newFolderDialog by mutableStateOf(false)
+
     /** 正在显示操作菜单的文件条目（仅文件；目录点击直接进入）。 */
     var fileMenu by mutableStateOf<SftpEntry?>(null)
+
     /** 多选模式：选中的条目名集合（非空 = 多选模式，列表行切换勾选）。 */
     val selection = mutableStateListOf<String>()
+
     /** 收藏目录路径集合（快捷跳转）。 */
     val favorites = mutableStateListOf<String>()
+
     /** 重命名对话框目标（null = 关闭）。 */
     var renameTarget by mutableStateOf<SftpEntry?>(null)
+
     /** 删除确认目标列表（null = 关闭）。 */
     var deleteTargets by mutableStateOf<List<SftpEntry>?>(null)
+
     /** 多选批量下载的待下载文件路径（DirectorySaver 回调异步消费）。 */
     var pendingDownloadMulti by mutableStateOf<List<String>?>(null)
+
     /** 下拉刷新中。 */
     var refreshing by mutableStateOf(false)
+
     /** 正在预览的文件条目（null = 预览面板关闭）。 */
     var previewEntry by mutableStateOf<SftpEntry?>(null)
+
     /** 预览加载中。 */
     var previewLoading by mutableStateOf(false)
+
     /** 预览文本（加载完成；null = 未就绪）。 */
     var previewText by mutableStateOf<String?>(null)
+
     /** 图片预览位图（图片类文件；null = 未就绪/非图片）。 */
     var previewImage by mutableStateOf<ImageBitmap?>(null)
+
     /** 预览被截断（文件超过读取上限，只显示前一段）。 */
     var previewTruncated by mutableStateOf(false)
+
     /** 预览失败原因（null = 无错误）。 */
     var previewError by mutableStateOf<String?>(null)
+
     /** 等待用户选择保存位置后开始下载的文件（保存回调异步，不能依赖 fileMenu）。 */
     var pendingDownload by mutableStateOf<SftpEntry?>(null)
+
     /** 面包屑 "…" 的下拉父级菜单开关。 */
     var showParents by mutableStateOf(false)
+
     /**
      * 目录浏览历史栈：进入目录/面包屑跳转时压入旧路径，
      * 返回键弹栈回到上一个浏览位置（而非机械的父目录）。
@@ -209,11 +217,16 @@ class SftpUiState {
 }
 
 /** 远端路径拼接：根目录下不产生双斜杠。 */
-internal fun joinPath(base: String, name: String): String =
-    if (base == "/") "/$name" else "$base/$name"
+internal fun joinPath(
+    base: String,
+    name: String,
+): String = if (base == "/") "/$name" else "$base/$name"
 
 /** DATE 排序的时间分组桶：今天 / 本周 / 更早（时间未知归更早）。 */
-internal fun dateBucket(modifiedAt: Long, s: AppStrings): String {
+internal fun dateBucket(
+    modifiedAt: Long,
+    s: AppStrings,
+): String {
     if (modifiedAt <= 0) return s.sftpExt.groupEarlier
     val tz = TimeZone.currentSystemDefault()
     val today = Clock.System.todayIn(tz)
@@ -259,7 +272,12 @@ private fun EntryRow(
  * 递归下载目录：按相对路径写入本地 [DirectorySink]。跳过 `.`/`..`；
  * 单文件下载失败会沿调用栈抛异常（由调用方提示），已写完的文件关闭。
  */
-internal fun downloadDir(session: SftpSession, remotePath: String, sink: DirectorySink, rel: String = "") {
+internal fun downloadDir(
+    session: SftpSession,
+    remotePath: String,
+    sink: DirectorySink,
+    rel: String = "",
+) {
     for (e in session.list(remotePath)) {
         if (e.name == "." || e.name == "..") continue
         val childRel = if (rel.isEmpty()) e.name else "$rel/${e.name}"
@@ -277,7 +295,11 @@ internal fun downloadDir(session: SftpSession, remotePath: String, sink: Directo
 }
 
 /** 批量下载选中的远端文件到本地 sink（目录下载的伴生：多选操作栏用）。 */
-internal fun downloadFilesToSink(session: SftpSession, paths: List<String>, sink: DirectorySink) {
+internal fun downloadFilesToSink(
+    session: SftpSession,
+    paths: List<String>,
+    sink: DirectorySink,
+) {
     paths.forEach { remotePath ->
         val name = remotePath.substringAfterLast('/').ifBlank { "file" }
         val file = sink.openFile(name)
@@ -326,10 +348,13 @@ fun SftpContent(
     var previewImage by state::previewImage
     var previewTruncated by state::previewTruncated
     var previewError by state::previewError
+
     /** 等待用户选择保存目录后开始递归下载的远端目录。 */
     var pendingDownloadDir by remember { mutableStateOf<String?>(null) }
+
     /** 单文件下载进度（null = 无下载中）；顶部进度条横幅数据源。 */
     var downloadProgress by remember { mutableStateOf<DownloadProgress?>(null) }
+
     /** header 搜索框焦点：展开后自动聚焦弹键盘。 */
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(searching) {
@@ -356,9 +381,10 @@ fun SftpContent(
         }
         searchLoading = true
         delay(300) // 输入防抖
-        val results = withContext(ioDispatcher()) {
-            runCatching { searchRecursive(sc, path, query) }.getOrElse { emptyList() }
-        }
+        val results =
+            withContext(ioDispatcher()) {
+                runCatching { searchRecursive(sc, path, query) }.getOrElse { emptyList() }
+            }
         searchResults = results
         searchLoading = false
     }
@@ -417,89 +443,94 @@ fun SftpContent(
         onReconnect()
     }
 
-    val pickFile = rememberFilePicker { picked ->
-        val sc = session ?: return@rememberFilePicker
-        // 多选：选择器对每个选中文件回调一次，各自开上传协程（并发上传）
-        scope.launch {
-            try {
-                withContext(ioDispatcher()) {
-                    var lastEmitted = 0L
-                    sc.upload(
-                        joinPath(path, picked.name),
-                        picked.size,
-                        onProgress = { sent, total ->
-                            // 节流同下载：每 1%（或 64KB，total 未知时）更新一次
-                            val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
-                            if (sent - lastEmitted >= step || (total > 0 && sent >= total)) {
-                                lastEmitted = sent
-                                scope.launch(Dispatchers.Main) {
-                                    downloadProgress = DownloadProgress(picked.name, sent, total)
+    val pickFile =
+        rememberFilePicker { picked ->
+            val sc = session ?: return@rememberFilePicker
+            // 多选：选择器对每个选中文件回调一次，各自开上传协程（并发上传）
+            scope.launch {
+                try {
+                    withContext(ioDispatcher()) {
+                        var lastEmitted = 0L
+                        sc.upload(
+                            joinPath(path, picked.name),
+                            picked.size,
+                            onProgress = { sent, total ->
+                                // 节流同下载：每 1%（或 64KB，total 未知时）更新一次
+                                val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
+                                if (sent - lastEmitted >= step || (total > 0 && sent >= total)) {
+                                    lastEmitted = sent
+                                    scope.launch(Dispatchers.Main) {
+                                        downloadProgress = DownloadProgress(picked.name, sent, total)
+                                    }
                                 }
-                            }
-                        },
-                    ) { picked.readChunk() }
+                            },
+                        ) { picked.readChunk() }
+                    }
+                    downloadProgress = null
+                    snackbar.showSnackbar(s.sftpUploaded)
+                    reload()
+                } catch (e: Exception) {
+                    downloadProgress = null
+                    snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "upload"))
                 }
-                downloadProgress = null
-                snackbar.showSnackbar(s.sftpUploaded)
-                reload()
-            } catch (e: Exception) {
-                downloadProgress = null
-                snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "upload"))
             }
         }
-    }
 
     // 选择保存位置后流式下载；取消保存则完全不回调（不产生下载流量）
-    val savePicker = rememberFileSaver { _, sink ->
-        val target = pendingDownload ?: return@rememberFileSaver
-        val sc = session ?: return@rememberFileSaver
-        val remotePath = joinPath(path, target.name)
-        scope.launch {
-            try {
-                withContext(ioDispatcher()) {
-                    var lastEmitted = 0L
-                    sc.download(
-                        remotePath,
-                        onProgress = { loaded, total ->
-                            // 节流：每 1%（或 64KB，total 未知时）才更新一次，避免高频重组
-                            val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
-                            if (loaded - lastEmitted >= step || (total > 0 && loaded >= total)) {
-                                lastEmitted = loaded
-                                scope.launch(Dispatchers.Main) {
-                                    downloadProgress = DownloadProgress(target.name, loaded, total)
-                                }
-                            }
-                        },
-                    ) { chunk -> sink.write(chunk) }
-                    sink.close()
-                }
-                downloadProgress = null
-                snackbar.showSnackbar(s.sftpDownloaded)
-                showDownloadDoneNotification(s.sftpDownloadComplete, target.name, sink.openUri)
-            } catch (e: Exception) {
-                downloadProgress = null
+    val savePicker =
+        rememberFileSaver { _, sink ->
+            val target = pendingDownload ?: return@rememberFileSaver
+            val sc = session ?: return@rememberFileSaver
+            val remotePath = joinPath(path, target.name)
+            scope.launch {
                 try {
-                    sink.close()
-                } catch (_: Exception) {
+                    withContext(ioDispatcher()) {
+                        var lastEmitted = 0L
+                        sc.download(
+                            remotePath,
+                            onProgress = { loaded, total ->
+                                // 节流：每 1%（或 64KB，total 未知时）才更新一次，避免高频重组
+                                val step = if (total > 0) (total / 100).coerceAtLeast(1) else 64L * 1024
+                                if (loaded - lastEmitted >= step || (total > 0 && loaded >= total)) {
+                                    lastEmitted = loaded
+                                    scope.launch(Dispatchers.Main) {
+                                        downloadProgress = DownloadProgress(target.name, loaded, total)
+                                    }
+                                }
+                            },
+                        ) { chunk -> sink.write(chunk) }
+                        sink.close()
+                    }
+                    downloadProgress = null
+                    snackbar.showSnackbar(s.sftpDownloaded)
+                    showDownloadDoneNotification(s.sftpDownloadComplete, target.name, sink.openUri)
+                } catch (e: Exception) {
+                    downloadProgress = null
+                    try {
+                        sink.close()
+                    } catch (_: Exception) {
+                    }
+                    snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
                 }
-                snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
             }
         }
-    }
 
     fun startDownload(entry: SftpEntry) {
         pendingDownload = entry
         savePicker(entry.name)
     }
 
-    /** 预览入口：图片类文件走位图预览，其余走文本预览；结果挂在会话级 uiState。 */
     /** 文本预览加载：流式读取远端文件（上限 [PREVIEW_MAX_BYTES]）。 */
-    fun loadTextPreview(sc: SftpSession, entry: SftpEntry) {
+    fun loadTextPreview(
+        sc: SftpSession,
+        entry: SftpEntry,
+    ) {
         scope.launch {
             try {
-                val result = withContext(ioDispatcher()) {
-                    readSftpPreview(sc, joinPath(path, entry.name))
-                }
+                val result =
+                    withContext(ioDispatcher()) {
+                        readSftpPreview(sc, joinPath(path, entry.name))
+                    }
                 if (previewEntry !== entry) return@launch // 已关闭或切到别的文件：丢弃结果
                 previewText = result.text
                 previewTruncated = result.truncated
@@ -527,9 +558,10 @@ fun SftpContent(
         if (isImageName(entry.name)) {
             scope.launch {
                 try {
-                    val bytes = withContext(ioDispatcher()) {
-                        readSftpPreviewBytes(sc, joinPath(path, entry.name), PREVIEW_IMAGE_MAX_BYTES)
-                    }
+                    val bytes =
+                        withContext(ioDispatcher()) {
+                            readSftpPreviewBytes(sc, joinPath(path, entry.name), PREVIEW_IMAGE_MAX_BYTES)
+                        }
                     if (previewEntry !== entry) return@launch // 已关闭或切到别的文件：丢弃
                     val bmp = withContext(ioDispatcher()) { decodeImage(bytes) }
                     if (previewEntry !== entry) return@launch
@@ -563,32 +595,33 @@ fun SftpContent(
     }
 
     // 选择保存目录后递归下载当前目录 / 批量下载选中文件；取消保存则不回调
-    val saveDir = rememberDirectorySaver { _, sink ->
-        val dir = pendingDownloadDir
-        val files = state.pendingDownloadMulti
-        if (dir == null && files == null) {
-            // 没有待下载目标（防御路径）：直接放弃，不调 sink.close()——
-            // iOS 的 close 会弹导出面板，空目录也会弹
-            return@rememberDirectorySaver
-        }
-        val sc = session ?: return@rememberDirectorySaver
-        scope.launch {
-            try {
-                withContext(ioDispatcher()) {
-                    if (dir != null) {
-                        downloadDir(sc, dir, sink)
-                    } else {
-                        downloadFilesToSink(sc, files!!, sink)
+    val saveDir =
+        rememberDirectorySaver { _, sink ->
+            val dir = pendingDownloadDir
+            val files = state.pendingDownloadMulti
+            if (dir == null && files == null) {
+                // 没有待下载目标（防御路径）：直接放弃，不调 sink.close()——
+                // iOS 的 close 会弹导出面板，空目录也会弹
+                return@rememberDirectorySaver
+            }
+            val sc = session ?: return@rememberDirectorySaver
+            scope.launch {
+                try {
+                    withContext(ioDispatcher()) {
+                        if (dir != null) {
+                            downloadDir(sc, dir, sink)
+                        } else {
+                            downloadFilesToSink(sc, files!!, sink)
+                        }
                     }
+                    sink.close()
+                    snackbar.showSnackbar(s.sftpDownloaded)
+                } catch (e: Exception) {
+                    // 失败不调 sink.close()：iOS 只在全部成功时弹导出面板，避免导出半成品目录
+                    snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
                 }
-                sink.close()
-                snackbar.showSnackbar(s.sftpDownloaded)
-            } catch (e: Exception) {
-                // 失败不调 sink.close()：iOS 只在全部成功时弹导出面板，避免导出半成品目录
-                snackbar.showSnackbar(s.sftpDownloadFailed(e.message ?: "download"))
             }
         }
-    }
 
     fun startDownloadDir() {
         val remotePath = path
@@ -603,16 +636,20 @@ fun SftpContent(
     // 否则 path 为空且首次被跳过时永远不解析 home。
     LaunchedEffect(session) {
         if (state.path.isEmpty() && session != null) {
-            path = withContext(ioDispatcher()) {
-                val home = runCatching { session.home() }.getOrNull()?.let { raw ->
-                    if (raw.length > 1) raw.trimEnd('/') else raw
-                }?.takeIf { it.isNotBlank() }
-                when {
-                    home != null -> home
-                    runCatching { session.list("/home/${host.username}") }.isSuccess -> "/home/${host.username}"
-                    else -> "/"
+            path =
+                withContext(ioDispatcher()) {
+                    val home =
+                        runCatching { session.home() }
+                            .getOrNull()
+                            ?.let { raw ->
+                                if (raw.length > 1) raw.trimEnd('/') else raw
+                            }?.takeIf { it.isNotBlank() }
+                    when {
+                        home != null -> home
+                        runCatching { session.list("/home/${host.username}") }.isSuccess -> "/home/${host.username}"
+                        else -> "/"
+                    }
                 }
-            }
         }
     }
     // key 含 session：重连成功后（null → 新对象）必须重新加载——
@@ -628,29 +665,34 @@ fun SftpContent(
     // - 3+ 段：... > B（… 点击下拉全部父级目录）
     val parts = path.split('/').filter { it.isNotBlank() }
     val displayParts = if (parts.firstOrNull() == "home") listOf(s.sftpUser) + parts.drop(1) else parts
-    val breadcrumbs = if (displayParts.size > 2) {
-        listOf("...", displayParts.last())
-    } else {
-        displayParts.ifEmpty { listOf(s.sftpUser) }
-    }
+    val breadcrumbs =
+        if (displayParts.size > 2) {
+            listOf("...", displayParts.last())
+        } else {
+            displayParts.ifEmpty { listOf(s.sftpUser) }
+        }
     // 被折叠的父级目录（最后一段之前的所有层级）
     val hiddenParents = if (displayParts.size > 2) displayParts.dropLast(1) else emptyList()
+
     fun pathForBreadcrumb(index: Int): String {
         val mapped = displayParts.take(index + 1).map { if (it == s.sftpUser) "home" else it }
         return "/" + mapped.joinToString("/")
     }
-    val visible = (entries ?: emptyList())
-        .filter { showHidden || !it.isHidden }
-        .filter { matchesQuery(it.name, query) }
-        .let { list ->
-            when (sort) {
-                SftpSort.NAME -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
-                SftpSort.DATE -> list.sortedWith(compareByDescending { it.modifiedAt })
-                SftpSort.SIZE -> list.sortedWith(compareBy({ !it.isDirectory }, { it.size }))
-                SftpSort.KIND -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.substringAfterLast('.').lowercase() }))
+    val visible =
+        (entries ?: emptyList())
+            .filter { showHidden || !it.isHidden }
+            .filter { matchesQuery(it.name, query) }
+            .let { list ->
+                when (sort) {
+                    SftpSort.NAME -> list.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                    SftpSort.DATE -> list.sortedWith(compareByDescending { it.modifiedAt })
+                    SftpSort.SIZE -> list.sortedWith(compareBy({ !it.isDirectory }, { it.size }))
+                    SftpSort.KIND ->
+                        list.sortedWith(
+                            compareBy({ !it.isDirectory }, { it.name.substringAfterLast('.').lowercase() }),
+                        )
+                }
             }
-        }
-
 
     // ---- 多选 / 删除 / 重命名 / 刷新 ----
     fun selecting() = state.selection.isNotEmpty()
@@ -686,7 +728,12 @@ fun SftpContent(
                 }
                 clearSelection()
                 reload()
-                snackbar.showSnackbar(s.sftpExt.deleteConfirm(targets.size).removeSuffix("?").removeSuffix("？"))
+                snackbar.showSnackbar(
+                    s.sftpExt
+                        .deleteConfirm(targets.size)
+                        .removeSuffix("?")
+                        .removeSuffix("？"),
+                )
             } catch (e: Exception) {
                 snackbar.showSnackbar(s.sftpExt.delete + " " + (e.message ?: ""))
             }
@@ -694,7 +741,10 @@ fun SftpContent(
     }
 
     /** 执行重命名。 */
-    fun doRename(entry: SftpEntry, newName: String) {
+    fun doRename(
+        entry: SftpEntry,
+        newName: String,
+    ) {
         val sc = session ?: return
         val trimmed = newName.trim()
         if (trimmed.isEmpty() || trimmed == entry.name) {
@@ -726,6 +776,7 @@ fun SftpContent(
 
     /** 收藏夹对话框开关（MoreMenu 进入）。 */
     var favoritesOpen by remember { mutableStateOf(false) }
+
     /** 预览面板 ⋮ 操作菜单开关。 */
     var previewMenu by remember { mutableStateOf(false) }
 
@@ -760,12 +811,13 @@ fun SftpContent(
                 }
             }
             // 断线 banner（红色 + 重连按钮）；重连中改画布居中指示器
-            //（与终端页同款，见 ConnectingIndicator）
-            val bannerText = when {
-                state.reconnecting -> null
-                state.disconnected || loadError != null -> s.sftpDisconnected
-                else -> null
-            }
+            // （与终端页同款，见 ConnectingIndicator）
+            val bannerText =
+                when {
+                    state.reconnecting -> null
+                    state.disconnected || loadError != null -> s.sftpDisconnected
+                    else -> null
+                }
             if (bannerText != null) {
                 val bannerColor = StatusColors.Error
                 Row(
@@ -806,10 +858,11 @@ fun SftpContent(
                                     style = MaterialTheme.typography.labelLarge,
                                     fontFamily = monospaceFontFamily(),
                                     color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .clickable { showParents = true }
-                                        .padding(horizontal = 2.dp),
+                                    modifier =
+                                        Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .clickable { showParents = true }
+                                            .padding(horizontal = 2.dp),
                                 )
                                 DropdownMenu(
                                     expanded = showParents,
@@ -846,17 +899,19 @@ fun SftpContent(
                                 crumb,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontFamily = monospaceFontFamily(),
-                                color = if (i == breadcrumbs.lastIndex) {
-                                    MaterialTheme.colorScheme.onSurface
-                                } else {
-                                    MaterialTheme.colorScheme.primary
-                                },
+                                color =
+                                    if (i == breadcrumbs.lastIndex) {
+                                        MaterialTheme.colorScheme.onSurface
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .clickable { navigateTo(pathForBreadcrumb(displayParts.indexOf(crumb))) }
-                                    .padding(horizontal = 2.dp),
+                                modifier =
+                                    Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { navigateTo(pathForBreadcrumb(displayParts.indexOf(crumb))) }
+                                        .padding(horizontal = 2.dp),
                             )
                             if (i < breadcrumbs.lastIndex) {
                                 Text(
@@ -872,13 +927,29 @@ fun SftpContent(
                 IconButton(onClick = { toggleFavorite(path) }) {
                     Icon(
                         if (path in state.favorites) Icons.Filled.Star else Icons.Filled.StarBorder,
-                        contentDescription = if (path in state.favorites) s.sftpExt.favoriteRemove else s.sftpExt.favoriteAdd,
-                        tint = if (path in state.favorites) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
+                        contentDescription =
+                            if (path in
+                                state.favorites
+                            ) {
+                                s.sftpExt.favoriteRemove
+                            } else {
+                                s.sftpExt.favoriteAdd
+                            },
+                        tint =
+                            if (path in state.favorites) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
                     )
                 }
                 TextButton(onClick = { pickFile() }) {
-                    Icon(Icons.Filled.Upload, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
+                    Icon(
+                        Icons.Filled.Upload,
+                        null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
                     Spacer(Modifier.size(4.dp))
                     Text(s.sftpUpload, color = MaterialTheme.colorScheme.onSurface)
                 }
@@ -928,10 +999,11 @@ fun SftpContent(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .focusRequester(searchFocusRequester),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .focusRequester(searchFocusRequester),
                     placeholder = { Text(s.sftpSearch) },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     trailingIcon = {
@@ -951,126 +1023,166 @@ fun SftpContent(
                 entries == null -> Box(Modifier.fillMaxSize())
                 // 断开/加载失败：主提示在顶部 banner（红色+重连按钮，同终端样式），
                 // 内容区只留中性副提示，不重复红色错误文字
-                loadError != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(s.sftpDisconnected, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                // 递归搜索：输入关键词时展示跨目录结果（文件名 + 相对路径）
-                query.isNotBlank() -> Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
-                ) {
-                    when {
-                        searchLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                                Spacer(Modifier.size(8.dp))
-                                Text(s.sftpSearching, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                        searchResults.isNullOrEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(s.sftpNoMatch, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        else -> LazyColumn(Modifier.fillMaxSize()) {
-                            items(searchResults.orEmpty(), key = { it.fullPath }) { hit ->
-                                SftpSearchRow(
-                                    hit = hit,
-                                    onClick = {
-                                        val target = if (hit.isDirectory) hit.fullPath
-                                        else hit.fullPath.substringBeforeLast('/', "/").ifBlank { "/" }
-                                        query = ""
-                                        searching = false
-                                        navigateTo(target)
-                                    },
-                                )
-                            }
-                        }
+                loadError != null ->
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(s.sftpDisconnected, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
-                else -> Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.surface)
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
-                ) {
-                    if (visible.isEmpty()) {
-                        // 空态
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(
-                                    Icons.Filled.FolderOpen,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(40.dp),
-                                )
-                                Spacer(Modifier.size(10.dp))
-                                Text(
-                                    s.sftpExt.empty,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                            }
-                        }
-                    } else {
-                        // 下拉刷新 + 列表（DATE 排序按 今天/本周/更早 分组）
-                        PullToRefreshBox(
-                            isRefreshing = state.refreshing,
-                            onRefresh = { refreshNow() },
-                            modifier = Modifier.fillMaxSize(),
-                        ) {
-                            LazyColumn(Modifier.fillMaxSize()) {
-                                if (path != "/") {
-                                    item("..") {
-                                        SftpRowItem(
-                                            name = "..",
-                                            subtitle = "",
-                                            time = "",
-                                            isDirectory = true,
+                // 递归搜索：输入关键词时展示跨目录结果（文件名 + 相对路径）
+                query.isNotBlank() ->
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    ) {
+                        when {
+                            searchLoading ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.size(8.dp))
+                                        Text(
+                                            s.sftpSearching,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            searchResults.isNullOrEmpty() ->
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        s.sftpNoMatch,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            else ->
+                                LazyColumn(Modifier.fillMaxSize()) {
+                                    items(searchResults.orEmpty(), key = { it.fullPath }) { hit ->
+                                        SftpSearchRow(
+                                            hit = hit,
                                             onClick = {
-                                                if (selecting()) clearSelection()
-                                                else navigateTo(path.substringBeforeLast('/', "/").ifBlank { "/" })
+                                                val target =
+                                                    if (hit.isDirectory) {
+                                                        hit.fullPath
+                                                    } else {
+                                                        hit.fullPath.substringBeforeLast('/', "/").ifBlank { "/" }
+                                                    }
+                                                query = ""
+                                                searching = false
+                                                navigateTo(target)
                                             },
                                         )
                                     }
                                 }
-                                if (sort == SftpSort.DATE && !selecting()) {
-                                    // 时间分组头：今天 / 本周 / 更早（未知时间归更早）
-                                    val buckets = linkedMapOf<String, MutableList<SftpEntry>>()
-                                    visible.forEach { e ->
-                                        buckets.getOrPut(dateBucket(e.modifiedAt, s)) { mutableListOf() }.add(e)
-                                    }
-                                    buckets.forEach { (bucket, list) ->
-                                        item(key = "hdr-$bucket") {
-                                            Text(
-                                                bucket,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(start = 14.dp, top = 10.dp, bottom = 2.dp),
+                        }
+                    }
+                else ->
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)),
+                    ) {
+                        if (visible.isEmpty()) {
+                            // 空态
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(
+                                        Icons.Filled.FolderOpen,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                        modifier = Modifier.size(40.dp),
+                                    )
+                                    Spacer(Modifier.size(10.dp))
+                                    Text(
+                                        s.sftpExt.empty,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            }
+                        } else {
+                            // 下拉刷新 + 列表（DATE 排序按 今天/本周/更早 分组）
+                            PullToRefreshBox(
+                                isRefreshing = state.refreshing,
+                                onRefresh = { refreshNow() },
+                                modifier = Modifier.fillMaxSize(),
+                            ) {
+                                LazyColumn(Modifier.fillMaxSize()) {
+                                    if (path != "/") {
+                                        item("..") {
+                                            SftpRowItem(
+                                                name = "..",
+                                                subtitle = "",
+                                                time = "",
+                                                isDirectory = true,
+                                                onClick = {
+                                                    if (selecting()) {
+                                                        clearSelection()
+                                                    } else {
+                                                        navigateTo(path.substringBeforeLast('/', "/").ifBlank { "/" })
+                                                    }
+                                                },
                                             )
                                         }
-                                        items(list, key = { it.name }) { entry ->
-                                            EntryRow(entry, selecting(), state.selection, path, onToggle = { toggleSelect(it) },
-                                                onEnterSelection = { enterSelection(it) }, onNavigate = { navigateTo(it) },
-                                                onPreview = { startPreview(it) })
-                                        }
                                     }
-                                } else {
-                                    items(visible, key = { it.name }) { entry ->
-                                        EntryRow(entry, selecting(), state.selection, path, onToggle = { toggleSelect(it) },
-                                            onEnterSelection = { enterSelection(it) }, onNavigate = { navigateTo(it) },
-                                            onPreview = { startPreview(it) })
+                                    if (sort == SftpSort.DATE && !selecting()) {
+                                        // 时间分组头：今天 / 本周 / 更早（未知时间归更早）
+                                        val buckets = linkedMapOf<String, MutableList<SftpEntry>>()
+                                        visible.forEach { e ->
+                                            buckets.getOrPut(dateBucket(e.modifiedAt, s)) { mutableListOf() }.add(e)
+                                        }
+                                        buckets.forEach { (bucket, list) ->
+                                            item(key = "hdr-$bucket") {
+                                                Text(
+                                                    bucket,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier =
+                                                        Modifier.padding(
+                                                            start = 14.dp,
+                                                            top = 10.dp,
+                                                            bottom = 2.dp,
+                                                        ),
+                                                )
+                                            }
+                                            items(list, key = { it.name }) { entry ->
+                                                EntryRow(
+                                                    entry,
+                                                    selecting(),
+                                                    state.selection,
+                                                    path,
+                                                    onToggle = { toggleSelect(it) },
+                                                    onEnterSelection = { enterSelection(it) },
+                                                    onNavigate = { navigateTo(it) },
+                                                    onPreview = { startPreview(it) },
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        items(visible, key = { it.name }) { entry ->
+                                            EntryRow(
+                                                entry,
+                                                selecting(),
+                                                state.selection,
+                                                path,
+                                                onToggle = { toggleSelect(it) },
+                                                onEnterSelection = { enterSelection(it) },
+                                                onNavigate = { navigateTo(it) },
+                                                onPreview = { startPreview(it) },
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
             }
         }
         // 多选底部操作栏：下载 / 删除 / 复制路径 / 取消（盖在列表底部）
@@ -1128,10 +1240,11 @@ fun SftpContent(
                 progress = if (downloading.total > 0) downloading.loaded.toFloat() / downloading.total else 0f,
                 percent = if (downloading.total > 0) "${downloading.loaded * 100 / downloading.total}%" else "",
                 subtitle = s.sftpDownload,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .zIndex(10f),
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(16.dp)
+                        .zIndex(10f),
             )
         }
 
@@ -1190,10 +1303,12 @@ fun SftpContent(
                         Column {
                             state.favorites.toList().forEach { fav ->
                                 Row(
-                                    Modifier.fillMaxWidth().clickable {
-                                        favoritesOpen = false
-                                        navigateTo(fav)
-                                    }.padding(vertical = 10.dp),
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            favoritesOpen = false
+                                            navigateTo(fav)
+                                        }.padding(vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Icon(
@@ -1332,7 +1447,11 @@ fun SftpContent(
                         // 列表单击已改为直接预览，操作集中在此 + 多选栏）
                         Box {
                             IconButton(onClick = { previewMenu = true }) {
-                                Icon(Icons.Filled.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+                                Icon(
+                                    Icons.Filled.MoreVert,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurface,
+                                )
                             }
                             DropdownMenu(expanded = previewMenu, onDismissRequest = { previewMenu = false }) {
                                 DropdownMenuItem(
@@ -1376,97 +1495,102 @@ fun SftpContent(
                     }
                     HorizontalDivider()
                     when {
-                        previewLoading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
-                        }
+                        previewLoading ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                            }
                         // 图片预览：黑底居中，适配模式整图可见，原始模式可滚动查看细节
-                        previewImage != null -> Box(
-                            Modifier.fillMaxSize().background(Color.Black),
-                        ) {
-                            if (imageFit) {
-                                Image(
-                                    previewImage!!,
-                                    contentDescription = entry.name,
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit,
-                                )
-                            } else {
-                                val hScroll = rememberScrollState()
-                                val vScroll = rememberScrollState()
-                                Box(
-                                    Modifier
-                                        .fillMaxSize()
-                                        .verticalScroll(vScroll)
-                                        .horizontalScroll(hScroll),
-                                ) {
+                        previewImage != null ->
+                            Box(
+                                Modifier.fillMaxSize().background(Color.Black),
+                            ) {
+                                if (imageFit) {
                                     Image(
                                         previewImage!!,
                                         contentDescription = entry.name,
-                                        modifier = Modifier.size(previewImage!!.width.dp, previewImage!!.height.dp),
-                                        contentScale = ContentScale.FillBounds,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Fit,
                                     )
-                                }
-                            }
-                        }
-                        err != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                err,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(horizontal = 24.dp),
-                            )
-                        }
-                        else -> Column(Modifier.fillMaxSize()) {
-                            if (previewTruncated) {
-                                Text(
-                                    s.sftpPreviewTruncated(formatSize(PREVIEW_MAX_BYTES.toLong())),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.tertiary,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f))
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                )
-                            }
-                            val srcText = previewText.orEmpty()
-                            if (isMarkdown && mdRender) {
-                                // 渲染模式：Markdown 效果展示（可复制），纵向滚动
-                                Column(
-                                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-                                ) {
-                                    SelectionContainer {
-                                        Text(
-                                            renderMarkdown(
-                                                srcText,
-                                                baseFontSize = 14.sp,
-                                                codeBg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
-                                                linkColor = MaterialTheme.colorScheme.primary,
-                                            ),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                } else {
+                                    val hScroll = rememberScrollState()
+                                    val vScroll = rememberScrollState()
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .verticalScroll(vScroll)
+                                            .horizontalScroll(hScroll),
+                                    ) {
+                                        Image(
+                                            previewImage!!,
+                                            contentDescription = entry.name,
+                                            modifier = Modifier.size(previewImage!!.width.dp, previewImage!!.height.dp),
+                                            contentScale = ContentScale.FillBounds,
                                         )
                                     }
                                 }
-                            } else {
-                                // 源码模式：逐行等宽（Markdown 与其他文本文件一致）
-                                LazyColumn(
-                                    Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                ) {
-                                    items(lines.size) { i ->
+                            }
+                        err != null ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Text(
+                                    err,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(horizontal = 24.dp),
+                                )
+                            }
+                        else ->
+                            Column(Modifier.fillMaxSize()) {
+                                if (previewTruncated) {
+                                    Text(
+                                        s.sftpPreviewTruncated(formatSize(PREVIEW_MAX_BYTES.toLong())),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .background(MaterialTheme.colorScheme.tertiary.copy(alpha = 0.1f))
+                                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    )
+                                }
+                                val srcText = previewText.orEmpty()
+                                if (isMarkdown && mdRender) {
+                                    // 渲染模式：Markdown 效果展示（可复制），纵向滚动
+                                    Column(
+                                        Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+                                    ) {
                                         SelectionContainer {
                                             Text(
-                                                lines[i],
-                                                style = MaterialTheme.typography.bodySmall,
-                                                fontFamily = monospaceFontFamily(),
+                                                renderMarkdown(
+                                                    srcText,
+                                                    baseFontSize = 14.sp,
+                                                    codeBg = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                                    linkColor = MaterialTheme.colorScheme.primary,
+                                                ),
+                                                style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                                             )
+                                        }
+                                    }
+                                } else {
+                                    // 源码模式：逐行等宽（Markdown 与其他文本文件一致）
+                                    LazyColumn(
+                                        Modifier.fillMaxSize(),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    ) {
+                                        items(lines.size) { i ->
+                                            SelectionContainer {
+                                                Text(
+                                                    lines[i],
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontFamily = monospaceFontFamily(),
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -1537,16 +1661,16 @@ fun SftpContent(
                 newFolderDialog = false
                 val sc = session
                 if (sc != null) {
-                scope.launch {
-                    try {
-                        withContext(ioDispatcher()) {
-                            sc.mkdir(joinPath(path, name))
+                    scope.launch {
+                        try {
+                            withContext(ioDispatcher()) {
+                                sc.mkdir(joinPath(path, name))
+                            }
+                            reload()
+                        } catch (e: Exception) {
+                            snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "mkdir"))
                         }
-                        reload()
-                    } catch (e: Exception) {
-                        snackbar.showSnackbar(s.sftpLoadFailed(e.message ?: "mkdir"))
                     }
-                }
                 }
             },
             onDismiss = { newFolderDialog = false },
@@ -1683,12 +1807,20 @@ private fun SftpRowItem(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            painter = if (isDirectory) painterResource(Res.drawable.folder)
-            else rememberVectorPainter(fileKindIcon(fileKindOf(name))),
+            painter =
+                if (isDirectory) {
+                    painterResource(Res.drawable.folder)
+                } else {
+                    rememberVectorPainter(fileKindIcon(fileKindOf(name)))
+                },
             contentDescription = null,
             // 文件夹用主题色（翠绿）；文件用类型色（线性图标小尺寸清晰，色彩保留区分）
-            tint = if (isDirectory) MaterialTheme.colorScheme.primary
-            else fileKindColor(fileKindOf(name)),
+            tint =
+                if (isDirectory) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    fileKindColor(fileKindOf(name))
+                },
             modifier = Modifier.size(24.dp),
         )
         Column(Modifier.weight(1f)) {
@@ -1723,7 +1855,10 @@ private fun SftpRowItem(
 }
 
 @Composable
-private fun NewFolderDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
+private fun NewFolderDialog(
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val s = LocalAppStrings.current
     var name by remember { mutableStateOf("") }
     AlertDialog(
@@ -1749,6 +1884,7 @@ private fun NewFolderDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) 
 internal fun formatTime(millis: Long): String {
     if (millis <= 0L) return ""
     val dt = Instant.fromEpochMilliseconds(millis).toLocalDateTime(TimeZone.currentSystemDefault())
+
     fun p(n: Int) = n.toString().padStart(2, '0')
     return "${dt.year}-${p(dt.monthNumber)}-${p(dt.dayOfMonth)} ${p(dt.hour)}:${p(dt.minute)}"
 }
@@ -1757,27 +1893,37 @@ internal fun formatTime(millis: Long): String {
  * SFTP 文件名匹配：空格分隔多关键词（AND 关系）；含 `*`/`?` 的关键词按通配符匹配，
  * 其余按忽略大小写的包含匹配。例：`*.log`、`conf nginx`、`readme?`。
  */
-internal fun matchesQuery(name: String, query: String): Boolean {
+internal fun matchesQuery(
+    name: String,
+    query: String,
+): Boolean {
     val q = query.trim()
     if (q.isEmpty()) return true
     return q.split(Regex("\\s+")).all { part ->
-        if (part.any { it == '*' || it == '?' }) globMatch(name, part)
-        else name.contains(part, ignoreCase = true)
+        if (part.any { it == '*' || it == '?' }) {
+            globMatch(name, part)
+        } else {
+            name.contains(part, ignoreCase = true)
+        }
     }
 }
 
-internal fun globMatch(name: String, pattern: String): Boolean {
-    val regex = buildString {
-        append('^')
-        for (ch in pattern) {
-            when (ch) {
-                '*' -> append(".*")
-                '?' -> append('.')
-                else -> append(Regex.escape(ch.toString()))
+internal fun globMatch(
+    name: String,
+    pattern: String,
+): Boolean {
+    val regex =
+        buildString {
+            append('^')
+            for (ch in pattern) {
+                when (ch) {
+                    '*' -> append(".*")
+                    '?' -> append('.')
+                    else -> append(Regex.escape(ch.toString()))
+                }
             }
+            append('$')
         }
-        append('$')
-    }
     return Regex(regex, RegexOption.IGNORE_CASE).containsMatchIn(name)
 }
 
@@ -1792,7 +1938,11 @@ data class SftpSearchHit(
 )
 
 /** 单文件下载进度（顶部进度条横幅数据源）；total=0 表示服务器未报大小。 */
-data class DownloadProgress(val name: String, val loaded: Long, val total: Long)
+data class DownloadProgress(
+    val name: String,
+    val loaded: Long,
+    val total: Long,
+)
 
 /**
  * 递归搜索：从 [root] 起遍历目录树，返回文件名匹配 [query] 的条目
@@ -1832,7 +1982,11 @@ suspend fun searchRecursive(
 
 /** 递归搜索结果行：文件/目录图标 + 名称 + 相对路径（主色标注），右下角时间。 */
 @Composable
-private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
+private fun SftpSearchRow(
+    hit: SftpSearchHit,
+    onClick: () -> Unit,
+) {
+    Row(
         Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
@@ -1841,11 +1995,19 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Icon(
-            painter = if (hit.isDirectory) painterResource(Res.drawable.folder)
-            else rememberVectorPainter(fileKindIcon(fileKindOf(hit.name))),
+            painter =
+                if (hit.isDirectory) {
+                    painterResource(Res.drawable.folder)
+                } else {
+                    rememberVectorPainter(fileKindIcon(fileKindOf(hit.name)))
+                },
             contentDescription = null,
-            tint = if (hit.isDirectory) MaterialTheme.colorScheme.primary
-            else fileKindColor(fileKindOf(hit.name)),
+            tint =
+                if (hit.isDirectory) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    fileKindColor(fileKindOf(hit.name))
+                },
             modifier = Modifier.size(24.dp),
         )
         Column(Modifier.weight(1f)) {
@@ -1880,7 +2042,28 @@ private fun SftpSearchRow(hit: SftpSearchHit, onClick: () -> Unit) {    Row(
 // ---------- 文件类型识别（列表 icon + 预览分流） ----------
 
 /** SFTP 文件类型：决定列表 icon 与预览方式。 */
-enum class SftpFileKind { IMAGE, VIDEO, AUDIO, ARCHIVE, APK, DOC, SHEET, SLIDES, EXEC, FONT, DB, DISK, KEY, MD, TORRENT, CONFIG, CODE, TEXT, PDF, OTHER }
+enum class SftpFileKind {
+    IMAGE,
+    VIDEO,
+    AUDIO,
+    ARCHIVE,
+    APK,
+    DOC,
+    SHEET,
+    SLIDES,
+    EXEC,
+    FONT,
+    DB,
+    DISK,
+    KEY,
+    MD,
+    TORRENT,
+    CONFIG,
+    CODE,
+    TEXT,
+    PDF,
+    OTHER,
+}
 
 internal fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
 
@@ -1891,83 +2074,157 @@ internal val PREVIEW_IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp
 internal fun isImageName(name: String): Boolean = extensionOf(name) in PREVIEW_IMAGE_EXTENSIONS
 
 /** 按扩展名识别文件类型（列表 icon 用）；未知类型归 OTHER。 */
-internal fun fileKindOf(name: String): SftpFileKind = when (extensionOf(name)) {
-    in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "ico", "avif") -> SftpFileKind.IMAGE
-    in setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts", "m2ts") -> SftpFileKind.VIDEO
-    in setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "mid", "wma") -> SftpFileKind.AUDIO
-    in setOf("zip", "tar", "gz", "bz2", "xz", "7z", "rar", "tgz", "zst", "tar.gz", "tar.bz2", "tar.xz") -> SftpFileKind.ARCHIVE
-    in setOf("iso", "img") -> SftpFileKind.DISK
-    in setOf("doc", "docx", "odt", "rtf", "pages", "wps") -> SftpFileKind.DOC
-    in setOf("xls", "xlsx", "ods", "numbers", "et") -> SftpFileKind.SHEET
-    in setOf("ppt", "pptx", "odp", "key", "dps") -> SftpFileKind.SLIDES
-    in setOf("exe", "msi", "deb", "rpm", "appimage", "app", "bat", "cmd", "com", "dmg", "pkg") -> SftpFileKind.EXEC
-    "apk" -> SftpFileKind.APK
-    in setOf("pem", "key", "crt", "cer", "p12", "pfx", "der", "jks") -> SftpFileKind.KEY
-    "torrent" -> SftpFileKind.TORRENT
-    in setOf("env", "yml", "yaml", "toml", "ini", "conf", "properties", "cfg", "editorconfig", "gitconfig") -> SftpFileKind.CONFIG
-    in setOf("ttf", "otf", "woff", "woff2", "eot") -> SftpFileKind.FONT
-    in setOf("db", "sqlite", "sqlite3", "mdb") -> SftpFileKind.DB
-    in setOf(
-        "kt", "kts", "java", "c", "h", "cpp", "hpp", "cc", "py", "js", "ts", "tsx", "jsx",
-        "go", "rs", "swift", "sh", "bash", "zsh", "rb", "php", "sql", "html", "css", "scss",
-        "xml", "yml", "yaml", "json", "toml", "gradle", "properties", "ini", "conf", "cfg",
-        "dockerfile", "makefile", "lock", "patch", "diff", "vue", "svelte", "dart", "lua", "pl", "r",
-    ) -> SftpFileKind.CODE
-    in setOf("md", "markdown") -> SftpFileKind.MD
-    in setOf("txt", "log", "rst", "adoc", "text", "nfo") -> SftpFileKind.TEXT
-    "pdf" -> SftpFileKind.PDF
-    else -> SftpFileKind.OTHER
-}
+internal fun fileKindOf(name: String): SftpFileKind =
+    when (extensionOf(name)) {
+        in setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "heic", "ico", "avif") -> SftpFileKind.IMAGE
+        in setOf("mp4", "mkv", "avi", "mov", "webm", "flv", "wmv", "m4v", "ts", "m2ts") -> SftpFileKind.VIDEO
+        in setOf("mp3", "wav", "flac", "aac", "ogg", "m4a", "opus", "mid", "wma") -> SftpFileKind.AUDIO
+        in
+        setOf(
+            "zip",
+            "tar",
+            "gz",
+            "bz2",
+            "xz",
+            "7z",
+            "rar",
+            "tgz",
+            "zst",
+            "tar.gz",
+            "tar.bz2",
+            "tar.xz",
+        ),
+        -> SftpFileKind.ARCHIVE
+        in setOf("iso", "img") -> SftpFileKind.DISK
+        in setOf("doc", "docx", "odt", "rtf", "pages", "wps") -> SftpFileKind.DOC
+        in setOf("xls", "xlsx", "ods", "numbers", "et") -> SftpFileKind.SHEET
+        in setOf("ppt", "pptx", "odp", "key", "dps") -> SftpFileKind.SLIDES
+        in setOf("exe", "msi", "deb", "rpm", "appimage", "app", "bat", "cmd", "com", "dmg", "pkg") -> SftpFileKind.EXEC
+        "apk" -> SftpFileKind.APK
+        in setOf("pem", "key", "crt", "cer", "p12", "pfx", "der", "jks") -> SftpFileKind.KEY
+        "torrent" -> SftpFileKind.TORRENT
+        in
+        setOf(
+            "env",
+            "yml",
+            "yaml",
+            "toml",
+            "ini",
+            "conf",
+            "properties",
+            "cfg",
+            "editorconfig",
+            "gitconfig",
+        ),
+        -> SftpFileKind.CONFIG
+        in setOf("ttf", "otf", "woff", "woff2", "eot") -> SftpFileKind.FONT
+        in setOf("db", "sqlite", "sqlite3", "mdb") -> SftpFileKind.DB
+        in
+        setOf(
+            "kt",
+            "kts",
+            "java",
+            "c",
+            "h",
+            "cpp",
+            "hpp",
+            "cc",
+            "py",
+            "js",
+            "ts",
+            "tsx",
+            "jsx",
+            "go",
+            "rs",
+            "swift",
+            "sh",
+            "bash",
+            "zsh",
+            "rb",
+            "php",
+            "sql",
+            "html",
+            "css",
+            "scss",
+            "xml",
+            "yml",
+            "yaml",
+            "json",
+            "toml",
+            "gradle",
+            "properties",
+            "ini",
+            "conf",
+            "cfg",
+            "dockerfile",
+            "makefile",
+            "lock",
+            "patch",
+            "diff",
+            "vue",
+            "svelte",
+            "dart",
+            "lua",
+            "pl",
+            "r",
+        ),
+        -> SftpFileKind.CODE
+        in setOf("md", "markdown") -> SftpFileKind.MD
+        in setOf("txt", "log", "rst", "adoc", "text", "nfo") -> SftpFileKind.TEXT
+        "pdf" -> SftpFileKind.PDF
+        else -> SftpFileKind.OTHER
+    }
 
 /** 文件类型 icon（material-icons-extended 线性图标；tint 由调用方按类型色/主题色给）。 */
 @Composable
-private fun fileKindIcon(kind: SftpFileKind): ImageVector = when (kind) {
-    SftpFileKind.IMAGE -> Icons.Filled.Image
-    SftpFileKind.VIDEO -> Icons.Filled.VideoFile
-    SftpFileKind.AUDIO -> Icons.Filled.MusicNote
-    SftpFileKind.ARCHIVE -> Icons.Filled.Archive
-    SftpFileKind.APK -> Icons.Filled.Android
-    SftpFileKind.DOC -> Icons.Filled.Description
-    SftpFileKind.SHEET -> Icons.Filled.TableChart
-    SftpFileKind.SLIDES -> Icons.Filled.Slideshow
-    SftpFileKind.EXEC -> Icons.Filled.PlayArrow
-    SftpFileKind.FONT -> Icons.Filled.TextFields
-    SftpFileKind.DB -> Icons.Filled.Storage
-    SftpFileKind.DISK -> Icons.Filled.Album
-    SftpFileKind.KEY -> Icons.Filled.Key
-    SftpFileKind.MD -> Icons.Filled.Notes
-    SftpFileKind.TORRENT -> Icons.Filled.Download
-    SftpFileKind.CONFIG -> Icons.Filled.Tune
-    SftpFileKind.CODE -> Icons.Filled.Code
-    SftpFileKind.TEXT -> Icons.Filled.Article
-    SftpFileKind.PDF -> Icons.Filled.PictureAsPdf
-    SftpFileKind.OTHER -> Icons.AutoMirrored.Filled.InsertDriveFile
-}
+private fun fileKindIcon(kind: SftpFileKind): ImageVector =
+    when (kind) {
+        SftpFileKind.IMAGE -> Icons.Filled.Image
+        SftpFileKind.VIDEO -> Icons.Filled.VideoFile
+        SftpFileKind.AUDIO -> Icons.Filled.MusicNote
+        SftpFileKind.ARCHIVE -> Icons.Filled.Archive
+        SftpFileKind.APK -> Icons.Filled.Android
+        SftpFileKind.DOC -> Icons.Filled.Description
+        SftpFileKind.SHEET -> Icons.Filled.TableChart
+        SftpFileKind.SLIDES -> Icons.Filled.Slideshow
+        SftpFileKind.EXEC -> Icons.Filled.PlayArrow
+        SftpFileKind.FONT -> Icons.Filled.TextFields
+        SftpFileKind.DB -> Icons.Filled.Storage
+        SftpFileKind.DISK -> Icons.Filled.Album
+        SftpFileKind.KEY -> Icons.Filled.Key
+        SftpFileKind.MD -> Icons.Filled.Notes
+        SftpFileKind.TORRENT -> Icons.Filled.Download
+        SftpFileKind.CONFIG -> Icons.Filled.Tune
+        SftpFileKind.CODE -> Icons.Filled.Code
+        SftpFileKind.TEXT -> Icons.Filled.Article
+        SftpFileKind.PDF -> Icons.Filled.PictureAsPdf
+        SftpFileKind.OTHER -> Icons.AutoMirrored.Filled.InsertDriveFile
+    }
 
 /** 文件类型着色（线性图标 tint；列表行色彩区分，文件夹仍用主题色）。 */
-internal fun fileKindColor(kind: SftpFileKind): Color = when (kind) {
-    SftpFileKind.IMAGE -> Color(0xFF43A047)
-    SftpFileKind.VIDEO -> Color(0xFF8E24AA)
-    SftpFileKind.AUDIO -> Color(0xFFF57C00)
-    SftpFileKind.ARCHIVE -> Color(0xFF6D4C41)
-    SftpFileKind.APK -> Color(0xFF00A862)
-    SftpFileKind.DOC -> Color(0xFF1E88E5)
-    SftpFileKind.SHEET -> Color(0xFF2E7D32)
-    SftpFileKind.SLIDES -> Color(0xFFF4511E)
-    SftpFileKind.EXEC -> Color(0xFF7E57C2)
-    SftpFileKind.FONT -> Color(0xFF00ACC1)
-    SftpFileKind.DB -> Color(0xFF3949AB)
-    SftpFileKind.DISK -> Color(0xFF546E7A)
-    SftpFileKind.KEY -> Color(0xFFE6A23C)
-    SftpFileKind.MD -> Color(0xFF9C27B0)
-    SftpFileKind.TORRENT -> Color(0xFF00BFA5)
-    SftpFileKind.CONFIG -> Color(0xFF90A4AE)
-    SftpFileKind.CODE -> Color(0xFF455A64)
-    SftpFileKind.TEXT -> Color(0xFF607D8B)
-    SftpFileKind.PDF -> Color(0xFFE53935)
-    SftpFileKind.OTHER -> Color(0xFF78909C)
-}
-
+internal fun fileKindColor(kind: SftpFileKind): Color =
+    when (kind) {
+        SftpFileKind.IMAGE -> Color(0xFF43A047)
+        SftpFileKind.VIDEO -> Color(0xFF8E24AA)
+        SftpFileKind.AUDIO -> Color(0xFFF57C00)
+        SftpFileKind.ARCHIVE -> Color(0xFF6D4C41)
+        SftpFileKind.APK -> Color(0xFF00A862)
+        SftpFileKind.DOC -> Color(0xFF1E88E5)
+        SftpFileKind.SHEET -> Color(0xFF2E7D32)
+        SftpFileKind.SLIDES -> Color(0xFFF4511E)
+        SftpFileKind.EXEC -> Color(0xFF7E57C2)
+        SftpFileKind.FONT -> Color(0xFF00ACC1)
+        SftpFileKind.DB -> Color(0xFF3949AB)
+        SftpFileKind.DISK -> Color(0xFF546E7A)
+        SftpFileKind.KEY -> Color(0xFFE6A23C)
+        SftpFileKind.MD -> Color(0xFF9C27B0)
+        SftpFileKind.TORRENT -> Color(0xFF00BFA5)
+        SftpFileKind.CONFIG -> Color(0xFF90A4AE)
+        SftpFileKind.CODE -> Color(0xFF455A64)
+        SftpFileKind.TEXT -> Color(0xFF607D8B)
+        SftpFileKind.PDF -> Color(0xFFE53935)
+        SftpFileKind.OTHER -> Color(0xFF78909C)
+    }
 
 // ---------- 文本预览 ----------
 
@@ -1981,7 +2238,10 @@ const val PREVIEW_IMAGE_MAX_BYTES: Int = 8 * 1024 * 1024
 internal const val PREVIEW_BINARY_SAMPLE = 4096
 
 /** 文本预览结果：UTF-8 解码内容 + 是否被截断。 */
-data class SftpPreviewResult(val text: String, val truncated: Boolean)
+data class SftpPreviewResult(
+    val text: String,
+    val truncated: Boolean,
+)
 
 /** 二进制文件（内容含 NUL），无法预览。 */
 class SftpPreviewBinaryException : Exception()
@@ -1998,24 +2258,25 @@ suspend fun readSftpPreviewBytes(
     session: SftpSession,
     remotePath: String,
     maxBytes: Int,
-): ByteArray = withContext(ioDispatcher()) {
-    val chunks = ArrayList<ByteArray>()
-    var total = 0
-    session.download(remotePath) { chunk ->
-        val room = maxBytes - total
-        if (room <= 0) throw SftpPreviewTooLargeException()
-        val n = minOf(chunk.size, room)
-        chunks += chunk.copyOfRange(0, n)
-        total += n
+): ByteArray =
+    withContext(ioDispatcher()) {
+        val chunks = ArrayList<ByteArray>()
+        var total = 0
+        session.download(remotePath) { chunk ->
+            val room = maxBytes - total
+            if (room <= 0) throw SftpPreviewTooLargeException()
+            val n = minOf(chunk.size, room)
+            chunks += chunk.copyOfRange(0, n)
+            total += n
+        }
+        val bytes = ByteArray(total)
+        var off = 0
+        for (c in chunks) {
+            c.copyInto(bytes, off)
+            off += c.size
+        }
+        bytes
     }
-    val bytes = ByteArray(total)
-    var off = 0
-    for (c in chunks) {
-        c.copyInto(bytes, off)
-        off += c.size
-    }
-    bytes
-}
 
 /**
  * 流式读取远端文件前 [maxBytes] 字节并解码为 UTF-8 文本：
@@ -2030,42 +2291,43 @@ suspend fun readSftpPreview(
     session: SftpSession,
     remotePath: String,
     maxBytes: Int = PREVIEW_MAX_BYTES,
-): SftpPreviewResult = withContext(ioDispatcher()) {
-    val chunks = ArrayList<ByteArray>()
-    var total = 0
-    var truncated = false
-    var binary = false
-    try {
-        session.download(remotePath) { chunk ->
-            // 采样区检测 NUL：不依赖扩展名白名单，无扩展名文本（LICENSE/Makefile）也能预览
-            if (!binary && total < PREVIEW_BINARY_SAMPLE) {
-                val n = minOf(chunk.size, PREVIEW_BINARY_SAMPLE - total)
-                for (i in 0 until n) {
-                    if (chunk[i] == 0.toByte()) {
-                        binary = true
-                        break
+): SftpPreviewResult =
+    withContext(ioDispatcher()) {
+        val chunks = ArrayList<ByteArray>()
+        var total = 0
+        var truncated = false
+        var binary = false
+        try {
+            session.download(remotePath) { chunk ->
+                // 采样区检测 NUL：不依赖扩展名白名单，无扩展名文本（LICENSE/Makefile）也能预览
+                if (!binary && total < PREVIEW_BINARY_SAMPLE) {
+                    val n = minOf(chunk.size, PREVIEW_BINARY_SAMPLE - total)
+                    for (i in 0 until n) {
+                        if (chunk[i] == 0.toByte()) {
+                            binary = true
+                            break
+                        }
                     }
                 }
+                if (binary) throw SftpPreviewBinaryException()
+                val room = maxBytes - total
+                if (room <= 0) throw SftpPreviewTooLargeException()
+                val n = minOf(chunk.size, room)
+                chunks += chunk.copyOfRange(0, n)
+                total += n
             }
-            if (binary) throw SftpPreviewBinaryException()
-            val room = maxBytes - total
-            if (room <= 0) throw SftpPreviewTooLargeException()
-            val n = minOf(chunk.size, room)
-            chunks += chunk.copyOfRange(0, n)
-            total += n
+        } catch (e: SftpPreviewTooLargeException) {
+            truncated = true
         }
-    } catch (e: SftpPreviewTooLargeException) {
-        truncated = true
+        val bytes = ByteArray(total)
+        var off = 0
+        for (c in chunks) {
+            c.copyInto(bytes, off)
+            off += c.size
+        }
+        // common API：decodeToString 默认 UTF-8，非法序列替换字符（与 JVM toString(Charsets.UTF_8) 一致）
+        SftpPreviewResult(bytes.decodeToString(), truncated)
     }
-    val bytes = ByteArray(total)
-    var off = 0
-    for (c in chunks) {
-        c.copyInto(bytes, off)
-        off += c.size
-    }
-    // common API：decodeToString 默认 UTF-8，非法序列替换字符（与 JVM toString(Charsets.UTF_8) 一致）
-    SftpPreviewResult(bytes.decodeToString(), truncated)
-}
 
 /** 人类可读文件大小（1024 进制，KB 起保留一位小数）：如 512 B / 1.5 KB / 2.3 MB。 */
 internal fun formatSize(bytes: Long): String {

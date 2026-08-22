@@ -42,7 +42,9 @@ class TerminalCell {
 }
 
 /** 一行字符单元。 */
-class TerminalLine(var cols: Int) {
+class TerminalLine(
+    var cols: Int,
+) {
     var cells = Array(cols) { TerminalCell() }
 
     /** 该行是否因自动换行而开始（用于选择 / 回看等）。 */
@@ -91,6 +93,7 @@ class TerminalBuffer(
 ) {
     private val normal = ArrayDeque<TerminalLine>()
     private var alt = Array(rows) { TerminalLine(cols) }
+
     /** 上次拷贝时源缓冲普通屏窗口起点（normal[0] 对应的源行下标），增量同步用。 */
     private var copySourceOffset: Int = 0
 
@@ -103,6 +106,7 @@ class TerminalBuffer(
 
     var savedCursorRow: Int = 0
     var savedCursorCol: Int = 0
+
     /** DECSC 一并保存的延迟换行标记与当前字符集（tmux 等依赖完整状态恢复）。 */
     var savedPendingWrap: Boolean = false
     var savedCharset: Charset = Charset.ASCII
@@ -114,30 +118,36 @@ class TerminalBuffer(
     var originMode: Boolean = false
     var insertMode: Boolean = false
     var applicationCursorKeys: Boolean = false
+
     /** bracketed paste（DECSET 2004）：开启时粘贴内容需包在 ESC[200~ ... ESC[201~ 中。 */
     var bracketedPaste: Boolean = false
 
     /** 鼠标上报模式：0=关闭，1000=X10 点击，1002=按钮事件拖拽，1003=全事件。 */
     var mouseTracking: Int = 0
+
     /** 鼠标坐标格式：true=SGR(1006)，false=X10 字节偏移。 */
     var mouseSgr: Boolean = false
 
     /** 默认前景/背景（RGB），由 UI 按当前主题设置，用于应答 OSC 10/11 颜色查询。 */
     var defaultFgRgb: Int = 0xd5d8de
     var defaultBgRgb: Int = 0x0e0f13
+
     /** 默认光标色（RGB），用于应答 OSC 12 查询；OSC 12 设置后覆盖。 */
     var defaultCursorRgb: Int = 0x58a6ff
     var applicationKeypad: Boolean = false
 
     /** DECSCUSR 光标样式：0=默认闪烁块，1=闪烁块，2=稳态块，3=闪烁下划线，4=稳态下划线，5=闪烁竖线，6=稳态竖线。 */
     var cursorStyle: Int = 0
+
     /** OSC 12 设置的光标颜色；DEFAULT_CURSOR 表示用主题默认色。 */
     var cursorColor: Int = DEFAULT_CURSOR
 
     /** DECSET 1004：聚焦/失焦事件（CSI I / CSI O）上报。 */
     var focusEvents: Boolean = false
+
     /** DECSET 1007：备用屏下滚轮转方向键（alternate scroll）。 */
     var alternateScroll: Boolean = false
+
     /** DECSET 1015：urxvt 鼠标坐标格式（与 SGR 1006 互斥）。 */
     var mouseUrxvt: Boolean = false
 
@@ -145,6 +155,7 @@ class TerminalBuffer(
     var currentLink: String? = null
 
     var tabStops: BooleanArray = defaultTabStops(cols)
+
     /** 最近写入的图形字符，供 CSI Ps b（REP）重复。 */
     var lastPrintedCodePoint: Int = 0
 
@@ -174,8 +185,7 @@ class TerminalBuffer(
 
     fun altLine(row: Int): TerminalLine = alt[row]
 
-    fun lineAt(row: Int): TerminalLine =
-        if (altScreen) alt[row] else normalLine(row)
+    fun lineAt(row: Int): TerminalLine = if (altScreen) alt[row] else normalLine(row)
 
     /** 写访问：行被 COW 共享时先克隆，保证共享行（影子历史/UI 引用）永不被原地修改。 */
     private fun mutableLine(row: Int): TerminalLine {
@@ -192,14 +202,13 @@ class TerminalBuffer(
     fun scrollbackSize(): Int = if (altScreen) 0 else normal.size - rows
 
     /** 可见行（上→下），供渲染使用。 */
-    fun visibleLines(): List<TerminalLine> {
-        return if (altScreen) {
+    fun visibleLines(): List<TerminalLine> =
+        if (altScreen) {
             alt.toList()
         } else {
             val start = normal.size - rows
             (start until normal.size).map { normal[it] }
         }
-    }
 
     /** 绝对行总数（回看 + 可见屏）。 */
     fun totalLines(): Int = if (altScreen) rows else normal.size
@@ -211,7 +220,11 @@ class TerminalBuffer(
     fun absCursorRow(): Int = if (altScreen) cursorRow else (normal.size - rows) + cursorRow
 
     /** 渲染某列：解析有效前景色（考虑 inverse 等）。 */
-    fun resolveFg(cell: TerminalCell, defaultFg: Int, defaultBg: Int): Int {
+    fun resolveFg(
+        cell: TerminalCell,
+        defaultFg: Int,
+        defaultBg: Int,
+    ): Int {
         val fg = if (cell.fg == DEFAULT_FG) defaultFg else cell.fg
         val bg = if (cell.bg == DEFAULT_BG) defaultBg else cell.bg
         return when {
@@ -220,7 +233,11 @@ class TerminalBuffer(
         }
     }
 
-    fun resolveBg(cell: TerminalCell, defaultFg: Int, defaultBg: Int): Int {
+    fun resolveBg(
+        cell: TerminalCell,
+        defaultFg: Int,
+        defaultBg: Int,
+    ): Int {
         val fg = if (cell.fg == DEFAULT_FG) defaultFg else cell.fg
         val bg = if (cell.bg == DEFAULT_BG) defaultBg else cell.bg
         return when {
@@ -254,7 +271,10 @@ class TerminalBuffer(
         if (col > 0 && line.cells[col].isWideTail) line.cells[col - 1].clear()
 
         if (width == 2) {
-            if (cols < 2) { writeNarrow(cp); return }
+            if (cols < 2) {
+                writeNarrow(cp)
+                return
+            }
             // 宽字符：若处于行末，先换行（DECAWM 关闭时不换行，按窄字符覆盖最后一格）
             if (col >= cols - 1) {
                 if (autoWrap) {
@@ -371,8 +391,11 @@ class TerminalBuffer(
     }
 
     fun backspace() {
-        if (pendingWrap) pendingWrap = false
-        else if (cursorCol > 0) cursorCol--
+        if (pendingWrap) {
+            pendingWrap = false
+        } else if (cursorCol > 0) {
+            cursorCol--
+        }
         markChanged()
     }
 
@@ -384,7 +407,10 @@ class TerminalBuffer(
         markChanged()
     }
 
-    fun moveTo(row: Int, col: Int) {
+    fun moveTo(
+        row: Int,
+        col: Int,
+    ) {
         val r = if (originMode) row + scrollTop else row
         cursorRow = r.coerceIn(0, rows - 1)
         cursorCol = col.coerceIn(0, cols - 1)
@@ -392,7 +418,10 @@ class TerminalBuffer(
         markChanged()
     }
 
-    fun moveCursor(dRow: Int, dCol: Int) {
+    fun moveCursor(
+        dRow: Int,
+        dCol: Int,
+    ) {
         cursorRow = (cursorRow + dRow).coerceIn(0, rows - 1)
         cursorCol = (cursorCol + dCol).coerceIn(0, cols - 1)
         pendingWrap = false
@@ -571,7 +600,10 @@ class TerminalBuffer(
         markChanged()
     }
 
-    private fun copyLine(from: Int, to: Int) {
+    private fun copyLine(
+        from: Int,
+        to: Int,
+    ) {
         val src = lineAt(from)
         val dst = mutableLine(to)
         for (i in 0 until cols) dst.cells[i].copyFrom(src.cells[i])
@@ -604,7 +636,10 @@ class TerminalBuffer(
         markChanged()
     }
 
-    fun setScrollRegion(top: Int, bottom: Int) {
+    fun setScrollRegion(
+        top: Int,
+        bottom: Int,
+    ) {
         if (top >= bottom) return
         scrollTop = top.coerceIn(0, rows - 1)
         scrollBottom = bottom.coerceIn(0, rows - 1)
@@ -630,7 +665,10 @@ class TerminalBuffer(
 
     // ---------- 尺寸调整 ----------
 
-    fun resize(newCols: Int, newRows: Int) {
+    fun resize(
+        newCols: Int,
+        newRows: Int,
+    ) {
         if (newCols == cols && newRows == rows) return
 
         // 调整普通屏每行宽度（COW：共享行先克隆再改）
@@ -699,9 +737,10 @@ class TerminalBuffer(
             line.shared = true
             dst.normal.addLast(line)
         }
-        dst.alt = Array(rows) { idx ->
-            alt[idx].also { it.shared = true }
-        }
+        dst.alt =
+            Array(rows) { idx ->
+                alt[idx].also { it.shared = true }
+            }
         dst.copyStateFieldsFrom(this)
         return dst
     }
@@ -727,11 +766,12 @@ class TerminalBuffer(
 
         // 目标缓冲设了上限时只拷贝保留段（最后 maxScrollback+rows 行），
         // 避免影子无上限后每帧先克隆全部再丢弃（影子 Int.MAX_VALUE 则全量拷贝）
-        val keep = if (maxScrollbackLines == Int.MAX_VALUE) {
-            other.normal.size
-        } else {
-            minOf(other.normal.size, maxScrollbackLines + other.rows)
-        }
+        val keep =
+            if (maxScrollbackLines == Int.MAX_VALUE) {
+                other.normal.size
+            } else {
+                minOf(other.normal.size, maxScrollbackLines + other.rows)
+            }
         val offset = other.normal.size - keep
 
         cols = other.cols
@@ -798,37 +838,130 @@ class TerminalBuffer(
     private fun copyStateFieldsFrom(other: TerminalBuffer): Boolean {
         var changed = false
         // 枚举/Int/Boolean 标量字段逐组比较赋值
-        if (altScreen != other.altScreen) { altScreen = other.altScreen; changed = true }
-        if (cursorRow != other.cursorRow) { cursorRow = other.cursorRow; changed = true }
-        if (cursorCol != other.cursorCol) { cursorCol = other.cursorCol; changed = true }
-        if (cursorVisible != other.cursorVisible) { cursorVisible = other.cursorVisible; changed = true }
-        if (savedCursorRow != other.savedCursorRow) { savedCursorRow = other.savedCursorRow; changed = true }
-        if (savedCursorCol != other.savedCursorCol) { savedCursorCol = other.savedCursorCol; changed = true }
-        if (savedPendingWrap != other.savedPendingWrap) { savedPendingWrap = other.savedPendingWrap; changed = true }
-        if (savedCharset != other.savedCharset) { savedCharset = other.savedCharset; changed = true }
-        if (scrollTop != other.scrollTop) { scrollTop = other.scrollTop; changed = true }
-        if (scrollBottom != other.scrollBottom) { scrollBottom = other.scrollBottom; changed = true }
-        if (autoWrap != other.autoWrap) { autoWrap = other.autoWrap; changed = true }
-        if (originMode != other.originMode) { originMode = other.originMode; changed = true }
-        if (insertMode != other.insertMode) { insertMode = other.insertMode; changed = true }
-        if (applicationCursorKeys != other.applicationCursorKeys) { applicationCursorKeys = other.applicationCursorKeys; changed = true }
-        if (bracketedPaste != other.bracketedPaste) { bracketedPaste = other.bracketedPaste; changed = true }
-        if (mouseTracking != other.mouseTracking) { mouseTracking = other.mouseTracking; changed = true }
-        if (mouseSgr != other.mouseSgr) { mouseSgr = other.mouseSgr; changed = true }
-        if (defaultFgRgb != other.defaultFgRgb) { defaultFgRgb = other.defaultFgRgb; changed = true }
-        if (defaultBgRgb != other.defaultBgRgb) { defaultBgRgb = other.defaultBgRgb; changed = true }
-        if (defaultCursorRgb != other.defaultCursorRgb) { defaultCursorRgb = other.defaultCursorRgb; changed = true }
-        if (applicationKeypad != other.applicationKeypad) { applicationKeypad = other.applicationKeypad; changed = true }
-        if (cursorStyle != other.cursorStyle) { cursorStyle = other.cursorStyle; changed = true }
-        if (cursorColor != other.cursorColor) { cursorColor = other.cursorColor; changed = true }
-        if (focusEvents != other.focusEvents) { focusEvents = other.focusEvents; changed = true }
-        if (alternateScroll != other.alternateScroll) { alternateScroll = other.alternateScroll; changed = true }
-        if (mouseUrxvt != other.mouseUrxvt) { mouseUrxvt = other.mouseUrxvt; changed = true }
-        if (currentLink != other.currentLink) { currentLink = other.currentLink; changed = true }
-        if (!tabStops.contentEquals(other.tabStops)) { tabStops = other.tabStops.copyOf(); changed = true }
-        if (lastPrintedCodePoint != other.lastPrintedCodePoint) { lastPrintedCodePoint = other.lastPrintedCodePoint; changed = true }
-        if (currentCharset != other.currentCharset) { currentCharset = other.currentCharset; changed = true }
-        if (pendingWrap != other.pendingWrap) { pendingWrap = other.pendingWrap; changed = true }
+        if (altScreen != other.altScreen) {
+            altScreen = other.altScreen
+            changed = true
+        }
+        if (cursorRow != other.cursorRow) {
+            cursorRow = other.cursorRow
+            changed = true
+        }
+        if (cursorCol != other.cursorCol) {
+            cursorCol = other.cursorCol
+            changed = true
+        }
+        if (cursorVisible != other.cursorVisible) {
+            cursorVisible = other.cursorVisible
+            changed = true
+        }
+        if (savedCursorRow != other.savedCursorRow) {
+            savedCursorRow = other.savedCursorRow
+            changed = true
+        }
+        if (savedCursorCol != other.savedCursorCol) {
+            savedCursorCol = other.savedCursorCol
+            changed = true
+        }
+        if (savedPendingWrap != other.savedPendingWrap) {
+            savedPendingWrap = other.savedPendingWrap
+            changed = true
+        }
+        if (savedCharset != other.savedCharset) {
+            savedCharset = other.savedCharset
+            changed = true
+        }
+        if (scrollTop != other.scrollTop) {
+            scrollTop = other.scrollTop
+            changed = true
+        }
+        if (scrollBottom != other.scrollBottom) {
+            scrollBottom = other.scrollBottom
+            changed = true
+        }
+        if (autoWrap != other.autoWrap) {
+            autoWrap = other.autoWrap
+            changed = true
+        }
+        if (originMode != other.originMode) {
+            originMode = other.originMode
+            changed = true
+        }
+        if (insertMode != other.insertMode) {
+            insertMode = other.insertMode
+            changed = true
+        }
+        if (applicationCursorKeys != other.applicationCursorKeys) {
+            applicationCursorKeys = other.applicationCursorKeys
+            changed = true
+        }
+        if (bracketedPaste != other.bracketedPaste) {
+            bracketedPaste = other.bracketedPaste
+            changed = true
+        }
+        if (mouseTracking != other.mouseTracking) {
+            mouseTracking = other.mouseTracking
+            changed = true
+        }
+        if (mouseSgr != other.mouseSgr) {
+            mouseSgr = other.mouseSgr
+            changed = true
+        }
+        if (defaultFgRgb != other.defaultFgRgb) {
+            defaultFgRgb = other.defaultFgRgb
+            changed = true
+        }
+        if (defaultBgRgb != other.defaultBgRgb) {
+            defaultBgRgb = other.defaultBgRgb
+            changed = true
+        }
+        if (defaultCursorRgb != other.defaultCursorRgb) {
+            defaultCursorRgb = other.defaultCursorRgb
+            changed = true
+        }
+        if (applicationKeypad != other.applicationKeypad) {
+            applicationKeypad = other.applicationKeypad
+            changed = true
+        }
+        if (cursorStyle != other.cursorStyle) {
+            cursorStyle = other.cursorStyle
+            changed = true
+        }
+        if (cursorColor != other.cursorColor) {
+            cursorColor = other.cursorColor
+            changed = true
+        }
+        if (focusEvents != other.focusEvents) {
+            focusEvents = other.focusEvents
+            changed = true
+        }
+        if (alternateScroll != other.alternateScroll) {
+            alternateScroll = other.alternateScroll
+            changed = true
+        }
+        if (mouseUrxvt != other.mouseUrxvt) {
+            mouseUrxvt = other.mouseUrxvt
+            changed = true
+        }
+        if (currentLink != other.currentLink) {
+            currentLink = other.currentLink
+            changed = true
+        }
+        if (!tabStops.contentEquals(other.tabStops)) {
+            tabStops = other.tabStops.copyOf()
+            changed = true
+        }
+        if (lastPrintedCodePoint != other.lastPrintedCodePoint) {
+            lastPrintedCodePoint = other.lastPrintedCodePoint
+            changed = true
+        }
+        if (currentCharset != other.currentCharset) {
+            currentCharset = other.currentCharset
+            changed = true
+        }
+        if (pendingWrap != other.pendingWrap) {
+            pendingWrap = other.pendingWrap
+            changed = true
+        }
         return changed
     }
 
@@ -845,7 +978,10 @@ class TerminalBuffer(
         return dst
     }
 
-    private fun resizeLine(line: TerminalLine, newCols: Int) {
+    private fun resizeLine(
+        line: TerminalLine,
+        newCols: Int,
+    ) {
         if (line.cells.size == newCols) return
         val newCells = Array(newCols) { TerminalCell() }
         val n = minOf(line.cells.size, newCols)
@@ -858,7 +994,11 @@ class TerminalBuffer(
         line.touch()
     }
 
-    private fun copyInto(dst: TerminalLine, src: TerminalLine, n: Int) {
+    private fun copyInto(
+        dst: TerminalLine,
+        src: TerminalLine,
+        n: Int,
+    ) {
         for (i in 0 until n) dst.cells[i].copyFrom(src.cells[i])
     }
 

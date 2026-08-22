@@ -11,44 +11,49 @@ import androidx.compose.ui.platform.LocalContext
 private const val CHUNK = 64 * 1024
 
 @Composable
-actual fun rememberFilePicker(
-    onPicked: (PickedFile) -> Unit,
-): () -> Unit {
+actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit {
     val context = LocalContext.current
     // OpenMultipleDocuments：一次选择多个文件（每个 Uri 独立流式读）
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
-        uris.forEach { uri ->
-            val name = queryName(context, uri) ?: "file"
-            // ContentResolver 流式读：选择器回调只包流，readChunk 逐块拉取，
-            // 任意大小文件内存峰值 = 64KB（此前 readBytes() 全量驻堆，大文件 OOM）
-            val stream = context.contentResolver.openInputStream(uri)
-            if (stream != null) {
-                val size = querySize(context, uri)
-                onPicked(
-                    PickedFile(name, size) {
-                        val buf = ByteArray(CHUNK)
-                        val n = stream.read(buf)
-                        if (n < 0) {
-                            stream.close()
-                            null
-                        } else {
-                            buf.copyOf(n)
-                        }
-                    },
-                )
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
+            uris.forEach { uri ->
+                val name = queryName(context, uri) ?: "file"
+                // ContentResolver 流式读：选择器回调只包流，readChunk 逐块拉取，
+                // 任意大小文件内存峰值 = 64KB（此前 readBytes() 全量驻堆，大文件 OOM）
+                val stream = context.contentResolver.openInputStream(uri)
+                if (stream != null) {
+                    val size = querySize(context, uri)
+                    onPicked(
+                        PickedFile(name, size) {
+                            val buf = ByteArray(CHUNK)
+                            val n = stream.read(buf)
+                            if (n < 0) {
+                                stream.close()
+                                null
+                            } else {
+                                buf.copyOf(n)
+                            }
+                        },
+                    )
+                }
             }
         }
-    }
     return { launcher.launch(arrayOf("*/*")) }
 }
 
-private fun queryName(context: Context, uri: Uri): String? =
+private fun queryName(
+    context: Context,
+    uri: Uri,
+): String? =
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
         if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
     }
 
-private fun querySize(context: Context, uri: Uri): Long =
+private fun querySize(
+    context: Context,
+    uri: Uri,
+): Long =
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         val idx = cursor.getColumnIndex(OpenableColumns.SIZE)
         if (idx >= 0 && cursor.moveToFirst()) {

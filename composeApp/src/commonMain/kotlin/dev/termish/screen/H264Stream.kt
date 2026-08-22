@@ -10,9 +10,11 @@ package dev.termish.screen
  * （ffmpeg 默认每个关键帧前携带），解码器可从流中任意点接入。
  */
 object H264Stream {
-
     /** 一个 NAL 单元：类型 + 载荷（不含 start code）。 */
-    data class Nal(val type: Int, val data: ByteArray)
+    data class Nal(
+        val type: Int,
+        val data: ByteArray,
+    )
 
     /**
      * 从字节流中切出完整 NAL 单元；返回 null = 需更多数据。
@@ -59,9 +61,16 @@ object H264Stream {
                 // 4 字节 start code 判定须看 buf[0..2] 全 0：buf[2]==1 时是 3 字节
                 // start code 后紧跟 NAL 头（头字节恰为 0x01 时 buf[3] 也为 1，
                 // 会被误判成 4 字节、吃掉 NAL 头一字节导致该 NAL 损坏）
-                startCodeLen = if (size >= 4 && buf[0].toInt() == 0 &&
-                    buf[1].toInt() == 0 && buf[2].toInt() == 0
-                ) 4 else 3
+                startCodeLen =
+                    if (size >= 4 &&
+                        buf[0].toInt() == 0 &&
+                        buf[1].toInt() == 0 &&
+                        buf[2].toInt() == 0
+                    ) {
+                        4
+                    } else {
+                        3
+                    }
                 // 2. 找下一个 start code 作为 NAL 结束
                 val nextIdx = findStartCode(startCodeLen)
                 if (nextIdx < 0) {
@@ -93,8 +102,11 @@ object H264Stream {
             var i = from
             while (i + 2 < size) {
                 if (buf[i].toInt() == 0 && buf[i + 1].toInt() == 0 && buf[i + 2].toInt() == 1) return i
-                if (i + 3 < size && buf[i].toInt() == 0 && buf[i + 1].toInt() == 0 &&
-                    buf[i + 2].toInt() == 0 && buf[i + 3].toInt() == 1
+                if (i + 3 < size &&
+                    buf[i].toInt() == 0 &&
+                    buf[i + 1].toInt() == 0 &&
+                    buf[i + 2].toInt() == 0 &&
+                    buf[i + 3].toInt() == 1
                 ) {
                     return i
                 }
@@ -105,7 +117,10 @@ object H264Stream {
     }
 
     /** SPS/PPS 字节（Annex-B 形式，喂解码器 CSD）。 */
-    data class ParameterSets(val sps: ByteArray?, val pps: ByteArray?)
+    data class ParameterSets(
+        val sps: ByteArray?,
+        val pps: ByteArray?,
+    )
 
     /** 从完整 Annex-B 流中提取 SPS/PPS（含 start code 前缀，供 MediaCodec CSD）。 */
     fun extractParameterSets(annexB: ByteArray): ParameterSets {
@@ -127,7 +142,10 @@ object H264Stream {
 
     internal fun withStartCode(nal: ByteArray): ByteArray {
         val out = ByteArray(nal.size + 4)
-        out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1
+        out[0] = 0
+        out[1] = 0
+        out[2] = 0
+        out[3] = 1
         nal.copyInto(out, 4)
         return out
     }
@@ -140,6 +158,7 @@ object H264Stream {
         if (sps.size < 4) return null
         return try {
             var bitPos = 0
+
             fun readBit(): Int {
                 val b = sps[bitPos / 8].toInt() and 0xff
                 val v = (b ushr (7 - bitPos % 8)) and 1
@@ -192,12 +211,13 @@ object H264Stream {
     }
 
     /** nal_type → 名称（调试/日志）。 */
-    fun typeName(type: Int): String = when (type) {
-        1 -> "SLICE"
-        5 -> "IDR"
-        6 -> "SEI"
-        7 -> "SPS"
-        8 -> "PPS"
-        else -> "T$type"
-    }
+    fun typeName(type: Int): String =
+        when (type) {
+            1 -> "SLICE"
+            5 -> "IDR"
+            6 -> "SEI"
+            7 -> "SPS"
+            8 -> "PPS"
+            else -> "T$type"
+        }
 }

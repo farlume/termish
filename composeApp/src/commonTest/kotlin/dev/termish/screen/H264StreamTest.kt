@@ -7,15 +7,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class H264StreamTest {
-
     private fun sc3(vararg b: Int) = byteArrayOf(0, 0, 1, *b.map { it.toByte() }.toByteArray())
 
     @Test
     fun `parser splits nal units by start code`() {
         val parser = H264Stream.AnnexBParser()
-        val sps = sc3(0x67, 0x42, 0x00)  // type 7
-        val pps = sc3(0x68, 0xce, 0x3c)  // type 8
-        val idr = sc3(0x65, 0x88, 0x84)  // type 5
+        val sps = sc3(0x67, 0x42, 0x00) // type 7
+        val pps = sc3(0x68, 0xce, 0x3c) // type 8
+        val idr = sc3(0x65, 0x88, 0x84) // type 5
         // 末尾补结束 start code（流式解析需要边界切出最后一个 NAL）
         val stream = sps + pps + idr + byteArrayOf(0, 0, 1)
         val nals = mutableListOf<H264Stream.Nal>()
@@ -35,7 +34,7 @@ class H264StreamTest {
     @Test
     fun `parser handles 4-byte start code`() {
         val parser = H264Stream.AnnexBParser()
-        val nal = byteArrayOf(0, 0, 0, 1, 0x41, 0x9a.toByte(), 0, 0, 1)  // type 1 slice + 结束边界
+        val nal = byteArrayOf(0, 0, 0, 1, 0x41, 0x9a.toByte(), 0, 0, 1) // type 1 slice + 结束边界
         val out = parser.push(nal)
         assertNotNull(out)
         assertEquals(1, out.type)
@@ -67,9 +66,10 @@ class H264StreamTest {
         val sps = sc3(0x67, 0x42, 0x00, 0x1e)
         val pps = sc3(0x68, 0xce, 0x3c)
         val idr = sc3(0x65, 0x88)
-        val stream = byteArrayOf(0, 0, 0, 1) + sps.drop(3).toByteArray() +
-            byteArrayOf(0, 0, 1) + pps.drop(3).toByteArray() +
-            byteArrayOf(0, 0, 1) + idr.drop(3).toByteArray()
+        val stream =
+            byteArrayOf(0, 0, 0, 1) + sps.drop(3).toByteArray() +
+                byteArrayOf(0, 0, 1) + pps.drop(3).toByteArray() +
+                byteArrayOf(0, 0, 1) + idr.drop(3).toByteArray()
         val ps = H264Stream.extractParameterSets(stream)
         assertNotNull(ps.sps)
         assertNotNull(ps.pps)
@@ -87,11 +87,32 @@ class H264StreamTest {
     @Test
     fun `parseSpsDimensions extracts real 720p sps`() {
         // 真实 libx264 输出（1280x720）：6742c01fda014016ec0440000003004000000f23c60ca8
-        val sps = byteArrayOf(
-            0x67, 0x42.toByte(), 0xc0.toByte(), 0x1f, 0xda.toByte(), 0x01, 0x40, 0x16,
-            0xec.toByte(), 0x04, 0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00,
-            0x0f, 0x23, 0xc6.toByte(), 0x0c, 0xa8.toByte(),
-        )
+        val sps =
+            byteArrayOf(
+                0x67,
+                0x42.toByte(),
+                0xc0.toByte(),
+                0x1f,
+                0xda.toByte(),
+                0x01,
+                0x40,
+                0x16,
+                0xec.toByte(),
+                0x04,
+                0x40,
+                0x00,
+                0x00,
+                0x03,
+                0x00,
+                0x40,
+                0x00,
+                0x00,
+                0x0f,
+                0x23,
+                0xc6.toByte(),
+                0x0c,
+                0xa8.toByte(),
+            )
         val dims = H264Stream.parseSpsDimensions(sps)
         assertNotNull(dims, "应能解析出宽高")
         assertEquals(1280, dims.first)

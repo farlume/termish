@@ -2,14 +2,13 @@ package dev.termish.voice
 
 import dev.termish.util.TermLog
 import kotlin.concurrent.Volatile
+import kotlin.random.Random
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 /**
  * 火山引擎「大模型流式语音识别」（bigmodel_async）引擎实现（AsrEngine）。
@@ -42,12 +41,13 @@ class VolcStreamingAsrEngine(
         onState?.invoke(state)
         ws.connect(
             url = VolcAsrProtocol.WSS_URL,
-            headers = mapOf(
-                "X-Api-Key" to apiKey,
-                "X-Api-Resource-Id" to resourceId,
-                "X-Api-Request-Id" to uuid4(),
-                "X-Api-Sequence" to "-1",
-            ),
+            headers =
+                mapOf(
+                    "X-Api-Key" to apiKey,
+                    "X-Api-Resource-Id" to resourceId,
+                    "X-Api-Request-Id" to uuid4(),
+                    "X-Api-Sequence" to "-1",
+                ),
             onOpen = {
                 if (state == AsrEngine.State.ERROR || state == AsrEngine.State.DONE) return@connect
                 state = AsrEngine.State.LISTENING
@@ -75,10 +75,11 @@ class VolcStreamingAsrEngine(
         state = AsrEngine.State.FINALIZING
         onState?.invoke(state)
         ws.send(VolcAsrProtocol.frame(VolcAsrProtocol.audioHeader(last = true), ByteArray(0)))
-        finalTimeout = scope.launch {
-            delay(FINAL_TIMEOUT_MS)
-            if (state == AsrEngine.State.FINALIZING) fail("识别超时")
-        }
+        finalTimeout =
+            scope.launch {
+                delay(FINAL_TIMEOUT_MS)
+                if (state == AsrEngine.State.FINALIZING) fail("识别超时")
+            }
     }
 
     override fun abort() {
@@ -91,13 +92,14 @@ class VolcStreamingAsrEngine(
         if (bytes.size < 8) return
         when (VolcAsrProtocol.messageType(bytes)) {
             0x9 -> {
-                val parsed = try {
-                    VolcAsrProtocol.parseServerFrame(bytes)
-                } catch (e: Exception) {
-                    TermLog.w("voice") { "asr response parse failed: $e" }
-                    fail("响应解析失败")
-                    return
-                }
+                val parsed =
+                    try {
+                        VolcAsrProtocol.parseServerFrame(bytes)
+                    } catch (e: Exception) {
+                        TermLog.w("voice") { "asr response parse failed: $e" }
+                        fail("响应解析失败")
+                        return
+                    }
                 val resp = parsed.response
                 if (resp.code != null && resp.code != 0) {
                     fail(resp.payloadMsg?.message ?: "服务错误 code=${resp.code}")

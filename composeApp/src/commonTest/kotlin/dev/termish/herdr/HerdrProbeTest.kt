@@ -19,22 +19,22 @@ import kotlin.test.assertTrue
  * 刚装完/从未启动的主机会被误判成「未安装」（装完仍报失败）。
  */
 class HerdrProbeTest {
-
     private val versionOutput = "herdr 0.8.0"
 
     @Test
     fun homeCandidateResolvedToAbsolutePath() {
         // exec PATH 缺 ~/.local/bin（裸 herdr 失败）→ $HOME 候选命中 → 解析成绝对路径
         val commands = mutableListOf<String>()
-        val result = HerdrProbe.probe { cmd ->
-            commands += cmd
-            when (cmd) {
-                "herdr --version" -> null
-                "\$HOME/.local/bin/herdr --version" -> versionOutput
-                "echo \$HOME" -> "/root"
-                else -> null
-            }
-        }!!
+        val result =
+            HerdrProbe.probe { cmd ->
+                commands += cmd
+                when (cmd) {
+                    "herdr --version" -> null
+                    "\$HOME/.local/bin/herdr --version" -> versionOutput
+                    "echo \$HOME" -> "/root"
+                    else -> null
+                }
+            }!!
         assertEquals("/root/.local/bin/herdr", result.bin)
         // 解析发生在命中之后、且只多一次 echo（候选顺序不变）
         assertEquals(
@@ -48,10 +48,11 @@ class HerdrProbeTest {
         // 全候选顺序：herdr → $HOME → /usr/local/bin（都不中）→ /opt/homebrew 命中，
         // 绝对路径候选无需解析（不应发起 echo）
         val commands = mutableListOf<String>()
-        val result = HerdrProbe.probe { cmd ->
-            commands += cmd
-            if (cmd == "/opt/homebrew/bin/herdr --version") versionOutput else null
-        }!!
+        val result =
+            HerdrProbe.probe { cmd ->
+                commands += cmd
+                if (cmd == "/opt/homebrew/bin/herdr --version") versionOutput else null
+            }!!
         assertEquals("/opt/homebrew/bin/herdr", result.bin)
         assertEquals(HerdrApi.BIN_CANDIDATES.map { "$it --version" }, commands)
     }
@@ -60,10 +61,11 @@ class HerdrProbeTest {
     fun bareCandidateHitNeedsNoResolution() {
         // PATH 直接可用的常规场景：原样返回，不额外探测
         val commands = mutableListOf<String>()
-        val result = HerdrProbe.probe { cmd ->
-            commands += cmd
-            if (cmd == "herdr --version") versionOutput else null
-        }!!
+        val result =
+            HerdrProbe.probe { cmd ->
+                commands += cmd
+                if (cmd == "herdr --version") versionOutput else null
+            }!!
         assertEquals("herdr", result.bin)
         assertEquals(listOf("herdr --version"), commands)
     }
@@ -73,24 +75,26 @@ class HerdrProbeTest {
         // 回归（Linux 实测）：api snapshot 在 daemon 未运行时返回 error JSON + exit 1。
         // 探测已改用 --version——「装了但没启动」必须命中，不能误判成未安装
         val snapshotServerError = """{"id":"x","error":{"code":"server_not_running","message":"no herdr server is running"}}"""
-        val result = HerdrProbe.probe { cmd ->
-            when (cmd) {
-                "herdr --version" -> versionOutput
-                else -> snapshotServerError
-            }
-        }!!
+        val result =
+            HerdrProbe.probe { cmd ->
+                when (cmd) {
+                    "herdr --version" -> versionOutput
+                    else -> snapshotServerError
+                }
+            }!!
         assertEquals("herdr", result.bin)
     }
 
     @Test
     fun homeEchoFailureFallsBackToRawCandidate() {
         // echo $HOME 失败（异常环境）：退回原样尽力而为，不阻断连接
-        val result = HerdrProbe.probe { cmd ->
-            when (cmd) {
-                "\$HOME/.local/bin/herdr --version" -> versionOutput
-                else -> null
-            }
-        }!!
+        val result =
+            HerdrProbe.probe { cmd ->
+                when (cmd) {
+                    "\$HOME/.local/bin/herdr --version" -> versionOutput
+                    else -> null
+                }
+            }!!
         assertEquals("\$HOME/.local/bin/herdr", result.bin)
     }
 

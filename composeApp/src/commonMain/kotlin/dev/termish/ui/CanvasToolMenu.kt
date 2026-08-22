@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -105,7 +104,10 @@ fun CanvasToolMenu(
 
 /** 单个菜单动作：胶囊按钮（图标 + 标签）。 */
 @Composable
-private fun CanvasMenuActionItem(action: CanvasMenuAction, theme: TerminalTheme) {
+private fun CanvasMenuActionItem(
+    action: CanvasMenuAction,
+    theme: TerminalTheme,
+) {
     Row(
         Modifier
             .clip(RoundedCornerShape(22.dp))
@@ -122,7 +124,14 @@ private fun CanvasMenuActionItem(action: CanvasMenuAction, theme: TerminalTheme)
             Icon(
                 action.icon,
                 contentDescription = null,
-                tint = if (action.badge != null) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimary,
+                tint =
+                    if (action.badge !=
+                        null
+                    ) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onPrimary
+                    },
                 modifier = Modifier.size(14.dp),
             )
         }

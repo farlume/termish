@@ -37,62 +37,70 @@ actual class ScreenPlayer actual constructor(
     val player: ExoPlayer = ExoPlayer.Builder(AppContext.get()).build()
 
     private val queue = LinkedBlockingQueue<ByteArray>(256)
+
     @Volatile private var stopped = false
     private var server: StreamServer? = null
 
     private inner class StreamServer : NanoHTTPD("127.0.0.1", 0) {
-        override fun serve(session: IHTTPSession): Response = StreamResponse(
-            object : InputStream() {
-                private var current: ByteArray? = null
-                private var pos = 0
+        override fun serve(session: IHTTPSession): Response =
+            StreamResponse(
+                object : InputStream() {
+                    private var current: ByteArray? = null
+                    private var pos = 0
 
-                override fun read(): Int {
-                    while (!stopped) {
-                        val c = current
-                        if (c != null && pos < c.size) {
-                            return (c[pos++].toInt() and 0xff)
-                        }
-                        current = null
-                        val next = queue.poll(2, TimeUnit.SECONDS) ?: continue
-                        current = next
-                        pos = 0
-                    }
-                    return -1
-                }
-
-                override fun read(b: ByteArray, off: Int, len: Int): Int {
-                    if (len == 0) return 0
-                    var copied = 0
-                    while (copied == 0 && !stopped) {
-                        val c = current
-                        if (c != null && pos < c.size) {
-                            val n = minOf(len - copied, c.size - pos)
-                            c.copyInto(b, off + copied, pos, pos + n)
-                            pos += n
-                            copied += n
-                        } else {
+                    override fun read(): Int {
+                        while (!stopped) {
+                            val c = current
+                            if (c != null && pos < c.size) {
+                                return (c[pos++].toInt() and 0xff)
+                            }
                             current = null
                             val next = queue.poll(2, TimeUnit.SECONDS) ?: continue
                             current = next
                             pos = 0
                         }
+                        return -1
                     }
-                    return if (copied > 0) copied else -1
-                }
 
-                override fun close() {
-                }
-            },
-        )
+                    override fun read(
+                        b: ByteArray,
+                        off: Int,
+                        len: Int,
+                    ): Int {
+                        if (len == 0) return 0
+                        var copied = 0
+                        while (copied == 0 && !stopped) {
+                            val c = current
+                            if (c != null && pos < c.size) {
+                                val n = minOf(len - copied, c.size - pos)
+                                c.copyInto(b, off + copied, pos, pos + n)
+                                pos += n
+                                copied += n
+                            } else {
+                                current = null
+                                val next = queue.poll(2, TimeUnit.SECONDS) ?: continue
+                                current = next
+                                pos = 0
+                            }
+                        }
+                        return if (copied > 0) copied else -1
+                    }
+
+                    override fun close() {
+                    }
+                },
+            )
     }
 
     /** chunked 流式响应：无 Content-Length，边读边发（播放器渐进读取）。 */
-    private class StreamResponse(data: InputStream) : Response(
-        Response.Status.OK,
-        "video/mp2t",
-        data,
-        -1,
-    ) {
+    private class StreamResponse(
+        data: InputStream,
+    ) : Response(
+            Response.Status.OK,
+            "video/mp2t",
+            data,
+            -1,
+        ) {
         init {
             setChunkedTransfer(true)
             addHeader("Cache-Control", "no-cache")
@@ -111,17 +119,19 @@ actual class ScreenPlayer actual constructor(
             return
         }
         val port = server!!.listeningPort
-        player.addListener(object : Player.Listener {
-            override fun onRenderedFirstFrame() {
-                TermLog.i("screen") { "player first frame rendered" }
-                onReady()
-            }
+        player.addListener(
+            object : Player.Listener {
+                override fun onRenderedFirstFrame() {
+                    TermLog.i("screen") { "player first frame rendered" }
+                    onReady()
+                }
 
-            override fun onPlayerError(error: PlaybackException) {
-                TermLog.w("screen") { "player error: ${error.errorCodeName} ${error.message}" }
-                onError("播放失败：${error.errorCodeName} ${error.message ?: ""}")
-            }
-        })
+                override fun onPlayerError(error: PlaybackException) {
+                    TermLog.w("screen") { "player error: ${error.errorCodeName} ${error.message}" }
+                    onError("播放失败：${error.errorCodeName} ${error.message ?: ""}")
+                }
+            },
+        )
         player.setMediaItem(MediaItem.fromUri("http://127.0.0.1:$port/stream.ts"))
         player.prepare()
         player.play()
@@ -147,7 +157,10 @@ actual class ScreenPlayer actual constructor(
 
 @OptIn(UnstableApi::class)
 @Composable
-actual fun ScreenVideoSurface(player: ScreenPlayer?, modifier: Modifier) {
+actual fun ScreenVideoSurface(
+    player: ScreenPlayer?,
+    modifier: Modifier,
+) {
     val p = player?.player
     if (p == null) {
         Box(modifier.background(ComposeColor.Black))

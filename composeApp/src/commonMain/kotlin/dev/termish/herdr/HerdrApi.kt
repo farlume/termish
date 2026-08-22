@@ -27,23 +27,28 @@ object HerdrApi {
      * execvp 不过 shell、startExec 单引号均不展开 $HOME）——裸 `herdr` 或
      * 字面 `$HOME/...` 在非默认 PATH 场景探测能过但启动必败。
      */
-    val BIN_CANDIDATES = listOf(
-        "herdr",
-        "\$HOME/.local/bin/herdr",
-        "/usr/local/bin/herdr",
-        "/opt/homebrew/bin/herdr",
-    )
+    val BIN_CANDIDATES =
+        listOf(
+            "herdr",
+            "\$HOME/.local/bin/herdr",
+            "/usr/local/bin/herdr",
+            "/opt/homebrew/bin/herdr",
+        )
 
     /** snapshot 命令候选（由 [BIN_CANDIDATES] 派生）。 */
     val SNAPSHOT_CMD_CANDIDATES = BIN_CANDIDATES.map { "$it api snapshot" }
 
     /** pane 最近输出读取（approve 对话框上下文）。输出为纯文本。 */
-    fun paneReadCmd(paneId: String, lines: Int = 30): String =
-        "herdr pane read $paneId --source recent --lines $lines"
+    fun paneReadCmd(
+        paneId: String,
+        lines: Int = 30,
+    ): String = "herdr pane read $paneId --source recent --lines $lines"
 
     /** 向 agent 提交回复（手机 approve）。文本经 shell 单引号转义（exec 经 /bin/sh）。 */
-    fun agentPromptCmd(paneId: String, text: String): String =
-        "herdr agent prompt $paneId ${shQuote(text)}"
+    fun agentPromptCmd(
+        paneId: String,
+        text: String,
+    ): String = "herdr agent prompt $paneId ${shQuote(text)}"
 
     /** shell 单引号转义：`'` → `'\\''`（POSIX 标准技巧，防文本注入）。 */
     fun shQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
@@ -60,16 +65,19 @@ object HerdrApi {
      */
     fun parseCommandError(out: CommandOutput?): HerdrApiError? {
         if (out == null) return HerdrApiError("command_failed", "ssh command failed or timed out")
-        val raw = listOf(out.stderr, out.stdout)
-            .firstOrNull { it.contains("{\"error\"") }
-            ?: ""
+        val raw =
+            listOf(out.stderr, out.stdout)
+                .firstOrNull { it.contains("{\"error\"") }
+                ?: ""
         if (raw.isNotEmpty()) {
             // 只取 error 对象片段（CLI 包装尾部还有 id 字段，容错截断解析）
             val candidate = raw.substring(raw.indexOf("{\"error\""))
             return runCatching {
-                kotlinx.serialization.json.Json {
-                    ignoreUnknownKeys = true
-                }.decodeFromString<HerdrCliResponse>(candidate).error
+                kotlinx.serialization.json
+                    .Json {
+                        ignoreUnknownKeys = true
+                    }.decodeFromString<HerdrCliResponse>(candidate)
+                    .error
             }.getOrNull() ?: HerdrApiError("unknown", "unparseable herdr error")
         }
         val exit = out.exitCode

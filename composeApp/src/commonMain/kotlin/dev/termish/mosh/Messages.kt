@@ -31,8 +31,11 @@ internal class TransportInstruction(
 
     /** 与协议 id 递增判定保持一致：比较除 diff 外的全部字段。 */
     fun sameHeaderAs(other: TransportInstruction): Boolean =
-        oldNum == other.oldNum && newNum == other.newNum && ackNum == other.ackNum &&
-            throwawayNum == other.throwawayNum && protocolVersion == other.protocolVersion &&
+        oldNum == other.oldNum &&
+            newNum == other.newNum &&
+            ackNum == other.ackNum &&
+            throwawayNum == other.throwawayNum &&
+            protocolVersion == other.protocolVersion &&
             chaff.contentEquals(other.chaff)
 
     companion object {
@@ -59,8 +62,14 @@ internal class TransportInstruction(
 
 /** ClientBuffers.UserMessage 里的一条指令。 */
 internal sealed class UserEventOut {
-    class Keystrokes(val keys: ByteArray) : UserEventOut()
-    class Resize(val width: Int, val height: Int) : UserEventOut()
+    class Keystrokes(
+        val keys: ByteArray,
+    ) : UserEventOut()
+
+    class Resize(
+        val width: Int,
+        val height: Int,
+    ) : UserEventOut()
 }
 
 /** 编码 ClientBuffers.UserMessage（keystroke 扩展相邻合并，与 mosh 一致）。 */
@@ -100,9 +109,18 @@ internal fun encodeUserMessage(events: List<UserEventOut>): ByteArray {
 
 /** HostBuffers.HostMessage 解析后的一条指令。 */
 internal sealed class HostEventIn {
-    class HostBytes(val bytes: ByteArray) : HostEventIn()
-    class Resize(val width: Int, val height: Int) : HostEventIn()
-    class EchoAck(val echoAckNum: ULong) : HostEventIn()
+    class HostBytes(
+        val bytes: ByteArray,
+    ) : HostEventIn()
+
+    class Resize(
+        val width: Int,
+        val height: Int,
+    ) : HostEventIn()
+
+    class EchoAck(
+        val echoAckNum: ULong,
+    ) : HostEventIn()
 }
 
 internal fun decodeHostMessage(data: ByteArray): List<HostEventIn> {

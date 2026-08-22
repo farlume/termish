@@ -1,10 +1,10 @@
 package dev.termish.ui
 
 import com.russhwolf.settings.PropertiesSettings
+import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
-import dev.termish.data.ConnectionMode
 import dev.termish.ssh.SftpEntry
 import dev.termish.ssh.SftpSession
 import java.util.Properties
@@ -24,7 +24,6 @@ import kotlinx.coroutines.test.setMain
 /** SessionManager：会话增删、最近会话持久化与恢复、主机删除连带清理。 */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionManagerTest {
-
     private val mainDispatcher = StandardTestDispatcher()
 
     @BeforeTest
@@ -39,8 +38,7 @@ class SessionManagerTest {
 
     private fun repo() = HostRepository(PropertiesSettings(Properties()))
 
-    private fun host(id: String) =
-        Host(id = id, name = id, hostname = "$id.example.com", username = "root")
+    private fun host(id: String) = Host(id = id, name = id, hostname = "$id.example.com", username = "root")
 
     @Test
     fun openAddsSessionAndPersistsRecent() {
@@ -67,7 +65,12 @@ class SessionManagerTest {
 
         assertEquals(1, m2.sessions.size)
         assertEquals(ConnStatus.IDLE, m2.sessions.single().status)
-        assertEquals("a", m2.sessions.single().host.id)
+        assertEquals(
+            "a",
+            m2.sessions
+                .single()
+                .host.id,
+        )
         m2.sessions.forEach { it.destroy() }
     }
 
@@ -106,29 +109,40 @@ class SessionManagerTest {
         val m = SessionManager(r)
         val h = host("a")
         var closed = false
-        val fake = object : SftpSession {
-            override fun list(path: String) = emptyList<SftpEntry>()
-            override fun mkdir(path: String) {}
-        override fun delete(path: String) {}
-        override fun rename(oldPath: String, newPath: String) {}
-            override fun home() = "/home/root"
-            override fun upload(
-                remotePath: String,
-                totalSize: Long,
-                onProgress: (sent: Long, total: Long) -> Unit,
-                nextChunk: () -> ByteArray?,
-            ) {
+        val fake =
+            object : SftpSession {
+                override fun list(path: String) = emptyList<SftpEntry>()
+
+                override fun mkdir(path: String) {}
+
+                override fun delete(path: String) {}
+
+                override fun rename(
+                    oldPath: String,
+                    newPath: String,
+                ) {}
+
+                override fun home() = "/home/root"
+
+                override fun upload(
+                    remotePath: String,
+                    totalSize: Long,
+                    onProgress: (sent: Long, total: Long) -> Unit,
+                    nextChunk: () -> ByteArray?,
+                ) {
+                }
+
+                override fun download(
+                    remotePath: String,
+                    onProgress: (loaded: Long, total: Long) -> Unit,
+                    onChunk: (ByteArray) -> Unit,
+                ) {
+                }
+
+                override fun close() {
+                    closed = true
+                }
             }
-            override fun download(
-                remotePath: String,
-                onProgress: (loaded: Long, total: Long) -> Unit,
-                onChunk: (ByteArray) -> Unit,
-            ) {
-            }
-            override fun close() {
-                closed = true
-            }
-        }
         m.addSftp(h, fake, Any())
         assertEquals(1, m.sftpSessions.size)
 
@@ -137,8 +151,18 @@ class SessionManagerTest {
         assertTrue(closed, "底层连接应被关闭")
         assertEquals(1, m.sftpSessions.size, "条目应保留（断开可重连）")
         assertNull(m.sftpSessions.first().session, "session 应置空（断开态）")
-        assertTrue(m.sftpSessions.first().uiState.disconnected, "应标记断开态")
-        assertTrue(m.sftpSessions.first().uiState.autoReconnectAttempted, "主动断开不自动重连")
+        assertTrue(
+            m.sftpSessions
+                .first()
+                .uiState.disconnected,
+            "应标记断开态",
+        )
+        assertTrue(
+            m.sftpSessions
+                .first()
+                .uiState.autoReconnectAttempted,
+            "主动断开不自动重连",
+        )
     }
 
     @Test
@@ -188,27 +212,38 @@ class SessionManagerTest {
         // 先有恢复条目（session=null），再连接同一主机 → 替换而非重复
         m.sftpSessions.add(SftpSessionEntry(h, null))
 
-        val fake = object : SftpSession {
-            override fun list(path: String) = emptyList<SftpEntry>()
-            override fun mkdir(path: String) {}
-        override fun delete(path: String) {}
-        override fun rename(oldPath: String, newPath: String) {}
-            override fun home() = "/home/root"
-            override fun upload(
-                remotePath: String,
-                totalSize: Long,
-                onProgress: (sent: Long, total: Long) -> Unit,
-                nextChunk: () -> ByteArray?,
-            ) {
+        val fake =
+            object : SftpSession {
+                override fun list(path: String) = emptyList<SftpEntry>()
+
+                override fun mkdir(path: String) {}
+
+                override fun delete(path: String) {}
+
+                override fun rename(
+                    oldPath: String,
+                    newPath: String,
+                ) {}
+
+                override fun home() = "/home/root"
+
+                override fun upload(
+                    remotePath: String,
+                    totalSize: Long,
+                    onProgress: (sent: Long, total: Long) -> Unit,
+                    nextChunk: () -> ByteArray?,
+                ) {
+                }
+
+                override fun download(
+                    remotePath: String,
+                    onProgress: (loaded: Long, total: Long) -> Unit,
+                    onChunk: (ByteArray) -> Unit,
+                ) {
+                }
+
+                override fun close() {}
             }
-            override fun download(
-                remotePath: String,
-                onProgress: (loaded: Long, total: Long) -> Unit,
-                onChunk: (ByteArray) -> Unit,
-            ) {
-            }
-            override fun close() {}
-        }
         val entry = m.addSftp(h, fake, Any())
 
         assertEquals(1, m.sftpSessions.size)

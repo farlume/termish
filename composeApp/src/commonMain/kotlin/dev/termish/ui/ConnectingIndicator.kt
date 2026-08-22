@@ -72,7 +72,10 @@ fun ConnectingIndicator(
 
 /** 状态点旁的小 spinner（连接页会话行「正在建立」可视化；首页头像同语义）。 */
 @Composable
-fun StatusSpinner(modifier: Modifier = Modifier, color: Color = StatusColors.Warning) {
+fun StatusSpinner(
+    modifier: Modifier = Modifier,
+    color: Color = StatusColors.Warning,
+) {
     CircularProgressIndicator(
         modifier = modifier,
         strokeWidth = 2.dp,

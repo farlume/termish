@@ -1,7 +1,6 @@
 package dev.termish.mosh
 
 import dev.termish.util.TermLog
-
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -12,6 +11,7 @@ import kotlin.math.min
  *
  * 时间均为单调毫秒（调用方注入 nowMs()）。
  */
+@Suppress("ktlint:standard:property-naming") // mosh 协议参数（SEND_INTERVAL_MIN 等）
 internal class MoshTransport(
     /** 链路是否为 IPv6（取自已解析的 socket 地址族，对应协议 MTU 设定）。 */
     ipv6Path: Boolean,
@@ -33,14 +33,23 @@ internal class MoshTransport(
     private val CONGESTION_TIMESTAMP_PENALTY = 500L
     private val MIN_RTO = 50L
     private val MAX_RTO = 1000L
+
     /** 应用层 MTU：mosh Connection 按地址族取 1252(IPv4)/1216(IPv6)，再扣
      *  Connection::ADDED_BYTES(12) + OCB 16；500 只是 mosh 在 EMSGSIZE 时的保底。 */
     private val MTU_FALLBACK = 500 - 12 - 16
     private var sendMtu: Int
 
-    private class SentState(var timestamp: Long, val num: ULong, val state: UserStream)
+    private class SentState(
+        var timestamp: Long,
+        val num: ULong,
+        val state: UserStream,
+    )
 
-    private class RecvState(var timestamp: Long, var num: ULong, val state: ShadowTerminal)
+    private class RecvState(
+        var timestamp: Long,
+        var num: ULong,
+        val state: ShadowTerminal,
+    )
 
     // ---- 发端状态 ----
     private val currentState = UserStream()
@@ -54,6 +63,7 @@ internal class MoshTransport(
     private var lastHeard = 0L
     private var mindelayClock = -1L
     private var seq = 0uL
+
     /** 最近一次发出的 ack_num（协议 last_ack 对应物）。 */
     private var lastAckSent = 0uL
 
@@ -94,7 +104,10 @@ internal class MoshTransport(
         for (b in data) currentState.pushByte(b)
     }
 
-    fun pushResize(cols: Int, rows: Int) {
+    fun pushResize(
+        cols: Int,
+        rows: Int,
+    ) {
         if (shutdownInProgress) return
         currentState.pushResize(cols, rows)
     }
@@ -112,8 +125,7 @@ internal class MoshTransport(
         }
     }
 
-    fun shutdownAckTimedOut(): Boolean =
-        shutdownInProgress && (shutdownTries >= 16 || nowMs() - shutdownStart >= ACTIVE_RETRY_TIMEOUT)
+    fun shutdownAckTimedOut(): Boolean = shutdownInProgress && (shutdownTries >= 16 || nowMs() - shutdownStart >= ACTIVE_RETRY_TIMEOUT)
 
     /** 对端已 ack 我们的 shutdown 状态（sent_states.front().num == -1）。 */
     fun shutdownAcknowledged(): Boolean = sentStates.first().num == ULong.MAX_VALUE
@@ -154,7 +166,10 @@ internal class MoshTransport(
 
     // ---- 收包（decrypt 之后调用） ----
 
-    fun processPacket(pkt: MoshCryptoSession.PlainPacket, congestionExperienced: Boolean = false) {
+    fun processPacket(
+        pkt: MoshCryptoSession.PlainPacket,
+        congestionExperienced: Boolean = false,
+    ) {
         val now = nowMs()
         // 旧包只用于时间戳/RTT，不进 SSP（mosh: out-of-order 提前 return）
         if (pkt.seq >= expectedReceiverSeq) {
@@ -258,7 +273,7 @@ internal class MoshTransport(
 
     private fun rationalizeStates() {
         // 必须拷贝：known 会在循环中被自身的 subtract 清空，持引用会把前缀越改越乱
-       
+
         val known = sentStates.first().state.copy()
         currentState.subtract(known)
         for (s in sentStates) s.state.subtract(known)
@@ -345,7 +360,11 @@ internal class MoshTransport(
         nextSendTime = Long.MAX_VALUE
     }
 
-    private fun addSentState(timestamp: Long, num: ULong, state: UserStream) {
+    private fun addSentState(
+        timestamp: Long,
+        num: ULong,
+        state: UserStream,
+    ) {
         sentStates.addLast(SentState(timestamp, num, state.copy()))
         if (sentStates.size > 32) {
             sentStates.removeAt(sentStates.size - 16) // 从中间删，保头保尾
@@ -353,11 +372,12 @@ internal class MoshTransport(
     }
 
     private fun sendToReceiver(diff: ByteArray) {
-        val newNum = when {
-            shutdownInProgress -> ULong.MAX_VALUE
-            currentState == sentStates.last().state -> sentStates.last().num
-            else -> sentStates.last().num + 1u
-        }
+        val newNum =
+            when {
+                shutdownInProgress -> ULong.MAX_VALUE
+                currentState == sentStates.last().state -> sentStates.last().num
+                else -> sentStates.last().num + 1u
+            }
         if (newNum == sentStates.last().num) {
             sentStates.last().timestamp = nowMs()
         } else {
@@ -369,16 +389,20 @@ internal class MoshTransport(
         nextSendTime = Long.MAX_VALUE
     }
 
-    private fun sendInFragments(diff: ByteArray, newNum: ULong) {
-        val inst = TransportInstruction(
-            protocolVersion = MOSH_PROTOCOL_VERSION,
-            oldNum = sentStates[assumedReceiverIdx].num,
-            newNum = newNum,
-            ackNum = ackNum,
-            throwawayNum = sentStates.first().num,
-            diff = diff,
-            chaff = makeChaff(),
-        )
+    private fun sendInFragments(
+        diff: ByteArray,
+        newNum: ULong,
+    ) {
+        val inst =
+            TransportInstruction(
+                protocolVersion = MOSH_PROTOCOL_VERSION,
+                oldNum = sentStates[assumedReceiverIdx].num,
+                newNum = newNum,
+                ackNum = ackNum,
+                throwawayNum = sentStates.first().num,
+                diff = diff,
+                chaff = makeChaff(),
+            )
         lastAckSent = inst.ackNum
         if (newNum == ULong.MAX_VALUE) shutdownTries++
         for (frag in fragmenter.makeFragments(inst, sendMtu)) {
@@ -417,13 +441,15 @@ internal class MoshTransport(
 
     /** 随机 0..16 字节 chaff（mosh chaff 生成），
      *  混淆指令长度并让 fragment id 每帧变化。 */
-    private fun makeChaff(): ByteArray =
-        ByteArray(prng.nextInt(17)) { prng.nextInt(256).toByte() }
+    private fun makeChaff(): ByteArray = ByteArray(prng.nextInt(17)) { prng.nextInt(256).toByte() }
 
     private val prng = kotlin.random.Random.Default
 
     companion object {
         /** uint16 环绕安全的差值（SSP 时间戳语义，与 mosh 行为一致）。 */
-        fun timestampDiff(newer: Int, older: Int): Int = ((newer - older) + 65536) % 65536
+        fun timestampDiff(
+            newer: Int,
+            older: Int,
+        ): Int = ((newer - older) + 65536) % 65536
     }
 }

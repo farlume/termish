@@ -10,19 +10,19 @@ import kotlin.test.assertNotEquals
 
 /** 会话凭据签名：任一连接参数变化即失效；敏感字段只保留哈希。 */
 class CredentialSignatureTest {
-
-    private fun host() = Host(
-        id = "h1",
-        name = "dev",
-        hostname = "example.com",
-        port = 2222,
-        username = "root",
-        authMethod = HostAuthMethod.KEY_OR_PASSWORD,
-        startupCommand = "tmux new -A -s main",
-        connectionMode = ConnectionMode.MOSH,
-        moshUdpPort = 60001,
-        moshThemeSync = true,
-    )
+    private fun host() =
+        Host(
+            id = "h1",
+            name = "dev",
+            hostname = "example.com",
+            port = 2222,
+            username = "root",
+            authMethod = HostAuthMethod.KEY_OR_PASSWORD,
+            startupCommand = "tmux new -A -s main",
+            connectionMode = ConnectionMode.MOSH,
+            moshUdpPort = 60001,
+            moshThemeSync = true,
+        )
 
     @Test
     fun deterministicForSameInputs() {

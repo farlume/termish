@@ -1,6 +1,5 @@
 package dev.termish.util
 
-import android.app.Activity
 import android.view.HapticFeedbackConstants
 import dev.termish.AppContext
 

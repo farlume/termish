@@ -12,6 +12,11 @@ indent_style = space
 indent_size = 4
 # import 按字母序（IDE 自动整理，与 Kotlin 官方风格一致）
 ij_kotlin_imports_layout = *
+# ktlint（规则 https://pinterest.github.io/ktlint/）
+# Compose @Composable 函数允许大写驼峰（ScreenContent/ScreenPiP 等）
+ktlint_function_naming_ignore_when_annotated_with = Composable
+# 行宽不设限（Kotlin 官方风格不强制；字符串文案天然超长）
+max_line_length = off
 
 [*.{md,yaml,yml,json}]
 indent_size = 2

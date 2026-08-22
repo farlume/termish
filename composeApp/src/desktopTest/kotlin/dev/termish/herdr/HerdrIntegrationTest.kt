@@ -22,12 +22,15 @@ import kotlin.test.assertTrue
  * 自动跳过，本机验证时自动跑（测试 sshd 的 exec PATH 含 herdr）。
  */
 class HerdrIntegrationTest {
+    private fun env(
+        key: String,
+        default: String,
+    ): String = System.getenv(key) ?: default
 
-    private fun env(key: String, default: String): String = System.getenv(key) ?: default
-
-    private fun sshdReachable(): Boolean = runCatching {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
-    }.isSuccess
+    private fun sshdReachable(): Boolean =
+        runCatching {
+            Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
+        }.isSuccess
 
     @Test
     fun runCommandExecutesHerdrSnapshotOverRealSsh() {
@@ -40,22 +43,28 @@ class HerdrIntegrationTest {
             println("SKIP: no key at ${pemFile.absolutePath}")
             return
         }
-        val session = createSshSession(
-            SshConnection(
-                host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "22222").toInt(),
-                username = System.getProperty("user.name"),
-                privateKeyPem = pemFile.readText(),
-            ),
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-                override suspend fun onStderr(data: ByteArray) {}
-                override fun onExitStatus(status: Int) {}
-                override fun onClosed(reason: String?) {}
-                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
-                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
-            },
-        )
+        val session =
+            createSshSession(
+                SshConnection(
+                    host = "127.0.0.1",
+                    port = env("Termish_TEST_PORT", "22222").toInt(),
+                    username = System.getProperty("user.name"),
+                    privateKeyPem = pemFile.readText(),
+                ),
+                object : SshCallbacks {
+                    override suspend fun onOutput(data: ByteArray) {}
+
+                    override suspend fun onStderr(data: ByteArray) {}
+
+                    override fun onExitStatus(status: Int) {}
+
+                    override fun onClosed(reason: String?) {}
+
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+                },
+            )
         try {
             session.connectAndStart(columns = 100, rows = 40)
             val raw = session.runCommand("herdr api snapshot", timeoutMs = 5_000)
@@ -72,7 +81,10 @@ class HerdrIntegrationTest {
                 return
             }
             assertTrue(snapshot.protocol > 0, "protocol 应非零")
-            println("herdr over ssh: protocol=${snapshot.protocol} panes=${snapshot.panes.size} agents=${snapshot.agents.map { "${it.agent}/${it.agentStatus}" }}")
+            println(
+                "herdr over ssh: protocol=${snapshot.protocol} panes=${snapshot.panes.size} " +
+                    "agents=${snapshot.agents.map { "${it.agent}/${it.agentStatus}" }}",
+            )
 
             // 状态机在真实数据上跑通：首轮首事件 + 同快照无变化。
             // 事件数 ≤ agents 数：DONE 状态不产生事件（无迁移可报），

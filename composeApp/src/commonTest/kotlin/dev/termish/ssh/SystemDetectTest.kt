@@ -6,7 +6,6 @@ import kotlin.test.assertNull
 
 /** 自动探测输出解析（Termius 式系统识别）。 */
 class SystemDetectTest {
-
     @Test
     fun parsesOsReleaseId() {
         assertEquals(

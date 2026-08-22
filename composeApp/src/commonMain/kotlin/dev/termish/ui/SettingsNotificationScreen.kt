@@ -19,9 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,8 +66,7 @@ fun SettingsNotificationScreen(
                         val next = !enabled
                         onChangeEnabled(next)
                         if (next) requestNotificationPermission()
-                    }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    }.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -101,8 +98,7 @@ fun SettingsNotificationScreen(
                         .fillMaxWidth()
                         .clickable {
                             onChangeEvent(event.id, event.id in disabledEvents)
-                        }
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                        }.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -140,9 +136,13 @@ fun SettingsNotificationScreen(
     }
 }
 
-private fun eventLabel(event: NotificationEvent, s: AppStrings): String = when (event) {
-    NotificationEvent.CONNECTION_LOST -> s.notificationEventConnectionLost
-    NotificationEvent.RECONNECT_FAILED -> s.notificationEventReconnectFailed
-    NotificationEvent.TRANSFER_DONE -> s.notificationEventTransferDone
-    NotificationEvent.AGENT_TASK -> s.notificationEventAgentTask
-}
+private fun eventLabel(
+    event: NotificationEvent,
+    s: AppStrings,
+): String =
+    when (event) {
+        NotificationEvent.CONNECTION_LOST -> s.notificationEventConnectionLost
+        NotificationEvent.RECONNECT_FAILED -> s.notificationEventReconnectFailed
+        NotificationEvent.TRANSFER_DONE -> s.notificationEventTransferDone
+        NotificationEvent.AGENT_TASK -> s.notificationEventAgentTask
+    }

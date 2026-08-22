@@ -2,16 +2,15 @@ package dev.termish.ui
 
 import dev.termish.ssh.SftpEntry
 import dev.termish.ssh.SftpSession
-import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.coroutines.runBlocking
 
 /** SFTP 纯逻辑：路径拼接、搜索匹配、目录名清洗、递归下载。 */
 class SftpLogicTest {
-
     // ---------- joinPath ----------
 
     @Test
@@ -80,12 +79,15 @@ class SftpLogicTest {
 
     // ---------- downloadDir 递归 ----------
 
-    private fun entry(name: String, dir: Boolean) =
-        SftpEntry(name, dir, if (dir) "drwxr-xr-x" else "-rw-r--r--", 0, 0, name.startsWith("."))
+    private fun entry(
+        name: String,
+        dir: Boolean,
+    ) = SftpEntry(name, dir, if (dir) "drwxr-xr-x" else "-rw-r--r--", 0, 0, name.startsWith("."))
 
     private class FakeFileSink : FileSink {
         val chunks = mutableListOf<ByteArray>()
         var closed = false
+
         override fun write(bytes: ByteArray) {
             chunks += bytes
         }
@@ -99,8 +101,8 @@ class SftpLogicTest {
 
     private class FakeDirSink : DirectorySink {
         val files = mutableMapOf<String, FakeFileSink>()
-        override fun openFile(relativePath: String): FileSink =
-            FakeFileSink().also { files[relativePath] = it }
+
+        override fun openFile(relativePath: String): FileSink = FakeFileSink().also { files[relativePath] = it }
 
         override fun close() {}
     }
@@ -110,11 +112,20 @@ class SftpLogicTest {
         var failPath: String? = null,
     ) : SftpSession {
         val downloaded = mutableListOf<String>()
+
         override fun list(path: String): List<SftpEntry> = tree[path] ?: emptyList()
+
         override fun mkdir(path: String) {}
+
         override fun delete(path: String) {}
-        override fun rename(oldPath: String, newPath: String) {}
+
+        override fun rename(
+            oldPath: String,
+            newPath: String,
+        ) {}
+
         override fun home(): String = "/"
+
         override fun upload(
             remotePath: String,
             totalSize: Long,
@@ -122,6 +133,7 @@ class SftpLogicTest {
             nextChunk: () -> ByteArray?,
         ) {
         }
+
         override fun download(
             remotePath: String,
             onProgress: (loaded: Long, total: Long) -> Unit,
@@ -138,12 +150,13 @@ class SftpLogicTest {
 
     @Test
     fun downloadDirRecursesWithRelativePaths() {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry("a.txt", false), entry("sub", true), entry(".hidden", false)),
-                "/root/sub" to listOf(entry("b.log", false)),
-            ),
-        )
+        val sftp =
+            FakeSftp(
+                mapOf(
+                    "/root" to listOf(entry("a.txt", false), entry("sub", true), entry(".hidden", false)),
+                    "/root/sub" to listOf(entry("b.log", false)),
+                ),
+            )
         val sink = FakeDirSink()
 
         downloadDir(sftp, "/root", sink)
@@ -158,11 +171,12 @@ class SftpLogicTest {
 
     @Test
     fun downloadDirSkipsDotAndDotDot() {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry(".", true), entry("..", true), entry("f", false)),
-            ),
-        )
+        val sftp =
+            FakeSftp(
+                mapOf(
+                    "/root" to listOf(entry(".", true), entry("..", true), entry("f", false)),
+                ),
+            )
         val sink = FakeDirSink()
 
         downloadDir(sftp, "/root", sink)
@@ -172,13 +186,14 @@ class SftpLogicTest {
 
     @Test
     fun downloadDirPropagatesErrorAndClosesFile() {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry("a.txt", false), entry("sub", true)),
-                "/root/sub" to listOf(entry("b.log", false)),
-            ),
-            failPath = "/root/a.txt",
-        )
+        val sftp =
+            FakeSftp(
+                mapOf(
+                    "/root" to listOf(entry("a.txt", false), entry("sub", true)),
+                    "/root/sub" to listOf(entry("b.log", false)),
+                ),
+                failPath = "/root/a.txt",
+            )
         val sink = FakeDirSink()
 
         assertFailsWith<IllegalStateException> { downloadDir(sftp, "/root", sink) }
@@ -191,53 +206,61 @@ class SftpLogicTest {
     // ---------- searchRecursive 递归 ----------
 
     @Test
-    fun searchRecursiveFindsMatchesAcrossDirectories() = runBlocking {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry("app-release.apk", false), entry("sub", true)),
-                "/root/sub" to listOf(entry("app-debug.apk", false), entry("readme.txt", false)),
-            ),
-        )
-        val hits = searchRecursive(sftp, "/root", "apk")
-        assertEquals(setOf("app-release.apk", "sub/app-debug.apk"), hits.map { it.relPath }.toSet())
-        assertEquals(2, hits.size)
-    }
+    fun searchRecursiveFindsMatchesAcrossDirectories() =
+        runBlocking {
+            val sftp =
+                FakeSftp(
+                    mapOf(
+                        "/root" to listOf(entry("app-release.apk", false), entry("sub", true)),
+                        "/root/sub" to listOf(entry("app-debug.apk", false), entry("readme.txt", false)),
+                    ),
+                )
+            val hits = searchRecursive(sftp, "/root", "apk")
+            assertEquals(setOf("app-release.apk", "sub/app-debug.apk"), hits.map { it.relPath }.toSet())
+            assertEquals(2, hits.size)
+        }
 
     @Test
-    fun searchRecursiveTraversesHiddenDirs() = runBlocking {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry(".hidden", true), entry("note.txt", false)),
-                "/root/.hidden" to listOf(entry("secret.apk", false)),
-            ),
-        )
-        // 递归搜索不看 UI 的 showHidden：隐藏目录也遍历（与递归下载目录语义一致）
-        val hits = searchRecursive(sftp, "/root", "apk")
-        assertEquals(listOf("secret.apk"), hits.map { it.name })
-    }
+    fun searchRecursiveTraversesHiddenDirs() =
+        runBlocking {
+            val sftp =
+                FakeSftp(
+                    mapOf(
+                        "/root" to listOf(entry(".hidden", true), entry("note.txt", false)),
+                        "/root/.hidden" to listOf(entry("secret.apk", false)),
+                    ),
+                )
+            // 递归搜索不看 UI 的 showHidden：隐藏目录也遍历（与递归下载目录语义一致）
+            val hits = searchRecursive(sftp, "/root", "apk")
+            assertEquals(listOf("secret.apk"), hits.map { it.name })
+        }
 
     @Test
-    fun searchRecursiveRespectsMaxResults() = runBlocking {
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry("a.apk", false), entry("b.apk", false), entry("c.apk", false)),
-            ),
-        )
-        val hits = searchRecursive(sftp, "/root", "apk", maxResults = 2)
-        assertEquals(2, hits.size)
-    }
+    fun searchRecursiveRespectsMaxResults() =
+        runBlocking {
+            val sftp =
+                FakeSftp(
+                    mapOf(
+                        "/root" to listOf(entry("a.apk", false), entry("b.apk", false), entry("c.apk", false)),
+                    ),
+                )
+            val hits = searchRecursive(sftp, "/root", "apk", maxResults = 2)
+            assertEquals(2, hits.size)
+        }
 
     @Test
-    fun searchRecursiveToleratesUnlistableDir() = runBlocking {
-        // FakeSftp 对未知路径返回 emptyList（模拟权限不足目录）：不抛异常、不中断遍历
-        val sftp = FakeSftp(
-            mapOf(
-                "/root" to listOf(entry("ok.apk", false), entry("broken", true)),
-            ),
-        )
-        val hits = searchRecursive(sftp, "/root", "apk")
-        assertEquals(listOf("ok.apk"), hits.map { it.name })
-    }
+    fun searchRecursiveToleratesUnlistableDir() =
+        runBlocking {
+            // FakeSftp 对未知路径返回 emptyList（模拟权限不足目录）：不抛异常、不中断遍历
+            val sftp =
+                FakeSftp(
+                    mapOf(
+                        "/root" to listOf(entry("ok.apk", false), entry("broken", true)),
+                    ),
+                )
+            val hits = searchRecursive(sftp, "/root", "apk")
+            assertEquals(listOf("ok.apk"), hits.map { it.name })
+        }
 
     // ---------- formatSize ----------
 
@@ -266,10 +289,18 @@ class SftpLogicTest {
         private val chunkSize: Int = 64 * 1024,
     ) : SftpSession {
         override fun list(path: String): List<SftpEntry> = emptyList()
+
         override fun mkdir(path: String) {}
+
         override fun delete(path: String) {}
-        override fun rename(oldPath: String, newPath: String) {}
+
+        override fun rename(
+            oldPath: String,
+            newPath: String,
+        ) {}
+
         override fun home(): String = "/"
+
         override fun upload(
             remotePath: String,
             totalSize: Long,
@@ -299,38 +330,42 @@ class SftpLogicTest {
     }
 
     @Test
-    fun previewDecodesUtf8Text() = runBlocking {
-        val bytes = "你好，Termish\nline2".encodeToByteArray()
-        val r = readSftpPreview(PreviewSftp(bytes), "/root/README.md")
-        assertEquals("你好，Termish\nline2", r.text)
-        assertFalse(r.truncated)
-    }
-
-    @Test
-    fun previewTruncatesAtLimit() = runBlocking {
-        // 超过 maxBytes 的后续块触发中断：只保留前 maxBytes 字节，并标记截断
-        val bytes = "abcdefghij".encodeToByteArray()
-        val r = readSftpPreview(PreviewSftp(bytes, chunkSize = 3), "/root/a.txt", maxBytes = 4)
-        assertEquals("abcd", r.text)
-        assertTrue(r.truncated)
-    }
-
-    @Test
-    fun previewRejectsBinaryWithNulByte() = runBlocking {
-        val bytes = byteArrayOf(1, 2, 0, 3, 4)
-        assertFailsWith<SftpPreviewBinaryException> {
-            readSftpPreview(PreviewSftp(bytes), "/root/a.bin")
+    fun previewDecodesUtf8Text() =
+        runBlocking {
+            val bytes = "你好，Termish\nline2".encodeToByteArray()
+            val r = readSftpPreview(PreviewSftp(bytes), "/root/README.md")
+            assertEquals("你好，Termish\nline2", r.text)
+            assertFalse(r.truncated)
         }
-        Unit
-    }
 
     @Test
-    fun previewPropagatesDownloadError() = runBlocking {
-        assertFailsWith<IllegalStateException> {
-            readSftpPreview(PreviewSftp(ByteArray(0), fail = true), "/root/a.txt")
+    fun previewTruncatesAtLimit() =
+        runBlocking {
+            // 超过 maxBytes 的后续块触发中断：只保留前 maxBytes 字节，并标记截断
+            val bytes = "abcdefghij".encodeToByteArray()
+            val r = readSftpPreview(PreviewSftp(bytes, chunkSize = 3), "/root/a.txt", maxBytes = 4)
+            assertEquals("abcd", r.text)
+            assertTrue(r.truncated)
         }
-        Unit
-    }
+
+    @Test
+    fun previewRejectsBinaryWithNulByte() =
+        runBlocking {
+            val bytes = byteArrayOf(1, 2, 0, 3, 4)
+            assertFailsWith<SftpPreviewBinaryException> {
+                readSftpPreview(PreviewSftp(bytes), "/root/a.bin")
+            }
+            Unit
+        }
+
+    @Test
+    fun previewPropagatesDownloadError() =
+        runBlocking {
+            assertFailsWith<IllegalStateException> {
+                readSftpPreview(PreviewSftp(ByteArray(0), fail = true), "/root/a.txt")
+            }
+            Unit
+        }
 
     // ---------- 文件类型识别 / 图片预览分流 ----------
 
@@ -370,18 +405,20 @@ class SftpLogicTest {
     }
 
     @Test
-    fun readPreviewBytesExactLimitNoThrow() = runBlocking {
-        val bytes = "abcde".encodeToByteArray()
-        val r = readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
-        assertEquals("abcde", r.decodeToString())
-    }
+    fun readPreviewBytesExactLimitNoThrow() =
+        runBlocking {
+            val bytes = "abcde".encodeToByteArray()
+            val r = readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
+            assertEquals("abcde", r.decodeToString())
+        }
 
     @Test
-    fun readPreviewBytesThrowsWhenExceedingLimit() = runBlocking {
-        val bytes = "abcdefghij".encodeToByteArray()
-        assertFailsWith<SftpPreviewTooLargeException> {
-            readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
+    fun readPreviewBytesThrowsWhenExceedingLimit() =
+        runBlocking {
+            val bytes = "abcdefghij".encodeToByteArray()
+            assertFailsWith<SftpPreviewTooLargeException> {
+                readSftpPreviewBytes(PreviewSftp(bytes, chunkSize = 3), "/root/a.png", maxBytes = 5)
+            }
+            Unit
         }
-        Unit
-    }
 }

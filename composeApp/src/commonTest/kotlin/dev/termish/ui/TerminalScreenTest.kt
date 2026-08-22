@@ -6,8 +6,11 @@ import kotlin.test.assertEquals
 
 /** 终端页会话 tab 标题逻辑：优先自定义名称，未起名回退 user@host。 */
 class TerminalScreenTest {
-
-    private fun host(name: String, hostname: String, username: String = "root") = Host(
+    private fun host(
+        name: String,
+        hostname: String,
+        username: String = "root",
+    ) = Host(
         id = "h1",
         name = name,
         hostname = hostname,

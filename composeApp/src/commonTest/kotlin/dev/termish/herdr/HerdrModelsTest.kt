@@ -8,7 +8,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 简化但结构与真实 `herdr api snapshot` 输出一致的 fixture（见 desktopTest resources 里的真实快照）。 */
-private val SNAPSHOT_JSON = """
+private val SNAPSHOT_JSON =
+    """
 {"id":"cli:api:snapshot","result":{"snapshot":{
   "version":"0.8.0","protocol":19,
   "workspaces":[{"workspace_id":"w1","label":"dev","pane_count":2,"tab_count":2,"focused":true,"agent_status":"working","number":1,"active_tab_id":"w1:t1"}],
@@ -24,10 +25,9 @@ private val SNAPSHOT_JSON = """
              "terminal_title":"codex - refactor auth","terminal_title_stripped":"codex - refactor auth","cwd":"/repo","focused":false,"state_change_seq":42,"revision":9}],
   "layouts":[],"focused_workspace_id":"w1","focused_tab_id":"w1:t1","focused_pane_id":"w1:p1"
 }}}
-""".trimIndent()
+    """.trimIndent()
 
 class HerdrModelsTest {
-
     @Test
     fun parseSnapshotExtractsAgents() {
         val s = parseHerdrSnapshot(SNAPSHOT_JSON)
@@ -46,10 +46,11 @@ class HerdrModelsTest {
     @Test
     fun parseSnapshotToleratesUnknownFields() {
         // herdr 升级可能加字段：ignoreUnknownKeys 下不能解析失败
-        val withExtra = SNAPSHOT_JSON.replace(
-            "\"pane_id\":\"w1:p2\"",
-            "\"pane_id\":\"w1:p2\",\"future_field\":{\"nested\":[1,2,3]}",
-        )
+        val withExtra =
+            SNAPSHOT_JSON.replace(
+                "\"pane_id\":\"w1:p2\"",
+                "\"pane_id\":\"w1:p2\",\"future_field\":{\"nested\":[1,2,3]}",
+            )
         assertNotNull(parseHerdrSnapshot(withExtra))
     }
 
@@ -63,10 +64,11 @@ class HerdrModelsTest {
     @Test
     fun parseSnapshotToleratesMissingOptionalFields() {
         // 只有 pane_id/agent_status 的最小 pane（herdr 输出字段不全时）
-        val minimal = """
+        val minimal =
+            """
             {"id":"cli:api:snapshot","result":{"snapshot":{"version":"0.8.0","protocol":19,
               "workspaces":[],"tabs":[],"panes":[],"agents":[{"pane_id":"w1:p1","agent_status":"working"}],"layouts":[]}}}
-        """.trimIndent()
+            """.trimIndent()
         val s = parseHerdrSnapshot(minimal)
         assertNotNull(s)
         assertEquals(1, s.agents.size)
@@ -76,12 +78,12 @@ class HerdrModelsTest {
 }
 
 class HerdrAgentStateMachineTest {
-
     private fun snapshot(vararg statuses: Pair<String, HerdrAgentStatus>): HerdrSessionSnapshot =
         HerdrSessionSnapshot(
-            agents = statuses.map { (pane, st) ->
-                HerdrAgentInfo(paneId = pane, agent = "pi", agentStatus = st)
-            },
+            agents =
+                statuses.map { (pane, st) ->
+                    HerdrAgentInfo(paneId = pane, agent = "pi", agentStatus = st)
+                },
         )
 
     @Test

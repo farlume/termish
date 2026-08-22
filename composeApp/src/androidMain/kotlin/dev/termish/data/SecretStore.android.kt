@@ -21,22 +21,21 @@ actual object SecretStore {
     private const val PREFS = "termish_secrets"
     private const val GCM_TAG_BITS = 128
 
-    private fun prefs(): SharedPreferences =
-        AppContext.get().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private fun prefs(): SharedPreferences = AppContext.get().getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun getOrCreateKey(): SecretKey {
         val ks = KeyStore.getInstance(KEYSTORE).apply { load(null) }
         (ks.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
         generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            KeyGenParameterSpec
+                .Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                ).setBlockModes(KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
                 .setKeySize(256)
-                .build()
+                .build(),
         )
         return generator.generateKey()
     }
@@ -61,7 +60,10 @@ actual object SecretStore {
         return cipher.doFinal(ciphertext).decodeToString()
     }
 
-    actual fun get(service: String, account: String): String? {
+    actual fun get(
+        service: String,
+        account: String,
+    ): String? {
         val enc = prefs().getString("$service/$account", null) ?: return null
         return try {
             decrypt(enc)
@@ -70,11 +72,18 @@ actual object SecretStore {
         }
     }
 
-    actual fun set(service: String, account: String, value: String) {
+    actual fun set(
+        service: String,
+        account: String,
+        value: String,
+    ) {
         prefs().edit().putString("$service/$account", encrypt(value)).apply()
     }
 
-    actual fun delete(service: String, account: String) {
+    actual fun delete(
+        service: String,
+        account: String,
+    ) {
         prefs().edit().remove("$service/$account").apply()
     }
 }

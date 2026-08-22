@@ -5,7 +5,6 @@ import kotlin.test.assertEquals
 
 /** TerminalSelection 复制语义：折行续行不插入换行、普通行间保留换行。 */
 class TerminalSelectionTest {
-
     @Test
     fun wrappedRowsJoinWithoutNewline() {
         val b = TerminalBuffer(5, 3)

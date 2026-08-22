@@ -18,17 +18,25 @@ sealed interface HerdrAgentEvent {
     ) : HerdrAgentEvent
 
     /** agent 离开 blocked（用户回复/任务恢复）。 */
-    data class Unblocked(val paneId: String, val agent: String?) : HerdrAgentEvent
+    data class Unblocked(
+        val paneId: String,
+        val agent: String?,
+    ) : HerdrAgentEvent
 
     /** agent 开始 working。 */
-    data class Working(val paneId: String, val agent: String?) : HerdrAgentEvent
+    data class Working(
+        val paneId: String,
+        val agent: String?,
+    ) : HerdrAgentEvent
 
     /** agent 变为 idle（含 done 语义的降级显示）。 */
-    data class Idle(val paneId: String, val agent: String?) : HerdrAgentEvent
+    data class Idle(
+        val paneId: String,
+        val agent: String?,
+    ) : HerdrAgentEvent
 }
 
 class HerdrAgentStateMachine {
-
     /** pane_id → 上次快照中的状态（跨轮跟踪）。 */
     private val prev = HashMap<String, HerdrAgentStatus>()
 
@@ -52,9 +60,13 @@ class HerdrAgentStateMachine {
             val before = prev[a.paneId]
             if (before == a.agentStatus) continue
             events += when (a.agentStatus) {
-                HerdrAgentStatus.BLOCKED -> HerdrAgentEvent.Blocked(
-                    a.paneId, a.agent, a.terminalTitleStripped ?: a.terminalTitle, a.cwd,
-                )
+                HerdrAgentStatus.BLOCKED ->
+                    HerdrAgentEvent.Blocked(
+                        a.paneId,
+                        a.agent,
+                        a.terminalTitleStripped ?: a.terminalTitle,
+                        a.cwd,
+                    )
                 HerdrAgentStatus.WORKING -> HerdrAgentEvent.Working(a.paneId, a.agent)
                 HerdrAgentStatus.IDLE -> HerdrAgentEvent.Idle(a.paneId, a.agent)
                 else -> null

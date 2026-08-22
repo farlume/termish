@@ -13,27 +13,30 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import dev.termish.AppContext
 import dev.termish.util.TermLog
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString.Companion.toByteString
-import java.util.concurrent.TimeUnit
 
 @Composable
 actual fun rememberMicPermissionRequester(): MicPermissionRequester {
     val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        pendingResult?.invoke(granted)
-        pendingResult = null
-    }
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            pendingResult?.invoke(granted)
+            pendingResult = null
+        }
     return remember(context, launcher) {
         object : MicPermissionRequester {
             override fun request(onResult: (Boolean) -> Unit) {
-                val granted = ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.RECORD_AUDIO,
-                ) == PackageManager.PERMISSION_GRANTED
+                val granted =
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.RECORD_AUDIO,
+                    ) == PackageManager.PERMISSION_GRANTED
                 if (granted) {
                     onResult(true)
                 } else {
@@ -57,38 +60,50 @@ private const val SAMPLE_RATE = 16000
 actual class MicrophoneRecorder actual constructor() {
     private var record: AudioRecord? = null
     private var thread: Thread? = null
+
     @Volatile private var running = false
 
-    actual fun start(onData: (ByteArray) -> Unit, onError: (String) -> Unit): Boolean {
+    actual fun start(
+        onData: (ByteArray) -> Unit,
+        onError: (String) -> Unit,
+    ): Boolean {
         if (running) return true
-        val minBuf = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-        )
+        val minBuf =
+            AudioRecord.getMinBufferSize(
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            )
         if (minBuf <= 0) {
             onError("麦克风不可用")
             return false
         }
-        val rec = try {
-            // lint MissingPermission：此处显式复查运行时权限（UI 层已请求过）
-            val granted = ContextCompat.checkSelfPermission(
-                AppContext.get(), Manifest.permission.RECORD_AUDIO,
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) {
+        val rec =
+            try {
+                // lint MissingPermission：此处显式复查运行时权限（UI 层已请求过）
+                val granted =
+                    ContextCompat.checkSelfPermission(
+                        AppContext.get(),
+                        Manifest.permission.RECORD_AUDIO,
+                    ) == PackageManager.PERMISSION_GRANTED
+                if (!granted) {
+                    onError("麦克风权限未授予")
+                    return false
+                }
+                AudioRecord(
+                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    SAMPLE_RATE,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                    minBuf * 2,
+                )
+            } catch (e: SecurityException) {
                 onError("麦克风权限未授予")
                 return false
+            } catch (e: Exception) {
+                onError("麦克风不可用")
+                return false
             }
-            AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION,
-                SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
-                minBuf * 2,
-            )
-        } catch (e: SecurityException) {
-            onError("麦克风权限未授予")
-            return false
-        } catch (e: Exception) {
-            onError("麦克风不可用")
-            return false
-        }
         if (rec.state != AudioRecord.STATE_INITIALIZED) {
             rec.release()
             onError("麦克风不可用")
@@ -97,32 +112,33 @@ actual class MicrophoneRecorder actual constructor() {
         record = rec
         running = true
         val frameBytes = SAMPLE_RATE * 2 * FRAME_MS / 1000
-        thread = Thread {
-            try {
-                rec.startRecording()
-                val buf = ByteArray(frameBytes)
-                while (running) {
-                    val n = rec.read(buf, 0, buf.size)
-                    if (n > 0) {
-                        onData(buf.copyOf(n))
-                    }
-                }
-            } catch (e: Exception) {
-                if (running) {
-                    TermLog.w("voice") { "record error: $e" }
-                    onError("录音失败")
-                }
-            } finally {
+        thread =
+            Thread {
                 try {
-                    rec.stop()
-                } catch (_: Exception) {
+                    rec.startRecording()
+                    val buf = ByteArray(frameBytes)
+                    while (running) {
+                        val n = rec.read(buf, 0, buf.size)
+                        if (n > 0) {
+                            onData(buf.copyOf(n))
+                        }
+                    }
+                } catch (e: Exception) {
+                    if (running) {
+                        TermLog.w("voice") { "record error: $e" }
+                        onError("录音失败")
+                    }
+                } finally {
+                    try {
+                        rec.stop()
+                    } catch (_: Exception) {
+                    }
+                    rec.release()
                 }
-                rec.release()
+            }.apply {
+                name = "termish-mic"
+                start()
             }
-        }.apply {
-            name = "termish-mic"
-            start()
-        }
         return true
     }
 
@@ -139,11 +155,13 @@ actual class MicrophoneRecorder actual constructor() {
 actual fun createVoiceWebSocket(): VoiceWebSocket = OkHttpVoiceWebSocket()
 
 private class OkHttpVoiceWebSocket : VoiceWebSocket {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .pingInterval(20, TimeUnit.SECONDS)
-        .build()
+    private val client =
+        OkHttpClient
+            .Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .pingInterval(20, TimeUnit.SECONDS)
+            .build()
     private var ws: WebSocket? = null
 
     override fun connect(
@@ -154,17 +172,42 @@ private class OkHttpVoiceWebSocket : VoiceWebSocket {
         onError: (String) -> Unit,
         onClosed: () -> Unit,
     ) {
-        val req = Request.Builder().url(url).apply {
-            headers.forEach { (k, v) -> addHeader(k, v) }
-        }.build()
-        ws = client.newWebSocket(req, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) = onOpen()
-            override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) = onMessage(bytes.toByteArray())
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onError(t.message ?: t.javaClass.simpleName)
-            }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = onClosed()
-        })
+        val req =
+            Request
+                .Builder()
+                .url(url)
+                .apply {
+                    headers.forEach { (k, v) -> addHeader(k, v) }
+                }.build()
+        ws =
+            client.newWebSocket(
+                req,
+                object : WebSocketListener() {
+                    override fun onOpen(
+                        webSocket: WebSocket,
+                        response: Response,
+                    ) = onOpen()
+
+                    override fun onMessage(
+                        webSocket: WebSocket,
+                        bytes: okio.ByteString,
+                    ) = onMessage(bytes.toByteArray())
+
+                    override fun onFailure(
+                        webSocket: WebSocket,
+                        t: Throwable,
+                        response: Response?,
+                    ) {
+                        onError(t.message ?: t.javaClass.simpleName)
+                    }
+
+                    override fun onClosed(
+                        webSocket: WebSocket,
+                        code: Int,
+                        reason: String,
+                    ) = onClosed()
+                },
+            )
     }
 
     override fun send(bytes: ByteArray) {

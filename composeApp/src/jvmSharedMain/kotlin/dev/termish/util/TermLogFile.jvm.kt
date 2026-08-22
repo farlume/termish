@@ -3,7 +3,9 @@ package dev.termish.util
 import java.io.File
 
 /** JVM（Android/desktop）：java.io.File 委托。 */
-internal actual class TermLogFile actual constructor(private val path: String) {
+internal actual class TermLogFile actual constructor(
+    private val path: String,
+) {
     private val file = File(path)
 
     actual fun exists(): Boolean = file.exists()

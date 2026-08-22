@@ -9,8 +9,6 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.get
 import kotlinx.cinterop.usePinned
 import platform.AVFAudio.AVAudioEngine
-import platform.AVFAudio.AVAudioFormat
-import platform.AVFAudio.AVAudioPCMBuffer
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryRecord
 import platform.AVFAudio.setActive
@@ -22,10 +20,10 @@ import platform.Foundation.NSURLSession
 import platform.Foundation.NSURLSessionConfiguration
 import platform.Foundation.NSURLSessionDelegateProtocol
 import platform.Foundation.NSURLSessionTask
+import platform.Foundation.NSURLSessionWebSocketCloseCodeNormalClosure
 import platform.Foundation.NSURLSessionWebSocketDelegateProtocol
 import platform.Foundation.NSURLSessionWebSocketMessage
 import platform.Foundation.NSURLSessionWebSocketMessageTypeData
-import platform.Foundation.NSURLSessionWebSocketCloseCodeNormalClosure
 import platform.Foundation.NSURLSessionWebSocketTask
 import platform.Foundation.create
 import platform.darwin.NSInteger
@@ -33,7 +31,6 @@ import platform.darwin.NSObject
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
 import platform.posix.memcpy
-import kotlin.math.min
 
 @Composable
 actual fun rememberMicPermissionRequester(): MicPermissionRequester {
@@ -64,13 +61,18 @@ private const val FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS / 1000
 @OptIn(ExperimentalForeignApi::class)
 actual class MicrophoneRecorder actual constructor() {
     private var engine: AVAudioEngine? = null
+
     @Volatile private var running = false
     private val pending = ArrayList<Short>()
 
-    actual fun start(onData: (ByteArray) -> Unit, onError: (String) -> Unit): Boolean {
+    actual fun start(
+        onData: (ByteArray) -> Unit,
+        onError: (String) -> Unit,
+    ): Boolean {
         if (running) return true
         val session = AVAudioSession.sharedInstance()
-        if (session.recordPermission() != 1uL /* AVAudioSessionRecordPermissionGranted */) {
+        // AVAudioSessionRecordPermissionGranted
+        if (session.recordPermission() != 1uL) {
             onError("麦克风权限未授予")
             return false
         }
@@ -176,30 +178,47 @@ private class IosVoiceWebSocket : VoiceWebSocket {
         onError: (String) -> Unit,
         onClosed: () -> Unit,
     ) {
-        val nsUrl = NSURL.URLWithString(url) ?: run {
-            onError("URL 无效")
-            return
-        }
+        val nsUrl =
+            NSURL.URLWithString(url) ?: run {
+                onError("URL 无效")
+                return
+            }
         val config = NSURLSessionConfiguration.defaultSessionConfiguration()
         config.timeoutIntervalForRequest = 10.0
         // WebSocket 握手鉴权头：session 配置的 HTTPAdditionalHeaders 会随握手发送
         config.HTTPAdditionalHeaders = headers.toMap() as Map<Any?, *>
-        val delegate = object : NSObject(), NSURLSessionWebSocketDelegateProtocol,
-            NSURLSessionDelegateProtocol {
-            override fun URLSession(session: NSURLSession, webSocketTask: NSURLSessionWebSocketTask, didOpenWithProtocol: String?) {
-                onOpen()
-            }
+        val delegate =
+            object :
+                NSObject(),
+                NSURLSessionWebSocketDelegateProtocol,
+                NSURLSessionDelegateProtocol {
+                override fun URLSession(
+                    session: NSURLSession,
+                    webSocketTask: NSURLSessionWebSocketTask,
+                    didOpenWithProtocol: String?,
+                ) {
+                    onOpen()
+                }
 
-            override fun URLSession(session: NSURLSession, webSocketTask: NSURLSessionWebSocketTask, didCloseWithCode: NSInteger, reason: NSData?) {
-                onClosed()
-            }
+                override fun URLSession(
+                    session: NSURLSession,
+                    webSocketTask: NSURLSessionWebSocketTask,
+                    didCloseWithCode: NSInteger,
+                    reason: NSData?,
+                ) {
+                    onClosed()
+                }
 
-            override fun URLSession(session: NSURLSession, task: NSURLSessionTask, didCompleteWithError: NSError?) {
-                if (didCompleteWithError != null) {
-                    onError(didCompleteWithError.localizedDescription ?: "网络错误")
+                override fun URLSession(
+                    session: NSURLSession,
+                    task: NSURLSessionTask,
+                    didCompleteWithError: NSError?,
+                ) {
+                    if (didCompleteWithError != null) {
+                        onError(didCompleteWithError.localizedDescription ?: "网络错误")
+                    }
                 }
             }
-        }
         val s = NSURLSession.sessionWithConfiguration(config, delegate, null)
         session = s
         val req = NSMutableURLRequest(uRL = nsUrl)
@@ -209,7 +228,10 @@ private class IosVoiceWebSocket : VoiceWebSocket {
         receiveLoop(t, onMessage)
     }
 
-    private fun receiveLoop(t: NSURLSessionWebSocketTask, onMessage: (ByteArray) -> Unit) {
+    private fun receiveLoop(
+        t: NSURLSessionWebSocketTask,
+        onMessage: (ByteArray) -> Unit,
+    ) {
         t.receiveMessageWithCompletionHandler { message, error ->
             if (error != null || message == null) return@receiveMessageWithCompletionHandler
             if (message.type == NSURLSessionWebSocketMessageTypeData) {
@@ -237,9 +259,10 @@ private class IosVoiceWebSocket : VoiceWebSocket {
     @OptIn(ExperimentalForeignApi::class)
     override fun send(bytes: ByteArray) {
         if (bytes.isEmpty()) return
-        val data = bytes.usePinned { pinned ->
-            NSData.create(bytes = pinned.addressOf(0), length = bytes.size.toULong())
-        }
+        val data =
+            bytes.usePinned { pinned ->
+                NSData.create(bytes = pinned.addressOf(0), length = bytes.size.toULong())
+            }
         task?.sendMessage(NSURLSessionWebSocketMessage(data)) { _ -> }
     }
 

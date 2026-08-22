@@ -12,26 +12,46 @@ import kotlin.test.assertTrue
  * - payload_msg.result 为**对象** {text, utterances, additions}
  */
 class VolcAsrProtocolTest {
-
-    private fun be32(v: Int): ByteArray = byteArrayOf(
-        (v ushr 24).toByte(), (v ushr 16).toByte(), (v ushr 8).toByte(), v.toByte(),
-    )
+    private fun be32(v: Int): ByteArray =
+        byteArrayOf(
+            (v ushr 24).toByte(),
+            (v ushr 16).toByte(),
+            (v ushr 8).toByte(),
+            v.toByte(),
+        )
 
     /** 构造服务端帧：flags 控制 sequence 段与最终包标记。 */
-    private fun serverFrame(flags: Int, sequence: Int?, payload: String): ByteArray {
+    private fun serverFrame(
+        flags: Int,
+        sequence: Int?,
+        payload: String,
+    ): ByteArray {
         val bytes = ByteArray(4) { 0 }
         bytes[0] = 0x11
         bytes[1] = ((0x9 shl 4) or flags).toByte()
         bytes[2] = 0x10 // JSON, no compression
-        val body = if (sequence != null) be32(sequence) + be32(payload.toByteArray().size) else be32(payload.toByteArray().size)
+        val body =
+            if (sequence !=
+                null
+            ) {
+                be32(sequence) + be32(payload.toByteArray().size)
+            } else {
+                be32(payload.toByteArray().size)
+            }
         return bytes + body + payload.encodeToByteArray()
     }
 
     /** 实测 bigmodel_async 响应：result 为顶层对象（无 payload_msg 包裹）。 */
-    private fun realPayload(text: String, definite: Boolean = false, prefetch: Boolean = false): String =
-        """{"audio_info":{"duration":4889},"result":{"additions":{"log_id":"x"},"prefetch":$prefetch,
-            "text":"$text","utterances":[{"additions":{"fixed_prefix_result":"","source":"stream"},
-            "definite":$definite,"end_time":4660,"start_time":40,"text":"$text","words":[]}]}}""".trimIndent()
+    private fun realPayload(
+        text: String,
+        definite: Boolean = false,
+        prefetch: Boolean = false,
+    ): String =
+        """
+        {"audio_info":{"duration":4889},"result":{"additions":{"log_id":"x"},"prefetch":$prefetch,
+        "text":"$text","utterances":[{"additions":{"fixed_prefix_result":"","source":"stream"},
+        "definite":$definite,"end_time":4660,"start_time":40,"text":"$text","words":[]}]}}
+        """.trimIndent()
 
     @Test
     fun `frame prepends big-endian payload size`() {
@@ -41,7 +61,7 @@ class VolcAsrProtocolTest {
         assertEquals(0x11, f[0].toInt() and 0xff)
         assertEquals(0x20, f[1].toInt() and 0xff) // audio only request, flags=0
         assertEquals(0x00, f[2].toInt() and 0xff) // no serialization / no compression
-        assertEquals(0, (f[4].toInt() and 0xff))  // size 大端
+        assertEquals(0, (f[4].toInt() and 0xff)) // size 大端
         assertEquals(0, (f[5].toInt() and 0xff))
         assertEquals(0, (f[6].toInt() and 0xff))
         assertEquals(5, (f[7].toInt() and 0xff))
@@ -87,10 +107,12 @@ class VolcAsrProtocolTest {
     @Test
     fun `real response object result parses final text`() {
         // 实测结构：flags=3 最终包、result 为对象、无 code 字段
-        val frame = serverFrame(
-            flags = 3, sequence = 13,
-            payload = realPayload("你好，这是语音识别功能测试，请把这句话转换成文字。", definite = true),
-        )
+        val frame =
+            serverFrame(
+                flags = 3,
+                sequence = 13,
+                payload = realPayload("你好，这是语音识别功能测试，请把这句话转换成文字。", definite = true),
+            )
         val parsed = VolcAsrProtocol.parseServerFrame(frame)
         assertTrue(parsed.isLastPackage) // flags=3 → 最终包
         assertEquals(

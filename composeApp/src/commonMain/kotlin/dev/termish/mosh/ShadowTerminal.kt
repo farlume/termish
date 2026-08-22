@@ -1,7 +1,7 @@
 package dev.termish.mosh
 
-import dev.termish.term.TerminalBuffer
 import dev.termish.term.CellAttr
+import dev.termish.term.TerminalBuffer
 import dev.termish.term.TerminalEmulator
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -48,31 +48,30 @@ internal class ShadowTerminal internal constructor(
     fun applyDiff(diff: ByteArray) {
         runBlocking {
             lock.withLock {
-            for (ev in decodeHostMessage(diff)) {
-                when (ev) {
-                    is HostEventIn.HostBytes -> emulator.write(ev.bytes)
-                    is HostEventIn.Resize -> buffer.resize(ev.width, ev.height)
-                    is HostEventIn.EchoAck -> if (ev.echoAckNum > echoAck) echoAck = ev.echoAckNum
+                for (ev in decodeHostMessage(diff)) {
+                    when (ev) {
+                        is HostEventIn.HostBytes -> emulator.write(ev.bytes)
+                        is HostEventIn.Resize -> buffer.resize(ev.width, ev.height)
+                        is HostEventIn.EchoAck -> if (ev.echoAckNum > echoAck) echoAck = ev.echoAckNum
+                    }
                 }
-            }
             }
         }
     }
 
     /** 分叉：深拷贝当前状态（mosh 收端时间戳状态复制）。 */
-    fun fork(): ShadowTerminal {
-        return runBlocking {
+    fun fork(): ShadowTerminal =
+        runBlocking {
             lock.withLock {
-            // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
-            val buf = buffer.shallowFork()
-            val emu = TerminalEmulator(buf)
-            emu.onTitleChange = onTitleChange
-            emu.onClipboardWrite = onClipboardWrite
-            // 影子终端不应对外回写（DSR 应答等），置空即可
-            ShadowTerminal(buf, emu, echoAck)
+                // COW 浅分叉：行对象共享、写时复制，把每次状态更新的成本从 O(单元格) 降到 O(行数)
+                val buf = buffer.shallowFork()
+                val emu = TerminalEmulator(buf)
+                emu.onTitleChange = onTitleChange
+                emu.onClipboardWrite = onClipboardWrite
+                // 影子终端不应对外回写（DSR 应答等），置空即可
+                ShadowTerminal(buf, emu, echoAck)
             }
         }
-    }
 
     /** 本地预测回显：在确认态的 COW 分叉上重放用户输入的白名单效果（mosh
      *  逐字节预测的简化版）。支持：
@@ -82,12 +81,16 @@ internal class ShadowTerminal internal constructor(
      *  - 左/右方向键（CSI/SS3 C、D）：光标移动
      *  其余控制字节 → 返回 null（放弃本段预测，对齐 mosh 的保守策略）。
      *  仅用于显示，不进入 SSP 状态机；echo_ack 确认后即被丢弃。 */
-    internal fun predictInput(bytes: ByteArray, underline: Boolean): ShadowTerminal? {
+    internal fun predictInput(
+        bytes: ByteArray,
+        underline: Boolean,
+    ): ShadowTerminal? {
         val fork = fork()
         val buf = fork.buffer
         if (underline) buf.currentAttrs = buf.currentAttrs or CellAttr.UNDERLINE
         var i = 0
         var textStart = 0
+
         fun flushText(until: Int) {
             if (until > textStart) fork.emulator.write(bytes.copyOfRange(textStart, until))
         }
@@ -114,9 +117,10 @@ internal class ShadowTerminal internal constructor(
                 }
                 b == 0x1b -> {
                     flushText(i)
-                    val ok = i + 2 < bytes.size &&
-                        (bytes[i + 1] == '['.code.toByte() || bytes[i + 1] == 'O'.code.toByte()) &&
-                        (bytes[i + 2] == 'C'.code.toByte() || bytes[i + 2] == 'D'.code.toByte())
+                    val ok =
+                        i + 2 < bytes.size &&
+                            (bytes[i + 1] == '['.code.toByte() || bytes[i + 1] == 'O'.code.toByte()) &&
+                            (bytes[i + 2] == 'C'.code.toByte() || bytes[i + 2] == 'D'.code.toByte())
                     if (!ok) return null
                     fork.emulator.write(bytes.copyOfRange(i, i + 3))
                     i += 3
@@ -133,7 +137,10 @@ internal class ShadowTerminal internal constructor(
     companion object {
         private val CR_LF = byteArrayOf(0x0d, 0x0a)
 
-        fun create(cols: Int, rows: Int): ShadowTerminal {
+        fun create(
+            cols: Int,
+            rows: Int,
+        ): ShadowTerminal {
             // 影子必须完整镜像服务端 framebuffer（mosh Framebuffer 无滚动上限）；
             // UI 渲染层的回看上限由 uiBuffer 自行裁剪，影子不可截断，否则 diff 会错位
             val buf = TerminalBuffer(cols, rows, maxScrollbackLines = Int.MAX_VALUE)

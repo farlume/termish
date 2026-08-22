@@ -3,8 +3,9 @@ package dev.termish.term
 /**
  * 文本选择：基于缓冲的绝对行坐标。用于终端内的长按/拖动选择与复制。
  */
-class TerminalSelection(private val buffer: TerminalBuffer) {
-
+class TerminalSelection(
+    private val buffer: TerminalBuffer,
+) {
     var startRow = 0
         private set
     var startCol = 0
@@ -17,7 +18,10 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
     var isActive: Boolean = false
         private set
 
-    fun start(row: Int, col: Int) {
+    fun start(
+        row: Int,
+        col: Int,
+    ) {
         startRow = row
         startCol = col
         endRow = row
@@ -25,7 +29,10 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
         isActive = true
     }
 
-    fun extend(row: Int, col: Int) {
+    fun extend(
+        row: Int,
+        col: Int,
+    ) {
         endRow = row
         endCol = col
     }
@@ -34,7 +41,10 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
         isActive = false
     }
 
-    fun contains(row: Int, col: Int): Boolean {
+    fun contains(
+        row: Int,
+        col: Int,
+    ): Boolean {
         if (!isActive) return false
         val (r1, c1, r2, c2) = normalized()
         if (row < r1 || row > r2) return false
@@ -43,13 +53,12 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
         return col in from..to
     }
 
-    private fun normalized(): SelectionBounds {
-        return if (startRow < endRow || (startRow == endRow && startCol <= endCol)) {
+    private fun normalized(): SelectionBounds =
+        if (startRow < endRow || (startRow == endRow && startCol <= endCol)) {
             SelectionBounds(startRow, startCol, endRow, endCol)
         } else {
             SelectionBounds(endRow, endCol, startRow, startCol)
         }
-    }
 
     fun selectedText(): String {
         if (!isActive) return ""
@@ -61,17 +70,18 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
             val line = buffer.absLine(r)
             val from = if (r == r1) c1.coerceIn(0, buffer.cols - 1) else 0
             val to = if (r == r2) c2.coerceIn(0, buffer.cols - 1) else buffer.cols - 1
-            val rowText = if (from > to) {
-                ""
-            } else {
-                val sbRow = StringBuilder()
-                for (c in from..to) {
-                    val cell = line.cells[c]
-                    if (cell.isWideTail) continue
-                    sbRow.appendCodePointSafely(cell.codePoint)
+            val rowText =
+                if (from > to) {
+                    ""
+                } else {
+                    val sbRow = StringBuilder()
+                    for (c in from..to) {
+                        val cell = line.cells[c]
+                        if (cell.isWideTail) continue
+                        sbRow.appendCodePointSafely(cell.codePoint)
+                    }
+                    sbRow.toString().trimEnd()
                 }
-                sbRow.toString().trimEnd()
-            }
             // wrapped 是行尾标记：上一行自动折行时置位。
             // 续行直接接续上一段，不插入换行；但选区若从续行中间开始，
             // 则以该行为新段落起始（前面未选中的内容不接进来）。
@@ -86,7 +96,12 @@ class TerminalSelection(private val buffer: TerminalBuffer) {
         return sb.toString().trimEnd()
     }
 
-    private data class SelectionBounds(val r1: Int, val c1: Int, val r2: Int, val c2: Int)
+    private data class SelectionBounds(
+        val r1: Int,
+        val c1: Int,
+        val r2: Int,
+        val c2: Int,
+    )
 }
 
 private fun StringBuilder.appendCodePointSafely(cp: Int) {

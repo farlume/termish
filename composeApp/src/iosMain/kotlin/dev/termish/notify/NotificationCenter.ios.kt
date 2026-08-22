@@ -13,15 +13,21 @@ import platform.UserNotifications.UNUserNotificationCenter
 private val center: UNUserNotificationCenter get() = UNUserNotificationCenter.currentNotificationCenter()
 
 /** iOS：本地通知（APNs 不需要——通知都来自 SSH 连接内事件）。 */
-actual fun showPlatformNotification(id: Int, title: String, body: String, hostId: String?) {
+actual fun showPlatformNotification(
+    id: Int,
+    title: String,
+    body: String,
+    hostId: String?,
+) {
     val content = UNMutableNotificationContent()
     content.setTitle(title)
     content.setBody(body)
-    val request = UNNotificationRequest.requestWithIdentifier(
-        "termish-$id",
-        content,
-        null,
-    )
+    val request =
+        UNNotificationRequest.requestWithIdentifier(
+            "termish-$id",
+            content,
+            null,
+        )
     center.addNotificationRequest(request, null)
 }
 

@@ -1,7 +1,7 @@
 package dev.termish.data
 
-import kotlinx.serialization.Serializable
 import kotlin.random.Random
+import kotlinx.serialization.Serializable
 
 /** 主机的认证方式。 */
 @Serializable

@@ -11,7 +11,6 @@ import dev.termish.util.base64Encode
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 /** SFTP 会话条目（与终端会话平级管理，跨页面存活）。
  *  [session] 可空：进程重启后恢复的条目未连接（session=null），
@@ -38,12 +37,13 @@ class SessionManager(
     /** 连接错误文案提供器（随语言切换取最新 AppStrings）。 */
     private val strings: () -> AppStrings = { appStringsFor("en") },
 ) {
-
     val sessions = mutableStateListOf<TerminalController>()
+
     /** SFTP 会话（与终端会话同源管理：连接页可见、卡片 Close 可关、删除主机连带释放）。 */
     val sftpSessions = mutableStateListOf<SftpSessionEntry>()
 
     private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
+
     /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
     private val activeAtBackground = HashSet<String>()
 
@@ -68,8 +68,7 @@ class SessionManager(
                 it.host.id in ids &&
                     it.autoReconnectEnabled &&
                     (it.status == ConnStatus.CLOSED || it.status == ConnStatus.ERROR)
-            }
-            .forEach { it.reconnect() }
+            }.forEach { it.reconnect() }
     }
 
     /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。
@@ -80,7 +79,9 @@ class SessionManager(
         onSystemDetected: ((Host) -> Unit)? = null,
     ) {
         if (sessions.isNotEmpty()) return
-        TermLog.i("session") { "restoreRecent terminals=${repository.loadRecentSessionHostIds().size} sftp=${repository.loadRecentSftpEntries().size}" }
+        TermLog.i("session") {
+            "restoreRecent terminals=${repository.loadRecentSessionHostIds().size} sftp=${repository.loadRecentSftpEntries().size}"
+        }
         val byId = hosts.associateBy { it.id }
         repository.loadRecentSessionHostIds().forEach { id ->
             val host = byId[id] ?: return@forEach
@@ -103,7 +104,7 @@ class SessionManager(
     private fun persist() {
         repository.saveRecentSessionHostIds(sessions.map { it.host.id })
         repository.saveRecentSftpEntries(
-            sftpSessions.map { RecentSftpEntry(it.host.id, it.uiState.path) }
+            sftpSessions.map { RecentSftpEntry(it.host.id, it.uiState.path) },
         )
     }
 
@@ -154,7 +155,11 @@ class SessionManager(
      * 每主机单会话：已有条目则替换（保留浏览状态，重连语义一致）——
      * 否则进程恢复条目 + 新连接会并存两个同主机条目。
      */
-    fun addSftp(host: Host, session: SftpSession, connectionToken: Any): SftpSessionEntry {
+    fun addSftp(
+        host: Host,
+        session: SftpSession,
+        connectionToken: Any,
+    ): SftpSessionEntry {
         val existing = sftpSessions.firstOrNull { it.host.id == host.id }
         val entry = SftpSessionEntry(host, session, existing?.uiState ?: SftpUiState(), connectionToken)
         // 先摘除旧条目（登记新代次）再 close 旧连接：close 同步触发旧连接的
@@ -177,7 +182,11 @@ class SessionManager(
      * SFTP 断线重连：替换条目中的 session（uiState 保留，浏览路径/列表不丢）。
      * 旧 session 先 close 释放连接；重连失败由调用方负责提示。
      */
-    fun reconnectSftp(entry: SftpSessionEntry, newSession: SftpSession, connectionToken: Any) {
+    fun reconnectSftp(
+        entry: SftpSessionEntry,
+        newSession: SftpSession,
+        connectionToken: Any,
+    ) {
         TermLog.i("sftp") { "reconnect ${entry.host.name}" }
         val idx = sftpSessions.indexOf(entry)
         if (idx >= 0) {
@@ -194,27 +203,26 @@ class SessionManager(
         }
     }
 
-    /** 关闭并移除 SFTP 会话。 */
     /** 断开 SFTP 会话但保留条目（与终端会话同语义：灰点可重连，浏览状态保留）。 */
-fun disconnectSftp(entry: SftpSessionEntry) {
-    // 先置空 session 再 close：close 同步触发 onClosed，此时条目已无 session，
-    // 回调查不到可标记对象（disconnected 由这里主动置位，不受旧回调干扰）
-    val idx = sftpSessions.indexOf(entry)
-    if (idx >= 0) {
-        sftpSessions[idx] = SftpSessionEntry(entry.host, null, entry.uiState)
-        entry.uiState.disconnected = true
-        // 用户主动断开：不自动重连（进 tab 显示断开 banner，手动点重连）；
-        // 意外断链（onClosed 路径）仍保留自动重连一次
-        entry.uiState.autoReconnectAttempted = true
+    fun disconnectSftp(entry: SftpSessionEntry) {
+        // 先置空 session 再 close：close 同步触发 onClosed，此时条目已无 session，
+        // 回调查不到可标记对象（disconnected 由这里主动置位，不受旧回调干扰）
+        val idx = sftpSessions.indexOf(entry)
+        if (idx >= 0) {
+            sftpSessions[idx] = SftpSessionEntry(entry.host, null, entry.uiState)
+            entry.uiState.disconnected = true
+            // 用户主动断开：不自动重连（进 tab 显示断开 banner，手动点重连）；
+            // 意外断链（onClosed 路径）仍保留自动重连一次
+            entry.uiState.autoReconnectAttempted = true
+        }
+        try {
+            entry.session?.close()
+        } catch (_: Exception) {
+        }
+        persist()
     }
-    try {
-        entry.session?.close()
-    } catch (_: Exception) {
-    }
-    persist()
-}
 
-fun closeSftp(entry: SftpSessionEntry) {
+    fun closeSftp(entry: SftpSessionEntry) {
         // 先移除再 close：close 同步触发 onClosed，届时条目已不在列表，
         // 不会误标/误日志
         sftpSessions.remove(entry)
@@ -241,10 +249,13 @@ fun closeSftp(entry: SftpSessionEntry) {
 }
 
 /** 凭据/连接参数/启动命令签名：任一变化即视为旧会话过期（编辑主机后需重建会话）。 */
-internal fun credentialSignature(host: Host, password: String?, privateKeyPem: String?): String {
+internal fun credentialSignature(
+    host: Host,
+    password: String?,
+    privateKeyPem: String?,
+): String {
     // 敏感字段只保留散列：避免明文密码/私钥以签名串形式常驻内存
-    fun hash(s: String?): String =
-        if (s == null) "-" else base64Encode(Sha256.digest(s.encodeToByteArray()))
+    fun hash(s: String?): String = if (s == null) "-" else base64Encode(Sha256.digest(s.encodeToByteArray()))
     return "${host.username}@${host.hostname}:${host.port}|${host.authMethod}|" +
         "${hash(password)}|${hash(privateKeyPem)}|" +
         "${host.startupCommand}|${host.connectionMode}|${host.moshUdpPort}|${host.moshThemeSync}"

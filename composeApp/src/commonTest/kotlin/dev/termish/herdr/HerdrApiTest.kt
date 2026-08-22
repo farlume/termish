@@ -15,27 +15,28 @@ import kotlin.test.assertNull
  * stderr + exitCode。
  */
 class HerdrApiTest {
-
     // ---- parseCommandError 黄金用例（真实 CLI 输出样本）----
 
     @Test
     fun successOutputIsNull() {
-        val out = CommandOutput(
-            stdout = """{"id":"cli:agent:prompt","result":{"agent":{"agent":"pi","agent_status":"done","pane_id":"wW:p2"}}}""",
-            stderr = "",
-            exitCode = 0,
-        )
+        val out =
+            CommandOutput(
+                stdout = """{"id":"cli:agent:prompt","result":{"agent":{"agent":"pi","agent_status":"done","pane_id":"wW:p2"}}}""",
+                stderr = "",
+                exitCode = 0,
+            )
         assertNull(HerdrApi.parseCommandError(out))
     }
 
     @Test
     fun agentNotFoundErrorOnStderr() {
         // 实测：herdr agent prompt 无效 pane → exit 1 + stderr error JSON
-        val out = CommandOutput(
-            stdout = "",
-            stderr = """{"error":{"code":"agent_not_found","message":"agent target wW:pxxx not found"},"id":"cli:agent:prompt"}""",
-            exitCode = 1,
-        )
+        val out =
+            CommandOutput(
+                stdout = "",
+                stderr = """{"error":{"code":"agent_not_found","message":"agent target wW:pxxx not found"},"id":"cli:agent:prompt"}""",
+                exitCode = 1,
+            )
         val err = HerdrApi.parseCommandError(out)
         assertEquals("agent_not_found", err?.code)
         assertEquals("agent target wW:pxxx not found", err?.message)
@@ -44,11 +45,12 @@ class HerdrApiTest {
     @Test
     fun paneNotFoundErrorOnStderr() {
         // 实测：herdr pane read 无效 pane → exit 1 + stderr error JSON
-        val out = CommandOutput(
-            stdout = "",
-            stderr = """{"error":{"code":"pane_not_found","message":"pane wW:pxxx not found"},"id":"cli:pane:read"}""",
-            exitCode = 1,
-        )
+        val out =
+            CommandOutput(
+                stdout = "",
+                stderr = """{"error":{"code":"pane_not_found","message":"pane wW:pxxx not found"},"id":"cli:pane:read"}""",
+                exitCode = 1,
+            )
         val err = HerdrApi.parseCommandError(out)
         assertEquals("pane_not_found", err?.code)
         assertEquals("pane wW:pxxx not found", err?.message)
@@ -57,11 +59,12 @@ class HerdrApiTest {
     @Test
     fun errorJsonOnStdoutIsAlsoRecognized() {
         // 兼容：错误 JSON 出现在 stdout 时同样识别（部分 CLI 版本/命令）
-        val out = CommandOutput(
-            stdout = """{"error":{"code":"not_found","message":"pane not found"},"id":"req_1"}""",
-            stderr = "",
-            exitCode = 1,
-        )
+        val out =
+            CommandOutput(
+                stdout = """{"error":{"code":"not_found","message":"pane not found"},"id":"req_1"}""",
+                stderr = "",
+                exitCode = 1,
+            )
         val err = HerdrApi.parseCommandError(out)
         assertEquals("not_found", err?.code)
     }

@@ -1,7 +1,6 @@
 package dev.termish.mosh
 
 import dev.termish.util.TermLog
-
 import dev.termish.util.ioDispatcher
 import kotlin.concurrent.Volatile
 import kotlin.time.TimeSource
@@ -17,8 +16,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 enum class MoshExitReason {
     /** 会话事件循环协程异常退出（底层消息见 TermLog）。 */
     SESSION_ERROR,
+
     /** still_connecting 阶段 15s 未收到对端首包（UDP 端口不可达等）。 */
     CONNECT_TIMEOUT,
+
     /** 正常关闭（对端 ack shutdown / 我方确认对端 shutdown / shutdown 超时）。 */
     NORMAL,
 }
@@ -33,6 +34,7 @@ enum class MoshExitReason {
  * 渲染模型：直接维护服务端状态的影子终端，状态推进时把影子 buffer
  * 内容同步给 UI buffer（[onStateUpdate]），不走 ANSI 字节流。
  */
+@Suppress("ktlint:standard:property-naming") // mosh 端口轮换参数
 class KmpMoshSession(
     ip: String,
     port: Int,
@@ -57,14 +59,26 @@ class KmpMoshSession(
         // 但视图必须向 UI 暴露影子 buffer 类型——全限定是唯一不违纪律的写法。
         val buffer: dev.termish.term.TerminalBuffer get() = shadow.buffer
         val echoAck: ULong get() = shadow.echoAck
+
         /** 影子 buffer 读写锁：UI 拷贝前先拿锁，与会话协程写入互斥。 */
         internal val lock: kotlinx.coroutines.sync.Mutex get() = shadow.lock
     }
 
     private sealed class Event {
-        class Packet(val data: ByteArray, val congestionExperienced: Boolean) : Event()
-        class Input(val data: ByteArray) : Event()
-        class Resize(val cols: Int, val rows: Int) : Event()
+        class Packet(
+            val data: ByteArray,
+            val congestionExperienced: Boolean,
+        ) : Event()
+
+        class Input(
+            val data: ByteArray,
+        ) : Event()
+
+        class Resize(
+            val cols: Int,
+            val rows: Int,
+        ) : Event()
+
         object Close : Event()
     }
 
@@ -74,6 +88,7 @@ class KmpMoshSession(
     private val MAX_PORTS_OPEN = 10
 
     private val mark = TimeSource.Monotonic.markNow()
+
     private fun nowMs(): Long = mark.elapsedNow().inWholeMilliseconds
 
     private val initialCols = columns
@@ -88,28 +103,29 @@ class KmpMoshSession(
     private val events = Channel<Event>(Channel.UNLIMITED)
     private val prediction = PredictionLayer(::nowMs)
 
-    private val transport = MoshTransport(
-        // MTU 地址族按解析结果取（mosh set_MTU(sa_family)）：域名解析到 AAAA 时
-        // 用 hostname 字符串判断会错选 IPv4 MTU，隧道/PPPoE 路径上可能丢包
-        ipv6Path = sockets.first().isIpv6,
-        initialCols = columns,
-        initialRows = rows,
-        key = key,
-        nowMs = ::nowMs,
-        sendDatagram = { data ->
-            try {
-                sendSocket.send(data)
-            } catch (e: Exception) {
-                TermLog.w("mosh") { "UDP 发送失败: ${e.message}" }
-                SendResult.FAILED
-            }
-        },
-        onNewState = { shadow ->
-            // 确认态到达：echo_ack 收编已确认输入，存活预测在新确认态上重放
-            prediction.onConfirmed(shadow)
-            pushToUi(prediction.currentForDisplay() ?: shadow)
-        },
-    )
+    private val transport =
+        MoshTransport(
+            // MTU 地址族按解析结果取（mosh set_MTU(sa_family)）：域名解析到 AAAA 时
+            // 用 hostname 字符串判断会错选 IPv4 MTU，隧道/PPPoE 路径上可能丢包
+            ipv6Path = sockets.first().isIpv6,
+            initialCols = columns,
+            initialRows = rows,
+            key = key,
+            nowMs = ::nowMs,
+            sendDatagram = { data ->
+                try {
+                    sendSocket.send(data)
+                } catch (e: Exception) {
+                    TermLog.w("mosh") { "UDP 发送失败: ${e.message}" }
+                    SendResult.FAILED
+                }
+            },
+            onNewState = { shadow ->
+                // 确认态到达：echo_ack 收编已确认输入，存活预测在新确认态上重放
+                prediction.onConfirmed(shadow)
+                pushToUi(prediction.currentForDisplay() ?: shadow)
+            },
+        )
 
     private fun pushToUi(shadow: ShadowTerminal) {
         shadow.onTitleChange = { t -> titleCallback(t) }
@@ -124,6 +140,7 @@ class KmpMoshSession(
     /** 仅事件循环线程读写；close 后由循环线程置 false。跨线程读（close/UI）走 @Volatile。 */
     @Volatile
     private var active = true
+
     @Volatile
     private var peerSeen = false
     private var startedAt = 0L
@@ -143,53 +160,57 @@ class KmpMoshSession(
         // 初始窗口尺寸随第一帧上报（初始 Resize 入队）
         events.trySend(Event.Resize(initialCols, initialRows))
         launchReader(sendSocket)
-        loopJob = scope.launch(Dispatchers.Default) {
-            try {
-                loop()
-            } catch (e: Exception) {
-                if (active) {
-                    active = false
-                    TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
-                    onExit(MoshExitReason.SESSION_ERROR)
+        loopJob =
+            scope.launch(Dispatchers.Default) {
+                try {
+                    loop()
+                } catch (e: Exception) {
+                    if (active) {
+                        active = false
+                        TermLog.e("mosh") { "会话异常: ${e.stackTraceToString()}" }
+                        onExit(MoshExitReason.SESSION_ERROR)
+                    }
                 }
             }
-        }
     }
 
     /** 每个 socket 一个收包协程：阻塞读，投递后由事件循环统一处理。 */
     private fun launchReader(s: MoshUdpSocket) {
-        val job = scope.launch(ioDispatcher()) {
-            try {
-                // 取消检查：iOS 上 close 后 receive 走超时返回 null，不检查的话
-                // 协程在 session 关闭后永久 60s 空转（coroutineContext.isActive：
-                // 避开与本类 isActive() 成员函数的命名冲突）
-                while (coroutineContext.isActive) {
-                    val dg = s.receive(60_000) ?: continue
-                    events.send(Event.Packet(dg.data, dg.congestionExperienced))
+        val job =
+            scope.launch(ioDispatcher()) {
+                try {
+                    // 取消检查：iOS 上 close 后 receive 走超时返回 null，不检查的话
+                    // 协程在 session 关闭后永久 60s 空转（coroutineContext.isActive：
+                    // 避开与本类 isActive() 成员函数的命名冲突）
+                    while (coroutineContext.isActive) {
+                        val dg = s.receive(60_000) ?: continue
+                        events.send(Event.Packet(dg.data, dg.congestionExperienced))
+                    }
+                } catch (_: Exception) {
+                    // socket 关闭或错误：事件循环靠定时器/心跳退出，无需额外通知
                 }
-            } catch (_: Exception) {
-                // socket 关闭或错误：事件循环靠定时器/心跳退出，无需额外通知
             }
-        }
         socketJobs.addLast(job)
     }
 
     private suspend fun loop() {
         while (active) {
-            val waitMs = transport.waitTime().let {
-                when {
-                    it == Int.MAX_VALUE -> 1000L // 无定时需求时周期醒来驱动心跳
-                    it <= 0 -> 0L
-                    else -> it.coerceAtMost(1000).toLong()
+            val waitMs =
+                transport.waitTime().let {
+                    when {
+                        it == Int.MAX_VALUE -> 1000L // 无定时需求时周期醒来驱动心跳
+                        it <= 0 -> 0L
+                        else -> it.coerceAtMost(1000).toLong()
+                    }
                 }
-            }
             // 发送/ack 已到期（waitMs==0）时不睡眠：withTimeoutOrNull(1) 在协程
             // 调度下会被舍入到数 ms，白等（mosh select(0) 是立即返回的）
-            val ev = if (waitMs <= 0L) {
-                events.tryReceive().getOrNull()
-            } else {
-                withTimeoutOrNull(waitMs) { events.receive() }
-            }
+            val ev =
+                if (waitMs <= 0L) {
+                    events.tryReceive().getOrNull()
+                } else {
+                    withTimeoutOrNull(waitMs) { events.receive() }
+                }
             when (ev) {
                 is Event.Packet -> {
                     val pkt = transport.decryptDatagram(ev.data)
@@ -321,7 +342,10 @@ class KmpMoshSession(
 
     fun isActive(): Boolean = active
 
-    fun resize(columns: Int, rows: Int) {
+    fun resize(
+        columns: Int,
+        rows: Int,
+    ) {
         if (active) events.trySend(Event.Resize(columns, rows))
     }
 

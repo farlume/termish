@@ -8,10 +8,10 @@ import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplication
 import platform.UIKit.UIDocumentPickerViewController
+import platform.UIKit.UISceneActivationStateForegroundActive
 import platform.UIKit.UIViewController
 import platform.UIKit.UIWindow
 import platform.UIKit.UIWindowScene
-import platform.UIKit.UISceneActivationStateForegroundActive
 import platform.darwin.dispatch_async
 import platform.darwin.dispatch_get_main_queue
 import platform.posix.O_CREAT
@@ -28,46 +28,49 @@ import platform.posix.write
  */
 @OptIn(ExperimentalForeignApi::class)
 @Composable
-actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (name: String) -> Unit {
-    return { name ->
+actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (name: String) -> Unit =
+    { name ->
         val tmpDir = NSTemporaryDirectory()
         if (tmpDir != null) {
             val path = "$tmpDir/$name"
             val fd = open(path, O_CREAT or O_WRONLY or O_TRUNC, 0x1A4u)
             if (fd >= 0) {
-                onReady(name, object : FileSink {
-                    override fun write(bytes: ByteArray) {
-                        bytes.usePinned { pinned ->
-                            var off = 0
-                            while (off < bytes.size) {
-                                val n = write(fd, pinned.addressOf(off), (bytes.size - off).toULong())
-                                if (n <= 0L) break
-                                off += n.toInt()
+                onReady(
+                    name,
+                    object : FileSink {
+                        override fun write(bytes: ByteArray) {
+                            bytes.usePinned { pinned ->
+                                var off = 0
+                                while (off < bytes.size) {
+                                    val n = write(fd, pinned.addressOf(off), (bytes.size - off).toULong())
+                                    if (n <= 0L) break
+                                    off += n.toInt()
+                                }
                             }
                         }
-                    }
 
-                    override fun close() {
-                        close(fd)
-                        val url = NSURL.fileURLWithPath(path)
-                        val picker = UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true)
-                        dispatch_async(dispatch_get_main_queue()) {
-                            topViewController()?.presentViewController(picker, animated = true, completion = null)
+                        override fun close() {
+                            close(fd)
+                            val url = NSURL.fileURLWithPath(path)
+                            val picker = UIDocumentPickerViewController(forExportingURLs = listOf(url), asCopy = true)
+                            dispatch_async(dispatch_get_main_queue()) {
+                                topViewController()?.presentViewController(picker, animated = true, completion = null)
+                            }
                         }
-                    }
-                })
+                    },
+                )
             }
         }
     }
-}
 
 @OptIn(ExperimentalForeignApi::class)
 private fun topViewController(): UIViewController? {
-    val window = UIApplication.sharedApplication.connectedScenes
-        .filterIsInstance<UIWindowScene>()
-        .firstOrNull { it.activationState == UISceneActivationStateForegroundActive }
-        ?.windows
-        ?.filterIsInstance<UIWindow>()
-        ?.firstOrNull { it.isKeyWindow() }
+    val window =
+        UIApplication.sharedApplication.connectedScenes
+            .filterIsInstance<UIWindowScene>()
+            .firstOrNull { it.activationState == UISceneActivationStateForegroundActive }
+            ?.windows
+            ?.filterIsInstance<UIWindow>()
+            ?.firstOrNull { it.isKeyWindow() }
     return window?.rootViewController
 }

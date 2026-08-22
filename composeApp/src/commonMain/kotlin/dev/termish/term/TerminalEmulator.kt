@@ -15,8 +15,18 @@ class TerminalEmulator(
     /** 终端需要向远端回写数据（如 DSR 应答）时调用。 */
     var onResponse: (ByteArray) -> Unit = {},
 ) {
-
-    private enum class State { GROUND, ESCAPE, CSI_ENTRY, CSI_PARAM, CSI_INTERMEDIATE, OSC, OSC_ESC, DCS, DCS_ESC, ESC_INTERMEDIATE }
+    private enum class State {
+        GROUND,
+        ESCAPE,
+        CSI_ENTRY,
+        CSI_PARAM,
+        CSI_INTERMEDIATE,
+        OSC,
+        OSC_ESC,
+        DCS,
+        DCS_ESC,
+        ESC_INTERMEDIATE,
+    }
 
     private var state = State.GROUND
     private val params = StringBuilder()
@@ -49,14 +59,15 @@ class TerminalEmulator(
         var i = 0
         while (i < text.length) {
             val c = text[i]
-            val cp = if (c.isHighSurrogate() && i + 1 < text.length && text[i + 1].isLowSurrogate()) {
-                val hi = c.code
-                val lo = text[i + 1].code
-                i++
-                0x10000 + ((hi - 0xD800) shl 10) + (lo - 0xDC00)
-            } else {
-                c.code
-            }
+            val cp =
+                if (c.isHighSurrogate() && i + 1 < text.length && text[i + 1].isLowSurrogate()) {
+                    val hi = c.code
+                    val lo = text[i + 1].code
+                    i++
+                    0x10000 + ((hi - 0xD800) shl 10) + (lo - 0xDC00)
+                } else {
+                    c.code
+                }
             feedCodePoint(cp)
             i++
         }
@@ -90,7 +101,11 @@ class TerminalEmulator(
         return decodeUtf8(b)
     }
 
-    private fun startUtf8(b: Int, len: Int, mask: Int): Int {
+    private fun startUtf8(
+        b: Int,
+        len: Int,
+        mask: Int,
+    ): Int {
         utf8Expected = len
         utf8Remaining = len - 1
         utf8Accum = b and mask
@@ -121,8 +136,14 @@ class TerminalEmulator(
             0x09 -> buffer.tab()
             0x0A, 0x0B, 0x0C -> buffer.lineFeed()
             0x0D -> buffer.carriageReturn()
-            0x0E -> { shiftedOut = true; buffer.currentCharset = g1Charset }
-            0x0F -> { shiftedOut = false; buffer.currentCharset = g0Charset }
+            0x0E -> {
+                shiftedOut = true
+                buffer.currentCharset = g1Charset
+            }
+            0x0F -> {
+                shiftedOut = false
+                buffer.currentCharset = g0Charset
+            }
             0x1B -> state = State.ESCAPE
             else -> {
                 if (cp < 0x20 || cp == 0x7F) return // 其它 C0 / DEL 忽略
@@ -135,9 +156,19 @@ class TerminalEmulator(
 
     private fun escape(cp: Int) {
         when (cp) {
-            '['.code -> { state = State.CSI_ENTRY; params.clear(); intermediates.clear() }
-            ']'.code -> { state = State.OSC; oscBuf.clear() }
-            'P'.code -> { state = State.DCS; dcsBuf.clear() }
+            '['.code -> {
+                state = State.CSI_ENTRY
+                params.clear()
+                intermediates.clear()
+            }
+            ']'.code -> {
+                state = State.OSC
+                oscBuf.clear()
+            }
+            'P'.code -> {
+                state = State.DCS
+                dcsBuf.clear()
+            }
             '7'.code -> buffer.saveCursor().also { state = State.GROUND }
             '8'.code -> buffer.restoreCursor().also { state = State.GROUND }
             'D'.code -> buffer.lineFeed().also { state = State.GROUND }
@@ -145,19 +176,43 @@ class TerminalEmulator(
             'M'.code -> reverseIndex().also { state = State.GROUND }
             'H'.code -> buffer.setTabStop(buffer.cursorCol).also { state = State.GROUND }
             'c'.code -> fullReset().also { state = State.GROUND }
-            '='.code -> { buffer.applicationKeypad = true; state = State.GROUND }
-            '>'.code -> { buffer.applicationKeypad = false; state = State.GROUND }
-            '('.code -> { state = State.ESC_INTERMEDIATE; intermediates.clear(); intermediates.append('(') }
-            ')'.code -> { state = State.ESC_INTERMEDIATE; intermediates.clear(); intermediates.append(')') }
-            '#'.code -> { state = State.ESC_INTERMEDIATE; intermediates.clear(); intermediates.append('#') }
+            '='.code -> {
+                buffer.applicationKeypad = true
+                state = State.GROUND
+            }
+            '>'.code -> {
+                buffer.applicationKeypad = false
+                state = State.GROUND
+            }
+            '('.code -> {
+                state = State.ESC_INTERMEDIATE
+                intermediates.clear()
+                intermediates.append('(')
+            }
+            ')'.code -> {
+                state = State.ESC_INTERMEDIATE
+                intermediates.clear()
+                intermediates.append(')')
+            }
+            '#'.code -> {
+                state = State.ESC_INTERMEDIATE
+                intermediates.clear()
+                intermediates.append('#')
+            }
             else -> state = State.GROUND
         }
     }
 
     private fun escapeIntermediate(cp: Int) {
         when (intermediates.toString()) {
-            "(" -> { g0Charset = charsetFor(cp); buffer.currentCharset = if (!shiftedOut) g0Charset else g1Charset }
-            ")" -> { g1Charset = charsetFor(cp); buffer.currentCharset = if (shiftedOut) g1Charset else g0Charset }
+            "(" -> {
+                g0Charset = charsetFor(cp)
+                buffer.currentCharset = if (!shiftedOut) g0Charset else g1Charset
+            }
+            ")" -> {
+                g1Charset = charsetFor(cp)
+                buffer.currentCharset = if (shiftedOut) g1Charset else g0Charset
+            }
             "#" -> if (cp == '8'.code) alignmentTest()
         }
         state = State.GROUND
@@ -165,9 +220,18 @@ class TerminalEmulator(
 
     private fun csiEntry(cp: Int) {
         when {
-            cp in 0x30..0x3F -> { params.append(cp.toChar()); state = State.CSI_PARAM }
-            cp in 0x20..0x2F -> { intermediates.append(cp.toChar()); state = State.CSI_INTERMEDIATE }
-            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
+            cp in 0x30..0x3F -> {
+                params.append(cp.toChar())
+                state = State.CSI_PARAM
+            }
+            cp in 0x20..0x2F -> {
+                intermediates.append(cp.toChar())
+                state = State.CSI_INTERMEDIATE
+            }
+            cp in 0x40..0x7E -> {
+                executeCsi(cp, intermediates.toString())
+                state = State.GROUND
+            }
             else -> state = State.GROUND
         }
     }
@@ -175,8 +239,14 @@ class TerminalEmulator(
     private fun csiParam(cp: Int) {
         when {
             cp in 0x30..0x3F -> params.append(cp.toChar())
-            cp in 0x20..0x2F -> { intermediates.append(cp.toChar()); state = State.CSI_INTERMEDIATE }
-            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
+            cp in 0x20..0x2F -> {
+                intermediates.append(cp.toChar())
+                state = State.CSI_INTERMEDIATE
+            }
+            cp in 0x40..0x7E -> {
+                executeCsi(cp, intermediates.toString())
+                state = State.GROUND
+            }
             else -> state = State.GROUND
         }
     }
@@ -184,21 +254,33 @@ class TerminalEmulator(
     private fun csiIntermediate(cp: Int) {
         when {
             cp in 0x20..0x2F -> intermediates.append(cp.toChar())
-            cp in 0x40..0x7E -> { executeCsi(cp, intermediates.toString()); state = State.GROUND }
+            cp in 0x40..0x7E -> {
+                executeCsi(cp, intermediates.toString())
+                state = State.GROUND
+            }
             else -> state = State.GROUND
         }
     }
 
     private fun osc(cp: Int) {
         when {
-            cp == 0x07 -> { oscTermByBel = true; finishOsc(); state = State.GROUND }
+            cp == 0x07 -> {
+                oscTermByBel = true
+                finishOsc()
+                state = State.GROUND
+            }
             cp == 0x1B -> state = State.OSC_ESC
             else -> oscBuf.append(codePointToString(cp))
         }
     }
 
     private fun oscEsc(cp: Int) {
-        if (cp == '\\'.code) { finishOsc(); state = State.GROUND } else state = State.GROUND
+        if (cp == '\\'.code) {
+            finishOsc()
+            state = State.GROUND
+        } else {
+            state = State.GROUND
+        }
     }
 
     private fun dcs(cp: Int) {
@@ -213,12 +295,17 @@ class TerminalEmulator(
         if (cp == '\\'.code) {
             finishDcs()
             state = State.GROUND
-        } else state = State.DCS
+        } else {
+            state = State.DCS
+        }
     }
 
     // ---------- CSI 执行 ----------
 
-    private fun executeCsi(finalByte: Int, intermediates: String) {
+    private fun executeCsi(
+        finalByte: Int,
+        intermediates: String,
+    ) {
         val isPrivate = params.isNotEmpty() && params[0] in setOf('?', '<', '=', '>')
         val p = parseParams(params.toString(), isPrivate)
 
@@ -227,8 +314,14 @@ class TerminalEmulator(
             'B'.code -> buffer.moveCursor(n1(p, 0), 0)
             'C'.code -> buffer.moveCursor(0, n1(p, 0))
             'D'.code -> buffer.moveCursor(0, -n1(p, 0))
-            'E'.code -> { buffer.moveCursor(n1(p, 0), 0); buffer.carriageReturn() }
-            'F'.code -> { buffer.moveCursor(-n1(p, 0), 0); buffer.carriageReturn() }
+            'E'.code -> {
+                buffer.moveCursor(n1(p, 0), 0)
+                buffer.carriageReturn()
+            }
+            'F'.code -> {
+                buffer.moveCursor(-n1(p, 0), 0)
+                buffer.carriageReturn()
+            }
             'G'.code -> buffer.moveTo(buffer.cursorRow, (p.getOrNull(0) ?: 1) - 1)
             'H'.code, 'f'.code -> buffer.moveTo((p.getOrNull(0) ?: 1) - 1, (p.getOrNull(1) ?: 1) - 1)
             'd'.code -> buffer.moveTo((p.getOrNull(0) ?: 1) - 1, buffer.cursorCol)
@@ -241,10 +334,11 @@ class TerminalEmulator(
             'X'.code -> buffer.eraseChars(n1(p, 0))
             'S'.code -> buffer.scrollUp(n1(p, 0))
             'T'.code -> buffer.scrollDown(n1(p, 0))
-            'r'.code -> buffer.setScrollRegion(
-                n1(p, 0) - 1,
-                (p.getOrNull(1) ?: buffer.rows) - 1
-            )
+            'r'.code ->
+                buffer.setScrollRegion(
+                    n1(p, 0) - 1,
+                    (p.getOrNull(1) ?: buffer.rows) - 1,
+                )
             's'.code -> buffer.saveCursor()
             'u'.code -> buffer.restoreCursor()
             'm'.code -> applySgr(p)
@@ -252,8 +346,11 @@ class TerminalEmulator(
             'l'.code -> setModes(p, false, isPrivate)
             'n'.code -> respondToDsr(p.getOrNull(0) ?: 0, isPrivate)
             'c'.code -> {
-                if (isPrivate) onResponse("\u001b[>1;2;0c".encodeToByteArray())
-                else onResponse("\u001b[?1;2c".encodeToByteArray())
+                if (isPrivate) {
+                    onResponse("\u001b[>1;2;0c".encodeToByteArray())
+                } else {
+                    onResponse("\u001b[?1;2c".encodeToByteArray())
+                }
             }
             'b'.code -> buffer.repeatChar(n1(p, 0))
             'q'.code -> {
@@ -275,7 +372,10 @@ class TerminalEmulator(
     }
 
     /** CSI 计数参数：缺省/显式 0 均按 1 处理（xterm 语义）。 */
-    private fun n1(p: List<Int>, i: Int): Int = (p.getOrNull(i) ?: 1).coerceAtLeast(1)
+    private fun n1(
+        p: List<Int>,
+        i: Int,
+    ): Int = (p.getOrNull(i) ?: 1).coerceAtLeast(1)
 
     private fun eraseLine(mode: Int) {
         when (mode) {
@@ -314,10 +414,14 @@ class TerminalEmulator(
                 n == 28 -> buffer.currentAttrs = buffer.currentAttrs and CellAttr.HIDDEN.inv()
                 n == 29 -> buffer.currentAttrs = buffer.currentAttrs and CellAttr.STRIKE.inv()
                 n in 30..37 -> buffer.currentFg = TerminalPalette.BASIC_16[n - 30]
-                n == 38 -> { i += applyExtendedColor(params, i, fg = true); }
+                n == 38 -> {
+                    i += applyExtendedColor(params, i, fg = true)
+                }
                 n == 39 -> buffer.currentFg = DEFAULT_FG
                 n in 40..47 -> buffer.currentBg = TerminalPalette.BASIC_16[n - 40]
-                n == 48 -> { i += applyExtendedColor(params, i, fg = false); }
+                n == 48 -> {
+                    i += applyExtendedColor(params, i, fg = false)
+                }
                 n == 49 -> buffer.currentBg = DEFAULT_BG
                 n in 90..97 -> buffer.currentFg = TerminalPalette.BASIC_16[n - 90 + 8]
                 n in 100..107 -> buffer.currentBg = TerminalPalette.BASIC_16[n - 100 + 8]
@@ -327,7 +431,11 @@ class TerminalEmulator(
     }
 
     /** 处理 38;5;n / 38;2;r;g;b / 48;... 返回消耗掉的额外参数个数。 */
-    private fun applyExtendedColor(params: List<Int>, idx: Int, fg: Boolean): Int {
+    private fun applyExtendedColor(
+        params: List<Int>,
+        idx: Int,
+        fg: Boolean,
+    ): Int {
         if (idx + 1 >= params.size) return 0
         when (params[idx + 1]) {
             5 -> {
@@ -356,7 +464,11 @@ class TerminalEmulator(
 
     // ---------- 模式 ----------
 
-    private fun setModes(params: List<Int>, set: Boolean, private: Boolean) {
+    private fun setModes(
+        params: List<Int>,
+        set: Boolean,
+        private: Boolean,
+    ) {
         for (p in params) {
             when {
                 !private && p == 4 -> buffer.insertMode = set
@@ -369,8 +481,13 @@ class TerminalEmulator(
                 private && p == 1047 -> if (set) buffer.enterAltScreen() else buffer.leaveAltScreen()
                 private && p == 1048 -> if (set) buffer.saveCursor() else buffer.restoreCursor()
                 private && p == 1049 -> {
-                    if (set) { buffer.saveCursor(); buffer.enterAltScreen(clear = true) }
-                    else { buffer.leaveAltScreen(); buffer.restoreCursor() }
+                    if (set) {
+                        buffer.saveCursor()
+                        buffer.enterAltScreen(clear = true)
+                    } else {
+                        buffer.leaveAltScreen()
+                        buffer.restoreCursor()
+                    }
                 }
                 private && p == 2004 -> buffer.bracketedPaste = set
                 private && (p == 1000 || p == 1002 || p == 1003) -> buffer.mouseTracking = if (set) p else 0
@@ -388,7 +505,10 @@ class TerminalEmulator(
         }
     }
 
-    private fun parseParams(raw: String, isPrivate: Boolean): List<Int> {
+    private fun parseParams(
+        raw: String,
+        isPrivate: Boolean,
+    ): List<Int> {
         // 去掉私有前缀字符
         var s = raw
         while (s.isNotEmpty() && s[0] in setOf('?', '<', '=', '>')) s = s.substring(1)
@@ -401,8 +521,11 @@ class TerminalEmulator(
     // ---------- 其它 ----------
 
     private fun reverseIndex() {
-        if (buffer.cursorRow == buffer.scrollTop) buffer.scrollDown(1)
-        else buffer.cursorRow = (buffer.cursorRow - 1).coerceAtLeast(0)
+        if (buffer.cursorRow == buffer.scrollTop) {
+            buffer.scrollDown(1)
+        } else {
+            buffer.cursorRow = (buffer.cursorRow - 1).coerceAtLeast(0)
+        }
     }
 
     private fun fullReset() {
@@ -443,13 +566,17 @@ class TerminalEmulator(
         }
     }
 
-    private fun respondToDsr(arg: Int, isPrivate: Boolean) {
-        val resp = when {
-            isPrivate && arg == 6 -> "\u001b[${buffer.cursorRow + 1};${buffer.cursorCol + 1}R"
-            !isPrivate && arg == 6 -> "\u001b[${buffer.cursorRow + 1};${buffer.cursorCol + 1}R"
-            arg == 5 -> "\u001b[0n"
-            else -> return
-        }
+    private fun respondToDsr(
+        arg: Int,
+        isPrivate: Boolean,
+    ) {
+        val resp =
+            when {
+                isPrivate && arg == 6 -> "\u001b[${buffer.cursorRow + 1};${buffer.cursorCol + 1}R"
+                !isPrivate && arg == 6 -> "\u001b[${buffer.cursorRow + 1};${buffer.cursorCol + 1}R"
+                arg == 5 -> "\u001b[0n"
+                else -> return
+            }
         onResponse(resp.encodeToByteArray())
     }
 
@@ -459,44 +586,49 @@ class TerminalEmulator(
         dcsBuf.clear()
         if (!content.startsWith("\$q")) return // tmux passthrough 等其它 DCS 忽略
         val query = content.removePrefix("\$q").trim()
-        val resp = when {
-            query.endsWith("r") -> { // DECSTBM
-                "\u001bP1\$r${buffer.scrollTop + 1};${buffer.scrollBottom + 1}r\u001b\\"
+        val resp =
+            when {
+                query.endsWith("r") -> { // DECSTBM
+                    "\u001bP1\$r${buffer.scrollTop + 1};${buffer.scrollBottom + 1}r\u001b\\"
+                }
+                query.endsWith("m") -> "\u001bP1\$r0m\u001b\\" // SGR：仅应答默认态
+                query.endsWith("q") -> "\u001bP1\$r${buffer.cursorStyle} q\u001b\\" // DECSCUSR
+                else -> "\u001bP0\$r\u001b\\"
             }
-            query.endsWith("m") -> "\u001bP1\$r0m\u001b\\" // SGR：仅应答默认态
-            query.endsWith("q") -> "\u001bP1\$r${buffer.cursorStyle} q\u001b\\" // DECSCUSR
-            else -> "\u001bP0\$r\u001b\\"
-        }
         onResponse(resp.encodeToByteArray())
     }
 
     /** CSI Ps $ p / CSI ? Ps $ p（DECRQM）：应答模式状态。 */
-    private fun respondToDecrqm(params: List<Int>, isPrivate: Boolean) {
+    private fun respondToDecrqm(
+        params: List<Int>,
+        isPrivate: Boolean,
+    ) {
         val p = params.getOrNull(0) ?: return
-        val state = if (isPrivate) {
-            when (p) {
-                1 -> if (buffer.applicationCursorKeys) 1 else 2
-                6 -> if (buffer.originMode) 1 else 2
-                7 -> if (buffer.autoWrap) 1 else 2
-                25 -> if (buffer.cursorVisible) 1 else 2
-                47, 1047, 1049 -> if (buffer.altScreen) 1 else 2
-                1000 -> if (buffer.mouseTracking == 1000) 1 else 2
-                1002 -> if (buffer.mouseTracking == 1002) 1 else 2
-                1003 -> if (buffer.mouseTracking == 1003) 1 else 2
-                1004 -> if (buffer.focusEvents) 1 else 2
-                1006 -> if (buffer.mouseSgr) 1 else 2
-                1007 -> if (buffer.alternateScroll) 1 else 2
-                1015 -> if (buffer.mouseUrxvt) 1 else 2
-                2004 -> if (buffer.bracketedPaste) 1 else 2
-                else -> 0
+        val state =
+            if (isPrivate) {
+                when (p) {
+                    1 -> if (buffer.applicationCursorKeys) 1 else 2
+                    6 -> if (buffer.originMode) 1 else 2
+                    7 -> if (buffer.autoWrap) 1 else 2
+                    25 -> if (buffer.cursorVisible) 1 else 2
+                    47, 1047, 1049 -> if (buffer.altScreen) 1 else 2
+                    1000 -> if (buffer.mouseTracking == 1000) 1 else 2
+                    1002 -> if (buffer.mouseTracking == 1002) 1 else 2
+                    1003 -> if (buffer.mouseTracking == 1003) 1 else 2
+                    1004 -> if (buffer.focusEvents) 1 else 2
+                    1006 -> if (buffer.mouseSgr) 1 else 2
+                    1007 -> if (buffer.alternateScroll) 1 else 2
+                    1015 -> if (buffer.mouseUrxvt) 1 else 2
+                    2004 -> if (buffer.bracketedPaste) 1 else 2
+                    else -> 0
+                }
+            } else {
+                when (p) {
+                    4 -> if (buffer.insertMode) 1 else 2
+                    20 -> 2
+                    else -> 0
+                }
             }
-        } else {
-            when (p) {
-                4 -> if (buffer.insertMode) 1 else 2
-                20 -> 2
-                else -> 0
-            }
-        }
         if (state == 0) return
         onResponse("\u001b[${if (isPrivate) "?" else ""}$p;$state\$y".encodeToByteArray())
     }
@@ -547,7 +679,10 @@ class TerminalEmulator(
     }
 
     /** OSC 10/11 查询默认前景/背景色：TUI（如 herdr）据此决定对比色，必须应答。 */
-    private fun handleOscColorQuery(ps: Int, pt: String) {
+    private fun handleOscColorQuery(
+        ps: Int,
+        pt: String,
+    ) {
         if (pt.trimEnd() != "?") return // 暂不支持设置颜色
         val rgb = if (ps == 10) buffer.defaultFgRgb else buffer.defaultBgRgb
         onResponse("\u001b]$ps;${rgbToXTerm(rgb)}\u001b\\".encodeToByteArray())
@@ -598,53 +733,54 @@ class TerminalEmulator(
         }
     }
 
-    private fun charsetFor(c: Int): TerminalBuffer.Charset =
-        if (c == '0'.code) TerminalBuffer.Charset.DEC_SPECIAL else TerminalBuffer.Charset.ASCII
+    private fun charsetFor(c: Int): TerminalBuffer.Charset = if (c == '0'.code) TerminalBuffer.Charset.DEC_SPECIAL else TerminalBuffer.Charset.ASCII
 
-    private fun mapDecSpecial(cp: Int): Int = when (cp) {
-        0x60 -> 0x25C6 // ◆ diamond
-        0x61 -> 0x2592 // ▒
-        0x62 -> 0x2409 // ␉
-        0x63 -> 0x240C // ␌
-        0x64 -> 0x240D // ␍
-        0x65 -> 0x240A // ␊
-        0x66 -> 0x00B0 // °
-        0x67 -> 0x00B1 // ±
-        0x68 -> 0x2424 // ␤
-        0x69 -> 0x240B // ␋
-        0x6A -> 0x2518 // ┘
-        0x6B -> 0x2510 // ┐
-        0x6C -> 0x250C // ┌
-        0x6D -> 0x2514 // └
-        0x6E -> 0x253C // ┼
-        0x6F -> 0x23BA // ⎺
-        0x70 -> 0x23BB // ⎻
-        0x71 -> 0x2500 // ─
-        0x72 -> 0x23BC // ⎼
-        0x73 -> 0x23BD // ⎽
-        0x74 -> 0x251C // ├
-        0x75 -> 0x2524 // ┤
-        0x76 -> 0x2534 // ┴
-        0x77 -> 0x252C // ┬
-        0x78 -> 0x2502 // │
-        0x79 -> 0x2264 // ≤
-        0x7A -> 0x2265 // ≥
-        0x7B -> 0x03C0 // π
-        0x7C -> 0x2260 // ≠
-        0x7D -> 0x00A3 // £
-        0x7E -> 0x00B7 // ·
-        else -> cp
-    }
-
-    private fun codePointToString(cp: Int): String = when {
-        cp <= 0xFFFF -> cp.toChar().toString()
-        else -> {
-            val x = cp - 0x10000
-            val hi = 0xD800 + (x shr 10)
-            val lo = 0xDC00 + (x and 0x3FF)
-            "${hi.toChar()}${lo.toChar()}"
+    private fun mapDecSpecial(cp: Int): Int =
+        when (cp) {
+            0x60 -> 0x25C6 // ◆ diamond
+            0x61 -> 0x2592 // ▒
+            0x62 -> 0x2409 // ␉
+            0x63 -> 0x240C // ␌
+            0x64 -> 0x240D // ␍
+            0x65 -> 0x240A // ␊
+            0x66 -> 0x00B0 // °
+            0x67 -> 0x00B1 // ±
+            0x68 -> 0x2424 // ␤
+            0x69 -> 0x240B // ␋
+            0x6A -> 0x2518 // ┘
+            0x6B -> 0x2510 // ┐
+            0x6C -> 0x250C // ┌
+            0x6D -> 0x2514 // └
+            0x6E -> 0x253C // ┼
+            0x6F -> 0x23BA // ⎺
+            0x70 -> 0x23BB // ⎻
+            0x71 -> 0x2500 // ─
+            0x72 -> 0x23BC // ⎼
+            0x73 -> 0x23BD // ⎽
+            0x74 -> 0x251C // ├
+            0x75 -> 0x2524 // ┤
+            0x76 -> 0x2534 // ┴
+            0x77 -> 0x252C // ┬
+            0x78 -> 0x2502 // │
+            0x79 -> 0x2264 // ≤
+            0x7A -> 0x2265 // ≥
+            0x7B -> 0x03C0 // π
+            0x7C -> 0x2260 // ≠
+            0x7D -> 0x00A3 // £
+            0x7E -> 0x00B7 // ·
+            else -> cp
         }
-    }
+
+    private fun codePointToString(cp: Int): String =
+        when {
+            cp <= 0xFFFF -> cp.toChar().toString()
+            else -> {
+                val x = cp - 0x10000
+                val hi = 0xD800 + (x shr 10)
+                val lo = 0xDC00 + (x and 0x3FF)
+                "${hi.toChar()}${lo.toChar()}"
+            }
+        }
 
     fun reset() {
         fullReset()

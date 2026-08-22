@@ -1,13 +1,12 @@
 package dev.termish.ssh
 
+import dev.termish.mosh.KmpMoshSession
+import dev.termish.mosh.MoshExitReason
+import dev.termish.term.TerminalBuffer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
-
-import dev.termish.mosh.KmpMoshSession
-import dev.termish.mosh.MoshExitReason
-import dev.termish.term.TerminalBuffer
 
 /**
  * Mosh 客户端会话：由纯 Kotlin 实现（dev.termish.mosh 包，SSP 协议）。
@@ -15,8 +14,14 @@ import dev.termish.term.TerminalBuffer
  */
 interface MoshSession {
     fun isActive(): Boolean
-    fun resize(columns: Int, rows: Int)
+
+    fun resize(
+        columns: Int,
+        rows: Int,
+    )
+
     fun sendData(data: ByteArray)
+
     fun close()
 }
 
@@ -38,8 +43,12 @@ const val SYSTEM_PROBE_COMMAND = "cat /etc/os-release 2>/dev/null; uname -s"
  * - 否则按 `uname -s` 归一到 linux / macos / freebsd / openbsd
  */
 fun detectSystemFromOutput(output: String): String? {
-    val id = Regex("(?m)^ID=\"?([A-Za-z0-9_-]+)\"?$")
-        .find(output)?.groupValues?.get(1)?.lowercase()
+    val id =
+        Regex("(?m)^ID=\"?([A-Za-z0-9_-]+)\"?$")
+            .find(output)
+            ?.groupValues
+            ?.get(1)
+            ?.lowercase()
     if (!id.isNullOrBlank()) return id
     // uname -s 输出在最后一行；trim 掉尾部换行/空白后取最后一段
     return when (output.trim().substringAfterLast('\n').trim()) {
@@ -85,29 +94,36 @@ fun createKmpMoshSession(
             }
         }
     }
-    val session = KmpMoshSession(
-        ip = ip,
-        port = port,
-        key = key,
-        columns = columns,
-        rows = rows,
-        scope = scope,
-        onStateUpdate = { view ->
-            // 拷贝到 UI buffer 必须在主线程（Compose 渲染同时在读）；
-            // 通道消费协程已固定在 Main，这里只投递
-            pending.trySend(view)
-        },
-        onExit = onExit,
-        onPeerConnected = onPeerConnected,
-        onLinkStatus = onLinkStatus,
-    )
+    val session =
+        KmpMoshSession(
+            ip = ip,
+            port = port,
+            key = key,
+            columns = columns,
+            rows = rows,
+            scope = scope,
+            onStateUpdate = { view ->
+                // 拷贝到 UI buffer 必须在主线程（Compose 渲染同时在读）；
+                // 通道消费协程已固定在 Main，这里只投递
+                pending.trySend(view)
+            },
+            onExit = onExit,
+            onPeerConnected = onPeerConnected,
+            onLinkStatus = onLinkStatus,
+        )
     session.setTitleCallback(onTitle)
     session.setClipboardCallback(onClipboard)
     session.start()
     return object : MoshSession {
         override fun isActive(): Boolean = session.isActive()
-        override fun resize(columns: Int, rows: Int) = session.resize(columns, rows)
+
+        override fun resize(
+            columns: Int,
+            rows: Int,
+        ) = session.resize(columns, rows)
+
         override fun sendData(data: ByteArray) = session.sendData(data)
+
         override fun close() = session.close()
     }
 }

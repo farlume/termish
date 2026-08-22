@@ -12,32 +12,36 @@ actual fun rememberDirectorySaver(onReady: (name: String, sink: DirectorySink) -
     val main = rememberCoroutineScope()
     return { name ->
         Thread {
-            val chooser = JFileChooser().apply {
-                fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                selectedFile = File(name)
-            }
+            val chooser =
+                JFileChooser().apply {
+                    fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+                    selectedFile = File(name)
+                }
             if (chooser.showSaveDialog(null) == JFileChooser.APPROVE_OPTION) {
                 val root = chooser.selectedFile
                 main.launch {
-                    onReady(root.name, object : DirectorySink {
-                        override fun openFile(relativePath: String): FileSink {
-                            val f = File(root, relativePath)
-                            f.parentFile?.mkdirs()
-                            val out = f.outputStream()
-                            return object : FileSink {
-                                override fun write(bytes: ByteArray) = out.write(bytes)
+                    onReady(
+                        root.name,
+                        object : DirectorySink {
+                            override fun openFile(relativePath: String): FileSink {
+                                val f = File(root, relativePath)
+                                f.parentFile?.mkdirs()
+                                val out = f.outputStream()
+                                return object : FileSink {
+                                    override fun write(bytes: ByteArray) = out.write(bytes)
 
-                                override fun close() {
-                                    try {
-                                        out.close()
-                                    } catch (_: Exception) {
+                                    override fun close() {
+                                        try {
+                                            out.close()
+                                        } catch (_: Exception) {
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        override fun close() {}
-                    })
+                            override fun close() {}
+                        },
+                    )
                 }
             }
         }.start()

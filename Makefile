@@ -42,9 +42,12 @@ test: ## 单元测试 + 集成测试（sshd/mosh 不在时自动 SKIP）
 test-integration: ## 集成测试：自动起 sshd 后跑（gradle testIntegration）
 	$(GRADLEW) testIntegration
 
-.PHONY: lint
+.PHONY: lint lint-kt
 lint: ## Android lint
 	$(GRADLEW) :composeApp:lintRelease
+
+lint-kt: ## ktlint 检查（规则读 .editorconfig；ktlintFormat 可自动修）
+	$(GRADLEW) ktlintCheck
 
 ## ---------- 发版 ----------
 

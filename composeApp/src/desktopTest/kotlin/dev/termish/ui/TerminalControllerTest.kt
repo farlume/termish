@@ -9,7 +9,6 @@ import dev.termish.ssh.CommandResult
 import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SessionInfo
 import dev.termish.ssh.SshCallbacks
-import dev.termish.ssh.SshConnection
 import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import java.util.Properties
@@ -38,7 +37,6 @@ import kotlinx.coroutines.withTimeout
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class TerminalControllerTest {
-
     private val scheduler = TestCoroutineScheduler()
     private val mainDispatcher = StandardTestDispatcher(scheduler)
 
@@ -54,17 +52,13 @@ class TerminalControllerTest {
 
     private fun repo() = HostRepository(PropertiesSettings(Properties()))
 
-    private fun host(startup: String = "") =
-        Host(id = "h1", name = "dev", hostname = "example.com", username = "root", startupCommand = startup)
+    private fun host(startup: String = "") = Host(id = "h1", name = "dev", hostname = "example.com", username = "root", startupCommand = startup)
 
-    private fun herdrHost() =
-        host().copy(launchHerdr = true)
+    private fun herdrHost() = host().copy(launchHerdr = true)
 
     /** Mosh + herdr 工作台开关（mosh 引导直接跑 herdr）。 */
-    private fun herdrMoshHost() =
-        host().copy(connectionMode = ConnectionMode.MOSH, launchHerdr = true)
+    private fun herdrMoshHost() = host().copy(connectionMode = ConnectionMode.MOSH, launchHerdr = true)
 
-    /** 最小合法 herdr 快照（HerdrSessionSnapshot 字段全有默认值）。 */
     // herdr --version 输出（探测判「已安装」用；snapshot 判 daemon 运行用）
     private val versionOutput = "herdr 0.8.0"
 
@@ -95,7 +89,10 @@ class TerminalControllerTest {
         var closed = false
         var resized = 0
 
-        override fun connectAndStart(columns: Int, rows: Int): SessionInfo {
+        override fun connectAndStart(
+            columns: Int,
+            rows: Int,
+        ): SessionInfo {
             connectError?.let { throw it }
             return SessionInfo(
                 serverVersion = "SSH-2.0-fake",
@@ -104,7 +101,12 @@ class TerminalControllerTest {
             )
         }
 
-        override fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
+        override fun resize(
+            columns: Int,
+            rows: Int,
+            widthPx: Int,
+            heightPx: Int,
+        ) {
             resized++
         }
 
@@ -112,13 +114,21 @@ class TerminalControllerTest {
             sent += data
         }
 
-        override fun connectAndRun(command: String, timeoutMs: Long): CommandResult =
-            throw UnsupportedOperationException()
+        override fun connectAndRun(
+            command: String,
+            timeoutMs: Long,
+        ): CommandResult = throw UnsupportedOperationException()
 
-        override fun runCommandDetailed(command: String, timeoutMs: Long): CommandOutput? =
-            commandHandler(command)?.let { CommandOutput(it, "", 0) }
+        override fun runCommandDetailed(
+            command: String,
+            timeoutMs: Long,
+        ): CommandOutput? = commandHandler(command)?.let { CommandOutput(it, "", 0) }
 
-        override fun startExec(command: String, columns: Int, rows: Int): SshExecChannel? {
+        override fun startExec(
+            command: String,
+            columns: Int,
+            rows: Int,
+        ): SshExecChannel? {
             execCommands += command
             return execFactory?.invoke(command)
         }
@@ -137,10 +147,11 @@ class TerminalControllerTest {
         startup: String = "",
     ): Triple<TerminalController, FakeSsh, HostRepository> {
         val r = repo
-        val c = TerminalController(host(startup), "pw", null, r, autoReconnect) { _, cb ->
-            fake.callbacks = cb
-            fake
-        }
+        val c =
+            TerminalController(host(startup), "pw", null, r, autoReconnect) { _, cb ->
+                fake.callbacks = cb
+                fake
+            }
         return Triple(c, fake, r)
     }
 
@@ -148,10 +159,11 @@ class TerminalControllerTest {
         fake: FakeSsh,
         repo: HostRepository = repo(),
     ): Pair<TerminalController, FakeSsh> {
-        val c = TerminalController(herdrHost(), "pw", null, repo, false) { _, cb ->
-            fake.callbacks = cb
-            fake
-        }
+        val c =
+            TerminalController(herdrHost(), "pw", null, repo, false) { _, cb ->
+                fake.callbacks = cb
+                fake
+            }
         return c to fake
     }
 
@@ -160,10 +172,11 @@ class TerminalControllerTest {
         repo: HostRepository = repo(),
         autoReconnect: Boolean = false,
     ): Pair<TerminalController, FakeSsh> {
-        val c = TerminalController(herdrMoshHost(), "pw", null, repo, autoReconnect) { _, cb ->
-            fake.callbacks = cb
-            fake
-        }
+        val c =
+            TerminalController(herdrMoshHost(), "pw", null, repo, autoReconnect) { _, cb ->
+                fake.callbacks = cb
+                fake
+            }
         return c to fake
     }
 
@@ -171,14 +184,18 @@ class TerminalControllerTest {
         fake: FakeSsh,
         repo: HostRepository = repo(),
     ): Pair<TerminalController, FakeSsh> {
-        val c = TerminalController(host().copy(connectionMode = ConnectionMode.MOSH), "pw", null, repo, false) { _, cb ->
-            fake.callbacks = cb
-            fake
-        }
+        val c =
+            TerminalController(host().copy(connectionMode = ConnectionMode.MOSH), "pw", null, repo, false) { _, cb ->
+                fake.callbacks = cb
+                fake
+            }
         return c to fake
     }
 
-    private fun awaitStatus(c: TerminalController, expected: ConnStatus) = runBlocking {
+    private fun awaitStatus(
+        c: TerminalController,
+        expected: ConnStatus,
+    ) = runBlocking {
         withTimeout(5_000) {
             while (c.status != expected) {
                 delay(10)
@@ -193,7 +210,10 @@ class TerminalControllerTest {
      *  finishConnected 先置 CONNECTED 再 sendData（UI 先亮连接态再注入启动命令，
      *  有意顺序）：awaitStatus 返回后注入可能尚未落地，直接断言 f.sent 会撞
      *  窗口——CI 慢机器上必现 flaky（v1.1.7 tag run 即此）。轮询等注入到达。 */
-    private fun awaitSent(f: FakeSsh, expected: String) = runBlocking {
+    private fun awaitSent(
+        f: FakeSsh,
+        expected: String,
+    ) = runBlocking {
         withTimeout(5_000) {
             while (f.sent.none { it.decodeToString() == expected }) {
                 delay(10)
@@ -203,29 +223,38 @@ class TerminalControllerTest {
     }
 
     /** 等待 shell 注入 herdr 启动命令（延迟 + 清屏前缀形态；带超时）。 */
-    private fun awaitHerdrLaunch(f: FakeSsh, bin: String) = runBlocking {
+    private fun awaitHerdrLaunch(
+        f: FakeSsh,
+        bin: String,
+    ) = runBlocking {
         withTimeout(5_000) {
             while (f.sent.none {
-                it.decodeToString().contains("printf") && it.decodeToString().contains(bin)
-            }) {
+                    it.decodeToString().contains("printf") && it.decodeToString().contains(bin)
+                }
+            ) {
                 delay(10)
                 scheduler.advanceUntilIdle()
             }
         }
     }
 
-    private fun herdrLaunchIn(f: FakeSsh, bin: String): String? =
-        f.sent.firstOrNull { it.decodeToString().contains("printf") && it.decodeToString().contains(bin) }
+    private fun herdrLaunchIn(
+        f: FakeSsh,
+        bin: String,
+    ): String? =
+        f.sent
+            .firstOrNull { it.decodeToString().contains("printf") && it.decodeToString().contains(bin) }
             ?.decodeToString()
 
-    private fun TerminalController.bufferText(): String = buildString {
-        val b = buffer
-        for (r in 0 until b.rows) {
-            val line = b.absLine(b.totalLines() - b.rows + r)
-            for (col in 0 until b.cols) append(line.cells[col].codePoint.toChar())
-            append('\n')
+    private fun TerminalController.bufferText(): String =
+        buildString {
+            val b = buffer
+            for (r in 0 until b.rows) {
+                val line = b.absLine(b.totalLines() - b.rows + r)
+                for (col in 0 until b.cols) append(line.cells[col].codePoint.toChar())
+                append('\n')
+            }
         }
-    }
 
     @Test
     fun connectSuccessSetsConnectedAndRecordsFingerprint() {
@@ -244,11 +273,12 @@ class TerminalControllerTest {
         // 回归：连接成功后系统探测用 c.host 创建时快照整条 upsert，把
         // touchConnected/TOFU 刚记录的指纹抹掉 → 每次重连/新会话/SFTP
         // 都重复弹确认窗（新主机 system 必为空，探测必触发）
-        val (c, _, r) = controller(
-            FakeSsh(commandHandler = { cmd ->
-                if (cmd.contains("os-release")) "ID=ubuntu" else null
-            }),
-        )
+        val (c, _, r) =
+            controller(
+                FakeSsh(commandHandler = { cmd ->
+                    if (cmd.contains("os-release")) "ID=ubuntu" else null
+                }),
+            )
         r.upsertHost(host())
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -385,19 +415,20 @@ class TerminalControllerTest {
         // 首次探测无 herdr → 引导安装；安装脚本执行后重新探测成功 → SSH 模式直接
         // 向 shell 注入 herdr 命令（非 exec 通道：herdr 是 shell 子进程，退出回 shell）
         var installed = false
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("--version") -> if (installed) versionOutput else null
-                    else -> null
-                }
-            },
-            execFactory = { cmd ->
-                // 安装脚本经 startExec 流式执行（不经过 commandHandler）：这里模拟安装成功
-                if (cmd.contains("install.sh")) installed = true
-                FakeExec(eof = true)
-            },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("--version") -> if (installed) versionOutput else null
+                        else -> null
+                    }
+                },
+                execFactory = { cmd ->
+                    // 安装脚本经 startExec 流式执行（不经过 commandHandler）：这里模拟安装成功
+                    if (cmd.contains("install.sh")) installed = true
+                    FakeExec(eof = true)
+                },
+            )
         val (c, f) = herdrController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -414,14 +445,22 @@ class TerminalControllerTest {
         // 注入带 1.5s 延迟：轮询等待（scheduler 推进虚拟时间），断言清屏前缀 + 二进制路径
         runBlocking {
             withTimeout(5_000) {
-                while (f.sent.none { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") }) {
+                while (f.sent.none {
+                        it.decodeToString().contains(
+                            "printf",
+                        ) &&
+                            it.decodeToString().contains("herdr")
+                    }
+                ) {
                     delay(10)
                     scheduler.advanceUntilIdle()
                 }
             }
         }
-        val injected = f.sent.first { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") }
-            .decodeToString()
+        val injected =
+            f.sent
+                .first { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") }
+                .decodeToString()
         assertTrue(injected.contains("\\0033[2J"), "注入应先清屏（含 scrollback），实际: $injected")
         assertTrue(injected.endsWith("'herdr'\n") || injected.endsWith("herdr\n"), "注入应以 herdr 启动命令结尾，实际: $injected")
         c.destroy()
@@ -430,7 +469,10 @@ class TerminalControllerTest {
     @Test
     fun parseInstallPathExtractsFromLog() {
         // install.sh 打印 "installed herdr to /path/herdr"（含颜色码前缀与多行日志）
-        assertEquals("/home/user/.local/bin/herdr", parseInstallPath("  > installed herdr to /home/user/.local/bin/herdr\n"))
+        assertEquals(
+            "/home/user/.local/bin/herdr",
+            parseInstallPath("  > installed herdr to /home/user/.local/bin/herdr\n"),
+        )
         assertEquals("/opt/herdr", parseInstallPath("downloading...\ninstalled herdr to /opt/herdr\n  > ready"))
         assertNull(parseInstallPath("download failed"))
         assertNull(parseInstallPath(""))
@@ -454,15 +496,16 @@ class TerminalControllerTest {
         // Mosh + 工作台开关：herdr 在但 mosh-server 未装 → mosh 引导安装卡片（非静默
         // 降级——装上 mosh 才有漫游能力）；状态必须置 CONNECTED（回归：此前
         // 状态停在 CONNECTING，banner 常驻「连接中…」）
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("--version") -> versionOutput
-                    else -> "mosh: command not found"
-                }
-            },
-            execFactory = { FakeExec() },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("--version") -> versionOutput
+                        else -> "mosh: command not found"
+                    }
+                },
+                execFactory = { FakeExec() },
+            )
         val (c, f) = herdrMoshController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -476,12 +519,13 @@ class TerminalControllerTest {
     fun herdrDegradedInjectsShellCommand() {
         // 已降级条目（moshDegradedToSsh）+ 工作台开关：直走 SSH shell 并注入
         // herdr 命令（herdr 是 shell 子进程，退出后回到 shell）
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                if (cmd.contains("--version")) versionOutput else null
-            },
-            execFactory = { null },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    if (cmd.contains("--version")) versionOutput else null
+                },
+                execFactory = { null },
+            )
         val (c, f) = herdrMoshController(fake)
         c.moshDegradedToSsh = true
         c.connect(80, 24)
@@ -498,17 +542,18 @@ class TerminalControllerTest {
     fun herdrProbeUsesFullPathCandidates() {
         // 裸 herdr 不在 PATH、全路径命中：探测记录候选顺序，命中路径贯穿注入命令
         val probed = mutableListOf<String>()
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                if (cmd.contains("--version")) {
-                    probed += cmd
-                    if (cmd.startsWith("/usr/local/bin/herdr")) versionOutput else null
-                } else {
-                    null
-                }
-            },
-            execFactory = { FakeExec() },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    if (cmd.contains("--version")) {
+                        probed += cmd
+                        if (cmd.startsWith("/usr/local/bin/herdr")) versionOutput else null
+                    } else {
+                        null
+                    }
+                },
+                execFactory = { FakeExec() },
+            )
         val (c, f) = herdrController(fake)
         c.moshDegradedToSsh = true // 降级条目直走 SSH shell（跳过 mosh 引导）
         c.connect(80, 24)
@@ -537,18 +582,19 @@ class TerminalControllerTest {
         // `execvp: $HOME/.local/bin/herdr: No such file or directory`。
         // 断言：命中后解析成绝对路径（echo $HOME），注入拿到绝对路径
         val commands = mutableListOf<String>()
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                commands += cmd
-                when (cmd) {
-                    "herdr --version" -> null
-                    "\$HOME/.local/bin/herdr --version" -> versionOutput
-                    "echo \$HOME" -> "/root"
-                    else -> null
-                }
-            },
-            execFactory = { FakeExec() },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    commands += cmd
+                    when (cmd) {
+                        "herdr --version" -> null
+                        "\$HOME/.local/bin/herdr --version" -> versionOutput
+                        "echo \$HOME" -> "/root"
+                        else -> null
+                    }
+                },
+                execFactory = { FakeExec() },
+            )
         val (c, f) = herdrController(fake)
         c.moshDegradedToSsh = true // 降级条目直走 SSH shell（跳过 mosh 引导）
         c.connect(80, 24)
@@ -571,24 +617,25 @@ class TerminalControllerTest {
         // doConnectMosh 在引导解析后经 withContext(Main) 做主题准备，测试默认
         // 的 StandardTestDispatcher 不会自跑，会把连接协程挂死在那
         val bootstraps = mutableListOf<String>()
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("mosh-server new") -> {
-                        bootstraps += cmd
-                        // key 必须 22 字符规范 base64：客户端构造会校验，
-                        // 非法 key 抛异常走 ERROR 分支到不了本断言
-                        "MOSH CONNECT 60000 AAAAAAAAAAAAAAAAAAAAAA"
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("mosh-server new") -> {
+                            bootstraps += cmd
+                            // key 必须 22 字符规范 base64：客户端构造会校验，
+                            // 非法 key 抛异常走 ERROR 分支到不了本断言
+                            "MOSH CONNECT 60000 AAAAAAAAAAAAAAAAAAAAAA"
+                        }
+                        // exec PATH 无 ~/.local/bin：裸 herdr 失败，$HOME 候选命中
+                        cmd == "herdr --version" -> null
+                        cmd == "\$HOME/.local/bin/herdr --version" -> versionOutput
+                        cmd == "echo \$HOME" -> "/root"
+                        else -> null
                     }
-                    // exec PATH 无 ~/.local/bin：裸 herdr 失败，$HOME 候选命中
-                    cmd == "herdr --version" -> null
-                    cmd == "\$HOME/.local/bin/herdr --version" -> versionOutput
-                    cmd == "echo \$HOME" -> "/root"
-                    else -> null
-                }
-            },
-            execFactory = { FakeExec() },
-        )
+                },
+                execFactory = { FakeExec() },
+            )
         Dispatchers.setMain(Dispatchers.Unconfined)
         val (c, f) = herdrMoshController(fake)
         c.connect(80, 24)
@@ -608,25 +655,26 @@ class TerminalControllerTest {
         // not found → 回到引导卡片，但引导命令必须已带上 herdr 参数
         var installed = false
         val bootstraps = mutableListOf<String>()
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("mosh-server new") -> {
-                        bootstraps += cmd
-                        "mosh: command not found"
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("mosh-server new") -> {
+                            bootstraps += cmd
+                            "mosh: command not found"
+                        }
+                        cmd.contains("command -v mosh-server") -> if (installed) "/usr/bin/mosh-server" else null
+                        cmd.contains("os-release") -> "ID=ubuntu"
+                        cmd.contains("id -u") -> "0"
+                        cmd.contains("--version") -> versionOutput
+                        else -> null
                     }
-                    cmd.contains("command -v mosh-server") -> if (installed) "/usr/bin/mosh-server" else null
-                    cmd.contains("os-release") -> "ID=ubuntu"
-                    cmd.contains("id -u") -> "0"
-                    cmd.contains("--version") -> versionOutput
-                    else -> null
-                }
-            },
-            execFactory = { cmd ->
-                if (cmd.contains("apt-get install -y mosh")) installed = true
-                FakeExec(eof = true)
-            },
-        )
+                },
+                execFactory = { cmd ->
+                    if (cmd.contains("apt-get install -y mosh")) installed = true
+                    FakeExec(eof = true)
+                },
+            )
         val (c, f) = herdrMoshController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -650,19 +698,20 @@ class TerminalControllerTest {
         // 用户明确选择后置 sticky 标记，断链重连直走 SSH shell（仍注入 herdr），
         // 不再引导 mosh
         var bootstrapCount = 0
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("mosh-server new") -> {
-                        bootstrapCount++
-                        "mosh: command not found"
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("mosh-server new") -> {
+                            bootstrapCount++
+                            "mosh: command not found"
+                        }
+                        cmd.contains("--version") -> versionOutput
+                        else -> null
                     }
-                    cmd.contains("--version") -> versionOutput
-                    else -> null
-                }
-            },
-            execFactory = { FakeExec() },
-        )
+                },
+                execFactory = { FakeExec() },
+            )
         val (c, f) = herdrMoshController(fake, autoReconnect = true)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -682,7 +731,14 @@ class TerminalControllerTest {
         // 第二次注入带 1.5s 延迟：轮询等到计数为 2 再断言
         runBlocking {
             withTimeout(5_000) {
-                while (f.sent.count { it.decodeToString().contains("printf") && it.decodeToString().contains("herdr") } < 2) {
+                while (f.sent.count {
+                        it.decodeToString().contains(
+                            "printf",
+                        ) &&
+                            it.decodeToString().contains("herdr")
+                    } <
+                    2
+                ) {
                     delay(10)
                     scheduler.advanceUntilIdle()
                 }
@@ -702,16 +758,17 @@ class TerminalControllerTest {
     fun moshDegradedReconnectUsesPlainShell() {
         // MOSH 模式同样遵守 sticky 降级：重连不再引导 mosh-server，直接 SSH shell
         var bootstrapCount = 0
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                if (cmd.contains("mosh-server new")) {
-                    bootstrapCount++
-                    "MOSH CONNECT 60000 key"
-                } else {
-                    null
-                }
-            },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    if (cmd.contains("mosh-server new")) {
+                        bootstrapCount++
+                        "MOSH CONNECT 60000 key"
+                    } else {
+                        null
+                    }
+                },
+            )
         val (c, _) = moshController(fake)
         c.moshDegradedToSsh = true
         c.connect(80, 24)
@@ -727,16 +784,17 @@ class TerminalControllerTest {
     @Test
     fun moshMissingGuidesInstall() {
         // Mosh 模式：mosh-server 缺失（not found）→ 保留 SSH 连接进入「待安装」
-        //（引导卡片：安装或降级 SSH），不直接降级
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("mosh-server new") -> "mosh: command not found"
-                    cmd.contains("os-release") -> "ID=ubuntu"
-                    else -> null
-                }
-            },
-        )
+        // （引导卡片：安装或降级 SSH），不直接降级
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("mosh-server new") -> "mosh: command not found"
+                        cmd.contains("os-release") -> "ID=ubuntu"
+                        else -> null
+                    }
+                },
+            )
         val (c, f) = moshController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -751,25 +809,26 @@ class TerminalControllerTest {
         // 免密 sudo：安装命令（sudo -n apt-get…）执行 → command -v 验证通过 →
         // 重新引导仍缺（模拟装后 PATH 未刷新）→ 回到引导卡片（可重试/降级）
         var installed = false
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    // bootstrap 命令串也含 os-release：mosh-server 分支必须在最前
-                    cmd.contains("mosh-server new") -> "mosh: command not found"
-                    cmd.contains("command -v mosh-server") ->
-                        if (installed) "/usr/bin/mosh-server" else null
-                    cmd.contains("os-release") -> "ID=ubuntu"
-                    cmd.contains("id -u") -> "1000"
-                    cmd.contains("command -v sudo") -> "/usr/bin/sudo"
-                    cmd.contains("sudo -n true") -> "SUDO_OK"
-                    else -> null
-                }
-            },
-            execFactory = { cmd ->
-                if (cmd.contains("apt-get install -y mosh")) installed = true
-                FakeExec(eof = true)
-            },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        // bootstrap 命令串也含 os-release：mosh-server 分支必须在最前
+                        cmd.contains("mosh-server new") -> "mosh: command not found"
+                        cmd.contains("command -v mosh-server") ->
+                            if (installed) "/usr/bin/mosh-server" else null
+                        cmd.contains("os-release") -> "ID=ubuntu"
+                        cmd.contains("id -u") -> "1000"
+                        cmd.contains("command -v sudo") -> "/usr/bin/sudo"
+                        cmd.contains("sudo -n true") -> "SUDO_OK"
+                        else -> null
+                    }
+                },
+                execFactory = { cmd ->
+                    if (cmd.contains("apt-get install -y mosh")) installed = true
+                    FakeExec(eof = true)
+                },
+            )
         val (c, f) = moshController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -791,26 +850,27 @@ class TerminalControllerTest {
         // 需要 sudo 密码：首次点击无密码 → 卡片提示输入；输入后安装命令走
         // `sudo -S` 且密码经 exec stdin 写入（不进命令字符串）
         var passwordSeen = ""
-        val fake = FakeSsh(
-            commandHandler = { cmd ->
-                when {
-                    cmd.contains("mosh-server new") -> "mosh: command not found"
-                    cmd.contains("command -v mosh-server") -> "/usr/bin/mosh-server"
-                    cmd.contains("os-release") -> "ID=debian"
-                    cmd.contains("id -u") -> "1000"
-                    cmd.contains("command -v sudo") -> "/usr/bin/sudo"
-                    cmd.contains("sudo -n true") -> "sudo: a password is required"
-                    else -> null
-                }
-            },
-            execFactory = { cmd ->
-                if (cmd.contains("sudo -S")) {
-                    FakeExec(onWrite = { passwordSeen = it.decodeToString() }, eof = true)
-                } else {
-                    FakeExec(eof = true)
-                }
-            },
-        )
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    when {
+                        cmd.contains("mosh-server new") -> "mosh: command not found"
+                        cmd.contains("command -v mosh-server") -> "/usr/bin/mosh-server"
+                        cmd.contains("os-release") -> "ID=debian"
+                        cmd.contains("id -u") -> "1000"
+                        cmd.contains("command -v sudo") -> "/usr/bin/sudo"
+                        cmd.contains("sudo -n true") -> "sudo: a password is required"
+                        else -> null
+                    }
+                },
+                execFactory = { cmd ->
+                    if (cmd.contains("sudo -S")) {
+                        FakeExec(onWrite = { passwordSeen = it.decodeToString() }, eof = true)
+                    } else {
+                        FakeExec(eof = true)
+                    }
+                },
+            )
         val (c, f) = moshController(fake)
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)

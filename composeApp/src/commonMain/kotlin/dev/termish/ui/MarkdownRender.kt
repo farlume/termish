@@ -2,12 +2,12 @@ package dev.termish.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 
@@ -32,11 +32,14 @@ fun renderMarkdown(
                 inCodeBlock = !inCodeBlock
                 b.append("\n")
             }
-            inCodeBlock -> b.withStyle(SpanStyle(
-                fontFamily = FontFamily.Monospace,
-                background = codeBg,
-                fontSize = baseFontSize * 0.92f,
-            )) { b.append(line) }
+            inCodeBlock ->
+                b.withStyle(
+                    SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        background = codeBg,
+                        fontSize = baseFontSize * 0.92f,
+                    ),
+                ) { b.append(line) }
             else -> renderBlockLine(b, line, trimmed, baseFontSize, codeBg, linkColor)
         }
         b.append("\n")
@@ -58,10 +61,18 @@ private fun renderBlockLine(
             val level = trimmed.takeWhile { it == '#' }.length.coerceAtMost(6)
             val text = trimmed.drop(level).trimStart()
             val size = base * (1.55f - level * 0.12f)
-            inline(b, text, base, codeBg, linkColor, baseStyle = SpanStyle(
-                fontSize = size,
-                fontWeight = FontWeight.Bold,
-            ))
+            inline(
+                b,
+                text,
+                base,
+                codeBg,
+                linkColor,
+                baseStyle =
+                    SpanStyle(
+                        fontSize = size,
+                        fontWeight = FontWeight.Bold,
+                    ),
+            )
         }
         // 引用：前缀色块 + 斜体
         trimmed.startsWith(">") -> {
@@ -81,7 +92,9 @@ private fun renderBlockLine(
         // 有序列表
         trimmed.matches(Regex("\\d+\\.\\s.*")) -> {
             val idx = trimmed.indexOf('.')
-            b.withStyle(SpanStyle(color = linkColor, fontWeight = FontWeight.Bold)) { b.append("${trimmed.substring(0, idx)}. ") }
+            b.withStyle(
+                SpanStyle(color = linkColor, fontWeight = FontWeight.Bold),
+            ) { b.append("${trimmed.substring(0, idx)}. ") }
             inline(b, trimmed.substring(idx + 1).trimStart(), base, codeBg, linkColor)
         }
         // 普通段落
@@ -104,13 +117,19 @@ private fun inline(
         b.withStyle(baseStyle) { b.append(text.substring(last, m.range.first)) }
         val tok = m.value
         when {
-            tok.startsWith("**") -> b.withStyle(baseStyle + SpanStyle(fontWeight = FontWeight.Bold)) { b.append(tok.trim('*')) }
-            tok.startsWith("`") -> b.withStyle(
-                baseStyle + SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg, fontSize = base * 0.92f),
-            ) { b.append(tok.trim('`')) }
+            tok.startsWith(
+                "**",
+            ) -> b.withStyle(baseStyle + SpanStyle(fontWeight = FontWeight.Bold)) { b.append(tok.trim('*')) }
+            tok.startsWith("`") ->
+                b.withStyle(
+                    baseStyle +
+                        SpanStyle(fontFamily = FontFamily.Monospace, background = codeBg, fontSize = base * 0.92f),
+                ) { b.append(tok.trim('`')) }
             tok.startsWith("[") -> {
                 val inner = tok.substring(1, tok.indexOf(']'))
-                b.withStyle(baseStyle + SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) { b.append(inner) }
+                b.withStyle(
+                    baseStyle + SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline),
+                ) { b.append(inner) }
             }
             else -> b.withStyle(baseStyle + SpanStyle(fontStyle = FontStyle.Italic)) { b.append(tok.trim('*')) }
         }

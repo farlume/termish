@@ -95,7 +95,10 @@ internal class Fragmenter {
     private var lastInstruction: TransportInstruction? = null
     private var lastMtu = -1
 
-    fun makeFragments(inst: TransportInstruction, mtu: Int): List<Fragment> {
+    fun makeFragments(
+        inst: TransportInstruction,
+        mtu: Int,
+    ): List<Fragment> {
         val usable = mtu - Fragment.HEADER_LEN
         val last = lastInstruction
         // SSP 语义：同 old/new 的重发必须携带相同 diff（防重发内容漂移）

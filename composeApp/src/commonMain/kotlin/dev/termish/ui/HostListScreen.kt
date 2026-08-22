@@ -8,8 +8,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,8 +38,8 @@ import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneIphone
-import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,8 +79,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
-import dev.termish.ssh.SftpSession
-import dev.termish.ui.theme.StatusColors
 import dev.termish.generated.resources.Res
 import dev.termish.generated.resources.host_alma
 import dev.termish.generated.resources.host_alpine
@@ -94,13 +92,15 @@ import dev.termish.generated.resources.host_istoreos
 import dev.termish.generated.resources.host_kali
 import dev.termish.generated.resources.host_linux
 import dev.termish.generated.resources.host_mac
-import dev.termish.generated.resources.host_openwrt
 import dev.termish.generated.resources.host_opensuse
+import dev.termish.generated.resources.host_openwrt
 import dev.termish.generated.resources.host_raspbian
 import dev.termish.generated.resources.host_rocky
 import dev.termish.generated.resources.host_synology
 import dev.termish.generated.resources.host_ubuntu
 import dev.termish.generated.resources.host_windows
+import dev.termish.ssh.SftpSession
+import dev.termish.ui.theme.StatusColors
 import dev.termish.util.monospaceFontFamily
 import kotlinx.coroutines.delay
 import org.jetbrains.compose.resources.DrawableResource
@@ -111,10 +111,13 @@ sealed interface HostSessionItem {
     val hostId: String
     val isActive: Boolean
     val isConnecting: Boolean
+
     /** 真正已连上（CONNECTED）：连接中不算，首页统计与标签据此三态显示。 */
     val isConnected: Boolean
 
-    data class Terminal(val controller: TerminalController) : HostSessionItem {
+    data class Terminal(
+        val controller: TerminalController,
+    ) : HostSessionItem {
         override val hostId: String get() = controller.host.id
         override val isActive: Boolean get() = isActiveStatus(controller.status)
         override val isConnecting: Boolean
@@ -122,8 +125,12 @@ sealed interface HostSessionItem {
         override val isConnected: Boolean get() = controller.status == ConnStatus.CONNECTED
     }
 
-    data class Sftp(val host: Host, val session: SftpSession?) : HostSessionItem {
+    data class Sftp(
+        val host: Host,
+        val session: SftpSession?,
+    ) : HostSessionItem {
         override val hostId: String get() = host.id
+
         /** session=null 是进程重启后恢复的未连接条目：灰色断开态。 */
         override val isActive: Boolean get() = session != null
         override val isConnecting: Boolean get() = false
@@ -132,8 +139,7 @@ sealed interface HostSessionItem {
 }
 
 /** 活跃会话判定：连接中/认证中/已连接都算（与连接页状态点同源）。 */
-internal fun isActiveStatus(status: ConnStatus): Boolean =
-    status == ConnStatus.CONNECTED || status == ConnStatus.CONNECTING || status == ConnStatus.AUTH
+internal fun isActiveStatus(status: ConnStatus): Boolean = status == ConnStatus.CONNECTED || status == ConnStatus.CONNECTING || status == ConnStatus.AUTH
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -161,18 +167,19 @@ fun HostListScreen(
             searchFocusRequester.requestFocus()
         }
     }
-    val filtered = hosts
-        .filter { h ->
-            query.isBlank() ||
-                h.name.contains(query, ignoreCase = true) ||
-                h.hostname.contains(query, ignoreCase = true) ||
-                h.username.contains(query, ignoreCase = true) ||
-                h.system.contains(query, ignoreCase = true) ||
-                h.tags.any { it.contains(query, ignoreCase = true) }
-        }
-        // 稳定顺序：按创建时间排（新主机追加在尾），不随最近连接重排——
-        // 连接后回列表卡片位置不变，肌肉记忆可依赖（旧数据 createdAt=0 按名称兜底）
-        .sortedWith(compareBy<Host> { it.createdAt }.thenBy { it.name.lowercase() })
+    val filtered =
+        hosts
+            .filter { h ->
+                query.isBlank() ||
+                    h.name.contains(query, ignoreCase = true) ||
+                    h.hostname.contains(query, ignoreCase = true) ||
+                    h.username.contains(query, ignoreCase = true) ||
+                    h.system.contains(query, ignoreCase = true) ||
+                    h.tags.any { it.contains(query, ignoreCase = true) }
+            }
+            // 稳定顺序：按创建时间排（新主机追加在尾），不随最近连接重排——
+            // 连接后回列表卡片位置不变，肌肉记忆可依赖（旧数据 createdAt=0 按名称兜底）
+            .sortedWith(compareBy<Host> { it.createdAt }.thenBy { it.name.lowercase() })
 
     // 批处理（多选）模式：头像点击 / 长按卡片进入
     var selectionMode by remember { mutableStateOf(false) }
@@ -259,10 +266,11 @@ fun HostListScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                        .focusRequester(searchFocusRequester),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .focusRequester(searchFocusRequester),
                     placeholder = { Text(s.hostsSearch) },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     trailingIcon = {
@@ -373,8 +381,12 @@ private fun SelectionHeader(
                 Icon(
                     Icons.Default.Edit,
                     contentDescription = s.hostsEdit,
-                    tint = if (count == 1) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+                    tint =
+                        if (count == 1) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                        },
                 )
             }
             Box {
@@ -454,65 +466,83 @@ private fun HostCard(
     val disconnectedCount = sessions.size - connectedCount - connectingCount
     // 有会话：统计文字分段着色；无会话显示连接详情
     val sessionStats = sessions.isNotEmpty()
-    val detail = if (!sessionStats) {
-        val mode = if (host.launchHerdr) s.hostsModeHerdr
-        else if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh
-        buildString {
-            append(mode)
-            append(", ")
-            append(host.username)
-            if (host.system.isNotBlank()) {
+    val detail =
+        if (!sessionStats) {
+            val mode =
+                if (host.launchHerdr) {
+                    s.hostsModeHerdr
+                } else if (host.connectionMode == ConnectionMode.MOSH) {
+                    s.hostsModeMosh
+                } else {
+                    s.hostsModeSsh
+                }
+            buildString {
+                append(mode)
                 append(", ")
-                append(host.system)
+                append(host.username)
+                if (host.system.isNotBlank()) {
+                    append(", ")
+                    append(host.system)
+                }
             }
+        } else {
+            ""
         }
-    } else {
-        ""
-    }
-    val statsText = if (sessionStats) {
-        buildAnnotatedString {
-            if (connectedCount > 0) {
-                withStyle(SpanStyle(color = StatusColors.Connected)) {
-                    append("$connectedCount ${s.hostsConnected}")
+    val statsText =
+        if (sessionStats) {
+            buildAnnotatedString {
+                if (connectedCount > 0) {
+                    withStyle(SpanStyle(color = StatusColors.Connected)) {
+                        append("$connectedCount ${s.hostsConnected}")
+                    }
+                }
+                if (connectingCount > 0) {
+                    if (connectedCount > 0) append(", ")
+                    withStyle(SpanStyle(color = StatusColors.Warning)) {
+                        append("$connectingCount ${s.connStatusConnecting}")
+                    }
+                }
+                if (disconnectedCount > 0) {
+                    if (connectedCount > 0 || connectingCount > 0) append(", ")
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                        append("$disconnectedCount ${s.connStatusClosed}")
+                    }
                 }
             }
-            if (connectingCount > 0) {
-                if (connectedCount > 0) append(", ")
-                withStyle(SpanStyle(color = StatusColors.Warning)) {
-                    append("$connectingCount ${s.connStatusConnecting}")
-                }
-            }
-            if (disconnectedCount > 0) {
-                if (connectedCount > 0 || connectingCount > 0) append(", ")
-                withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                    append("$disconnectedCount ${s.connStatusClosed}")
-                }
-            }
+        } else {
+            null
         }
-    } else null
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-            .combinedClickable(
-                onClick = onCardClick,
-                onLongClick = onLongClick,
-            ),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .combinedClickable(
+                    onClick = onCardClick,
+                    onLongClick = onLongClick,
+                ),
         shape = RoundedCornerShape(14.dp),
         // 跟随主题：浅色=白、暗黑=深色；批处理选中项用主色边框高亮
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            },
-        ),
-        border = BorderStroke(
-            width = if (selected) 2.dp else 1.dp,
-            color = if (selected) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.outlineVariant,
-        ),
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    if (selected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+            ),
+        border =
+            BorderStroke(
+                width = if (selected) 2.dp else 1.dp,
+                color =
+                    if (selected) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+            ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
@@ -560,15 +590,24 @@ private fun HostCard(
             if (selectionMode) {
                 // 选中状态标记：勾选圆
                 Box(
-                    Modifier.size(22.dp).clip(RoundedCornerShape(11.dp))
+                    Modifier
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(11.dp))
                         .background(
-                            if (selected) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.surfaceVariant,
+                            if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (selected) {
-                        Text("✓", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            "✓",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.labelMedium,
+                        )
                     }
                 }
             } else if (sessions.isNotEmpty()) {
@@ -626,64 +665,77 @@ private fun SessionCountMenu(
             HorizontalDivider()
             sessions.forEach { item ->
                 // 三态标签：已连接绿 / 连接中橙 / 已断开灰（Sftp 会话恒为活跃）
-                val statusLabel = when (item) {
-                    is HostSessionItem.Terminal -> when (item.controller.status) {
-                        ConnStatus.CONNECTED -> s.hostsActive
-                        ConnStatus.CONNECTING, ConnStatus.AUTH -> s.connStatusConnecting
-                        else -> s.connStatusClosed
+                val statusLabel =
+                    when (item) {
+                        is HostSessionItem.Terminal ->
+                            when (item.controller.status) {
+                                ConnStatus.CONNECTED -> s.hostsActive
+                                ConnStatus.CONNECTING, ConnStatus.AUTH -> s.connStatusConnecting
+                                else -> s.connStatusClosed
+                            }
+                        // SFTP：有连接=活跃；断开保留（session=null）=已断开，可进 tab 重连
+                        is HostSessionItem.Sftp -> if (item.session != null) s.hostsActive else s.connStatusClosed
                     }
-                    // SFTP：有连接=活跃；断开保留（session=null）=已断开，可进 tab 重连
-                    is HostSessionItem.Sftp -> if (item.session != null) s.hostsActive else s.connStatusClosed
-                }
-                val statusColor = when (item) {
-                    is HostSessionItem.Terminal -> when (item.controller.status) {
-                        ConnStatus.CONNECTED -> StatusColors.Connected
-                        ConnStatus.CONNECTING, ConnStatus.AUTH -> StatusColors.Warning
-                        else -> StatusColors.Neutral
+                val statusColor =
+                    when (item) {
+                        is HostSessionItem.Terminal ->
+                            when (item.controller.status) {
+                                ConnStatus.CONNECTED -> StatusColors.Connected
+                                ConnStatus.CONNECTING, ConnStatus.AUTH -> StatusColors.Warning
+                                else -> StatusColors.Neutral
+                            }
+                        is HostSessionItem.Sftp ->
+                            if (item.session !=
+                                null
+                            ) {
+                                StatusColors.Connected
+                            } else {
+                                StatusColors.Neutral
+                            }
                     }
-                    is HostSessionItem.Sftp -> if (item.session != null) StatusColors.Connected else StatusColors.Neutral
-                }
                 when (item) {
-                    is HostSessionItem.Terminal -> DropdownMenuItem(
-                        text = {
-                            Text(
-                                "${item.controller.host.username}@${item.controller.host.hostname}",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        trailingIcon = {
-                            Text(
-                                statusLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = statusColor,
-                            )
-                        },
-                        onClick = {
-                            open = false
-                            onOpenTerminal(item.controller)
-                        },
-                    )
-                    is HostSessionItem.Sftp -> DropdownMenuItem(
-                        text = {
-                            Text(
-                                "${item.host.username}@${item.host.hostname}",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        },
-                        trailingIcon = {
-                            Text(
-                                statusLabel,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = statusColor,
-                            )
-                        },
-                        onClick = {
-                            open = false
-                            onOpenSftp(item.host, item.session)
-                        },
-                    )
+                    is HostSessionItem.Terminal ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "${item.controller.host.username}@${item.controller.host.hostname}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            trailingIcon = {
+                                Text(
+                                    statusLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor,
+                                )
+                            },
+                            onClick = {
+                                open = false
+                                onOpenTerminal(item.controller)
+                            },
+                        )
+                    is HostSessionItem.Sftp ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "${item.host.username}@${item.host.hostname}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            trailingIcon = {
+                                Text(
+                                    statusLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor,
+                                )
+                            },
+                            onClick = {
+                                open = false
+                                onOpenSftp(item.host, item.session)
+                            },
+                        )
                 }
             }
             HorizontalDivider()
@@ -720,8 +772,12 @@ internal fun systemSvg(system: String): DrawableResource? {
         s.contains("opensuse") || s.contains("suse") -> Res.drawable.host_opensuse
         s.contains("synology") || s.contains("dsm") -> Res.drawable.host_synology
         s.contains("linux") ||
-            s.contains("redhat") || s.contains("manjaro") || s.contains("gentoo") ||
-            s.contains("mint") || s.contains("nixos") || s.contains("pop") ||
+            s.contains("redhat") ||
+            s.contains("manjaro") ||
+            s.contains("gentoo") ||
+            s.contains("mint") ||
+            s.contains("nixos") ||
+            s.contains("pop") ||
             s.contains("elementary") -> Res.drawable.host_linux
         else -> null
     }
@@ -736,9 +792,15 @@ internal fun systemIcon(system: String): ImageVector? {
         s.contains("macos") || s.contains("darwin") || s.contains("osx") || s.contains("mac") -> Icons.Filled.LaptopMac
         s.contains("windows") || s.contains("win") -> Icons.Filled.DesktopWindows
         s.contains("freebsd") || s.contains("bsd") -> Icons.Filled.Memory
-        s.contains("linux") || s.contains("ubuntu") || s.contains("debian") ||
-            s.contains("centos") || s.contains("fedora") || s.contains("arch") ||
-            s.contains("alpine") || s.contains("kali") || s.contains("redhat") ||
+        s.contains("linux") ||
+            s.contains("ubuntu") ||
+            s.contains("debian") ||
+            s.contains("centos") ||
+            s.contains("fedora") ||
+            s.contains("arch") ||
+            s.contains("alpine") ||
+            s.contains("kali") ||
+            s.contains("redhat") ||
             s.contains("raspbian") -> Icons.Filled.Terminal
         else -> null
     }
@@ -749,7 +811,10 @@ internal fun systemIcon(system: String): ImageVector? {
  * 云主机默认图标兜底。首页卡片 / 终端 tab / SFTP 选主机统一走这里，保证渲染一致。
  */
 @Composable
-internal fun SystemAvatarIcon(system: String, size: Dp) {
+internal fun SystemAvatarIcon(
+    system: String,
+    size: Dp,
+) {
     val svg = systemSvg(system)
     if (svg != null) {
         Icon(painterResource(svg), contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
@@ -761,7 +826,12 @@ internal fun SystemAvatarIcon(system: String, size: Dp) {
         return
     }
     // 未知系统：默认云主机图标（白色）
-    Icon(painterResource(Res.drawable.host_cloud), contentDescription = null, tint = Color.White, modifier = Modifier.size(size))
+    Icon(
+        painterResource(Res.drawable.host_cloud),
+        contentDescription = null,
+        tint = Color.White,
+        modifier = Modifier.size(size),
+    )
 }
 
 /**
@@ -792,10 +862,14 @@ internal fun systemColor(system: String): Color {
         s.contains("raspbian") || s.contains("raspberry") -> Color(0xFFC51A4A)
         s.contains("opensuse") || s.contains("suse") -> Color(0xFF73BA25)
         s.contains("synology") || s.contains("dsm") -> Color(0xFF1692D4)
-        s.contains("linux") || s.contains("redhat") ||
-            s.contains("manjaro") || s.contains("gentoo") ||
-            s.contains("mint") || s.contains("nixos") ||
-            s.contains("pop") || s.contains("elementary") -> Color(0xFF475569)
+        s.contains("linux") ||
+            s.contains("redhat") ||
+            s.contains("manjaro") ||
+            s.contains("gentoo") ||
+            s.contains("mint") ||
+            s.contains("nixos") ||
+            s.contains("pop") ||
+            s.contains("elementary") -> Color(0xFF475569)
         // 未知系统：品牌翠绿（浅色主题 primary 同源），白色云主机图标在上面更醒目
         else -> Color(0xFF059669)
     }

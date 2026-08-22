@@ -6,7 +6,6 @@ import kotlin.test.assertNull
 
 /** mosh-server 引导输出的 MOSH CONNECT 解析。 */
 class MoshConnectParseTest {
-
     @Test
     fun parsesStandardMoshConnectLine() {
         assertEquals(60001 to "AbCdEf==", parseMoshConnect("MOSH CONNECT 60001 AbCdEf=="))

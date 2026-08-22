@@ -29,4 +29,7 @@ expect class ScreenPlayer(
 
 /** 视频渲染面（Android = ExoPlayer PlayerView；其余平台黑底占位）。 */
 @Composable
-expect fun ScreenVideoSurface(player: ScreenPlayer?, modifier: Modifier = Modifier)
+expect fun ScreenVideoSurface(
+    player: ScreenPlayer?,
+    modifier: Modifier = Modifier,
+)

@@ -7,20 +7,26 @@ import kotlin.test.assertTrue
 
 /** MoshTransport 定时/发送路径回归：nowMs 注入、sendDatagram 旁路捕获。 */
 class TransportTest {
-
     private class Harness {
         var now = 0L
         val sent = ArrayList<ByteArray>()
         var states = 0
-        val transport = MoshTransport(
-            ipv6Path = false,
-            initialCols = 80,
-            initialRows = 24,
-            key = dev.termish.util.base64Encode(ByteArray(16)).substring(0, 22),
-            nowMs = { now },
-            sendDatagram = { sent.add(it); SendResult.OK },
-            onNewState = { states++ },
-        )
+        val transport =
+            MoshTransport(
+                ipv6Path = false,
+                initialCols = 80,
+                initialRows = 24,
+                key =
+                    dev.termish.util
+                        .base64Encode(ByteArray(16))
+                        .substring(0, 22),
+                nowMs = { now },
+                sendDatagram = {
+                    sent.add(it)
+                    SendResult.OK
+                },
+                onNewState = { states++ },
+            )
     }
 
     @Test
@@ -67,15 +73,16 @@ class TransportTest {
         // 之后 counterpartyShutdownAckSent() 为 true（mosh 干净退出条件之一）
         val h = Harness()
         h.transport.tick() // 初始握手 ack
-        val inst = TransportInstruction(
-            protocolVersion = 2,
-            oldNum = 0u,
-            newNum = ULong.MAX_VALUE,
-            ackNum = 0u,
-            throwawayNum = 0u,
-            diff = ByteArray(0),
-            chaff = ByteArray(0),
-        )
+        val inst =
+            TransportInstruction(
+                protocolVersion = 2,
+                oldNum = 0u,
+                newNum = ULong.MAX_VALUE,
+                ackNum = 0u,
+                throwawayNum = 0u,
+                diff = ByteArray(0),
+                chaff = ByteArray(0),
+            )
         val payload = Fragmenter().makeFragments(inst, 400).first().toBytes()
         h.transport.processPacket(MoshCryptoSession.PlainPacket(1u, 0, 0xffff, payload))
         assertFalse(h.transport.counterpartyShutdownAckSent())
@@ -88,15 +95,16 @@ class TransportTest {
     fun emptyDiffStateDoesNotNotifyRenderer() {
         // 空 diff（纯 ack/心跳）不应触发 onNewState：内容未变，避免无谓的全量 UI 拷贝
         val h = Harness()
-        val inst = TransportInstruction(
-            protocolVersion = 2,
-            oldNum = 0u,
-            newNum = 1u,
-            ackNum = 0u,
-            throwawayNum = 0u,
-            diff = ByteArray(0),
-            chaff = ByteArray(0),
-        )
+        val inst =
+            TransportInstruction(
+                protocolVersion = 2,
+                oldNum = 0u,
+                newNum = 1u,
+                ackNum = 0u,
+                throwawayNum = 0u,
+                diff = ByteArray(0),
+                chaff = ByteArray(0),
+            )
         val payload = Fragmenter().makeFragments(inst, 400).first().toBytes()
         h.transport.processPacket(MoshCryptoSession.PlainPacket(1u, 0, 0xffff, payload))
         assertEquals(0, h.states)

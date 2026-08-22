@@ -10,16 +10,26 @@ import kotlinx.serialization.json.Json
  * 本文件只描述 V1 轮询所需的最小字段集（`herdr api snapshot` 输出子集），
  * 解析按 ignoreUnknownKeys 容错——herdr 升级加字段不破坏客户端。
  * 完整协议见 herdr 仓库 docs/socket-api.mdx（session.snapshot / events.subscribe）。
+ *
+ * herdr agent 语义状态（pane.agent_status）。
  */
 
-/** herdr agent 语义状态（pane.agent_status）。 */
 @Serializable
 enum class HerdrAgentStatus {
-    @SerialName("idle") IDLE,
-    @SerialName("working") WORKING,
-    @SerialName("blocked") BLOCKED,
-    @SerialName("done") DONE,
-    @SerialName("unknown") UNKNOWN,
+    @SerialName("idle")
+    IDLE,
+
+    @SerialName("working")
+    WORKING,
+
+    @SerialName("blocked")
+    BLOCKED,
+
+    @SerialName("done")
+    DONE,
+
+    @SerialName("unknown")
+    UNKNOWN,
 }
 
 /** 会话快照中的单个 pane（终端格子）。 */
@@ -105,18 +115,20 @@ data class HerdrCliResult(
     val type: String? = null,
 )
 
-private val json = Json {
-    ignoreUnknownKeys = true // herdr 升级加字段不破坏客户端
-    coerceInputValues = true // 空串/缺失枚举值按默认处理
-}
+private val json =
+    Json {
+        ignoreUnknownKeys = true // herdr 升级加字段不破坏客户端
+        coerceInputValues = true // 空串/缺失枚举值按默认处理
+    }
 
 /**
  * 解析 `herdr api snapshot` 输出。CLI 输出与 raw socket 响应的
  * `result` 结构同源（CLI 就是 socket 客户端），统一按
  * `result.snapshot` 提取；解析失败返回 null（不抛）。
  */
-fun parseHerdrSnapshot(raw: String): HerdrSessionSnapshot? = try {
-    json.decodeFromString<HerdrCliResponse>(raw).result?.snapshot
-} catch (_: Exception) {
-    null
-}
+fun parseHerdrSnapshot(raw: String): HerdrSessionSnapshot? =
+    try {
+        json.decodeFromString<HerdrCliResponse>(raw).result?.snapshot
+    } catch (_: Exception) {
+        null
+    }

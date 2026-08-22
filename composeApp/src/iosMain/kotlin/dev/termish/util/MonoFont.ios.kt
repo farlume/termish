@@ -20,8 +20,9 @@ import org.jetbrains.skia.FontStyle
  */
 private val cjkFamily: FontFamily by lazy {
     runCatching {
-        val typeface = FontMgr.default.legacyMakeTypeface("PingFang SC", FontStyle.NORMAL)
-            ?: FontMgr.default.matchFamilyStyle("PingFang SC", FontStyle.NORMAL)
+        val typeface =
+            FontMgr.default.legacyMakeTypeface("PingFang SC", FontStyle.NORMAL)
+                ?: FontMgr.default.matchFamilyStyle("PingFang SC", FontStyle.NORMAL)
         typeface?.let { FontFamily(SkiaTypeface(it)) } ?: FontFamily.Default
     }.getOrDefault(FontFamily.Default)
 }

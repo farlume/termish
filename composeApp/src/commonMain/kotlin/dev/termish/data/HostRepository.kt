@@ -11,9 +11,12 @@ import kotlinx.serialization.json.Json
  */
 class HostRepository(
     private val settings: Settings = Settings(),
-    private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
+    private val json: Json =
+        Json {
+            ignoreUnknownKeys = true
+            encodeDefaults = true
+        },
 ) {
-
     private val hostsKey = "termish.hosts.v1"
     private val settingsKey = "termish.settings.v1"
     private val tagGroupsKey = "termish.tag_groups.v1"
@@ -45,7 +48,10 @@ class HostRepository(
         saveHosts(listHosts().filter { it.id != id })
     }
 
-    fun touchConnected(id: String, fingerprint: String?) {
+    fun touchConnected(
+        id: String,
+        fingerprint: String?,
+    ) {
         patchHost(id) {
             it.copy(
                 lastConnectedAt = currentTimeMillis(),
@@ -55,7 +61,10 @@ class HostRepository(
     }
 
     /** 仅记录主机密钥指纹（TOFU 弹窗点信任后立即调用，与后续认证成败解耦）。 */
-    fun recordHostKey(id: String, fingerprint: String) {
+    fun recordHostKey(
+        id: String,
+        fingerprint: String,
+    ) {
         patchHost(id) { it.copy(knownHostFingerprint = fingerprint) }
     }
 
@@ -65,7 +74,10 @@ class HostRepository(
      * lastConnectedAt），用快照 upsert 会把它们抹掉（新主机指纹丢失
      * → 每次重连重复弹确认窗的根因）。
      */
-    fun patchHost(id: String, transform: (Host) -> Host) {
+    fun patchHost(
+        id: String,
+        transform: (Host) -> Host,
+    ) {
         val hosts = listHosts().map { h -> if (h.id == id) transform(h) else h }
         saveHosts(hosts)
     }
@@ -156,7 +168,10 @@ class HostRepository(
         }
     }
 
-    fun saveFavorites(hostId: String, paths: List<String>) {
+    fun saveFavorites(
+        hostId: String,
+        paths: List<String>,
+    ) {
         settings.putString("termish.favorites.$hostId", json.encodeToString(paths))
     }
 
@@ -180,7 +195,10 @@ class HostRepository(
 
     /** 最近 SFTP 会话：主机 id + 浏览路径（v2 起带路径，进程重启后恢复到上次目录）。 */
     @Serializable
-    data class RecentSftpEntry(val hostId: String, val path: String = "")
+    data class RecentSftpEntry(
+        val hostId: String,
+        val path: String = "",
+    )
 
     private val recentSftpKey = "termish.recent_sftp.v2"
 
@@ -198,7 +216,10 @@ class HostRepository(
     }
 
     /** 解析失败时把原始内容备份到独立 key（最多保留 3 份），避免静默丢数据。 */
-    private fun backupCorrupt(key: String, raw: String) {
+    private fun backupCorrupt(
+        key: String,
+        raw: String,
+    ) {
         try {
             settings.putString("$key.corrupt.${currentTimeMillis()}", raw)
             // 超出 3 份时删最旧的（key 含时间戳，字典序即时间序）
@@ -208,5 +229,8 @@ class HostRepository(
         }
     }
 
-    private fun currentTimeMillis(): Long = kotlinx.datetime.Clock.System.now().toEpochMilliseconds()
+    private fun currentTimeMillis(): Long =
+        kotlinx.datetime.Clock.System
+            .now()
+            .toEpochMilliseconds()
 }

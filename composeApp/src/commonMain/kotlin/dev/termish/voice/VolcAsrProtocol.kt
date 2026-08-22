@@ -31,7 +31,6 @@ import kotlinx.serialization.json.put
  * flags：0000 = 普通包；0010 = 最后一包（负包）。
  */
 object VolcAsrProtocol {
-
     /** 双向流式（优化版）接口地址。 */
     const val WSS_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 
@@ -39,12 +38,13 @@ object VolcAsrProtocol {
     const val DEFAULT_RESOURCE_ID = "volc.seedasr.sauc.duration"
 
     /** 所有可用资源 ID（设置页选择用）。 */
-    val RESOURCE_IDS = listOf(
-        "volc.seedasr.sauc.duration",
-        "volc.seedasr.sauc.concurrent",
-        "volc.bigasr.sauc.duration",
-        "volc.bigasr.sauc.concurrent",
-    )
+    val RESOURCE_IDS =
+        listOf(
+            "volc.seedasr.sauc.duration",
+            "volc.seedasr.sauc.concurrent",
+            "volc.bigasr.sauc.duration",
+            "volc.bigasr.sauc.concurrent",
+        )
 
     // ---- header 字节 ----
 
@@ -52,11 +52,13 @@ object VolcAsrProtocol {
     fun fullRequestHeader(): ByteArray = byteArrayOf(0x11, 0x10, 0x10, 0x00)
 
     /** audio only request；[last] = 最后一包（负包，flags=0010）。 */
-    fun audioHeader(last: Boolean): ByteArray =
-        if (last) byteArrayOf(0x11, 0x22, 0x00, 0x00) else byteArrayOf(0x11, 0x20, 0x00, 0x00)
+    fun audioHeader(last: Boolean): ByteArray = if (last) byteArrayOf(0x11, 0x22, 0x00, 0x00) else byteArrayOf(0x11, 0x20, 0x00, 0x00)
 
     /** 组帧：header + 大端 payload size + payload。 */
-    fun frame(header: ByteArray, payload: ByteArray): ByteArray {
+    fun frame(
+        header: ByteArray,
+        payload: ByteArray,
+    ): ByteArray {
         val out = ByteArray(8 + payload.size)
         header.copyInto(out, 0)
         val n = payload.size
@@ -73,12 +75,13 @@ object VolcAsrProtocol {
      * 音频统一 pcm_s16le / 16kHz / 单声道（录音端保证该格式）。
      */
     fun fullRequestJson(uid: String): String {
-        val params = buildJsonObject {
-            // enable_punc 默认 true（标点让命令/文本更可读）；enable_itn 默认 true
-            put("model_name", "bigmodel")
-            put("enable_punc", true)
-            put("enable_itn", true)
-        }
+        val params =
+            buildJsonObject {
+                // enable_punc 默认 true（标点让命令/文本更可读）；enable_itn 默认 true
+                put("model_name", "bigmodel")
+                put("enable_punc", true)
+                put("enable_itn", true)
+            }
         return buildString {
             append("{\"user\":{\"uid\":\"")
             append(uid)
@@ -93,7 +96,10 @@ object VolcAsrProtocol {
     /** 消息类型（byte1 高 4 位）。 */
     fun messageType(bytes: ByteArray): Int = (bytes[1].toInt() ushr 4) and 0xF
 
-    private fun be32(bytes: ByteArray, offset: Int): Long =
+    private fun be32(
+        bytes: ByteArray,
+        offset: Int,
+    ): Long =
         ((bytes[offset].toLong() and 0xff) shl 24) or
             ((bytes[offset + 1].toLong() and 0xff) shl 16) or
             ((bytes[offset + 2].toLong() and 0xff) shl 8) or
@@ -123,7 +129,10 @@ object VolcAsrProtocol {
     )
 
     /** 解析结果：最终包标记（帧 flags=3 或响应 is_last_package）。 */
-    data class ParsedServerFrame(val isLastPackage: Boolean, val response: AsrResponse)
+    data class ParsedServerFrame(
+        val isLastPackage: Boolean,
+        val response: AsrResponse,
+    )
 
     /**
      * 解析完整服务端帧（type=1001）。
@@ -150,13 +159,16 @@ object VolcAsrProtocol {
      */
     fun finalText(resp: AsrResponse): String? {
         val result = resp.result ?: resp.payloadMsg?.result ?: return null
-        val text = when (result) {
-            is JsonObject -> result["text"]?.jsonPrimitive?.contentOrNull
-            is JsonArray -> result.mapNotNull { el ->
-                (el as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull
-            }.joinToString("")
-            else -> null
-        }
+        val text =
+            when (result) {
+                is JsonObject -> result["text"]?.jsonPrimitive?.contentOrNull
+                is JsonArray ->
+                    result
+                        .mapNotNull { el ->
+                            (el as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull
+                        }.joinToString("")
+                else -> null
+            }
         return text?.takeIf { it.isNotBlank() }
     }
 

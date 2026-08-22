@@ -5,8 +5,10 @@ import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.xfer.FilePermission
 
-actual fun createSftpSession(connection: SshConnection, callbacks: SshCallbacks): SftpSession =
-    SftpSessionSshj(connection, callbacks)
+actual fun createSftpSession(
+    connection: SshConnection,
+    callbacks: SshCallbacks,
+): SftpSession = SftpSessionSshj(connection, callbacks)
 
 /**
  * sshj SFTP 实现（Android / desktop）：复用 [SshSessionSshj] 的认证链路
@@ -22,8 +24,7 @@ class SftpSessionSshj(
     private val ssh = SshSessionSshj(connection, callbacks, readTimeoutMs = 30_000L)
     private var client: SFTPClient? = null
 
-    private fun clientOrThrow(): SFTPClient =
-        client ?: ssh.openSftp().also { client = it }
+    private fun clientOrThrow(): SFTPClient = client ?: ssh.openSftp().also { client = it }
 
     override fun list(path: String): List<SftpEntry> {
         val c = clientOrThrow()
@@ -48,7 +49,10 @@ class SftpSessionSshj(
         deleteRecursive(clientOrThrow(), path)
     }
 
-    private fun deleteRecursive(c: SFTPClient, path: String) {
+    private fun deleteRecursive(
+        c: SFTPClient,
+        path: String,
+    ) {
         val attrs = c.stat(path)
         if (attrs.type == FileMode.Type.DIRECTORY) {
             c.ls(path).forEach { f ->
@@ -61,7 +65,10 @@ class SftpSessionSshj(
         }
     }
 
-    override fun rename(oldPath: String, newPath: String) {
+    override fun rename(
+        oldPath: String,
+        newPath: String,
+    ) {
         clientOrThrow().rename(oldPath, newPath)
     }
 
@@ -131,21 +138,32 @@ class SftpSessionSshj(
         ssh.close()
     }
 
-    private fun permString(perms: Set<FilePermission>, isDir: Boolean): String {
+    private fun permString(
+        perms: Set<FilePermission>,
+        isDir: Boolean,
+    ): String {
         val sb = StringBuilder(10)
         sb.append(if (isDir) 'd' else '-')
-        val order = listOf(
-            FilePermission.USR_R, FilePermission.USR_W, FilePermission.USR_X,
-            FilePermission.GRP_R, FilePermission.GRP_W, FilePermission.GRP_X,
-            FilePermission.OTH_R, FilePermission.OTH_W, FilePermission.OTH_X,
-        )
+        val order =
+            listOf(
+                FilePermission.USR_R,
+                FilePermission.USR_W,
+                FilePermission.USR_X,
+                FilePermission.GRP_R,
+                FilePermission.GRP_W,
+                FilePermission.GRP_X,
+                FilePermission.OTH_R,
+                FilePermission.OTH_W,
+                FilePermission.OTH_X,
+            )
         for (p in order) sb.append(if (p in perms) permChar(p) else '-')
         return sb.toString()
     }
 
-    private fun permChar(p: FilePermission): Char = when (p) {
-        FilePermission.USR_R, FilePermission.GRP_R, FilePermission.OTH_R -> 'r'
-        FilePermission.USR_W, FilePermission.GRP_W, FilePermission.OTH_W -> 'w'
-        else -> 'x'
-    }
+    private fun permChar(p: FilePermission): Char =
+        when (p) {
+            FilePermission.USR_R, FilePermission.GRP_R, FilePermission.OTH_R -> 'r'
+            FilePermission.USR_W, FilePermission.GRP_W, FilePermission.OTH_W -> 'w'
+            else -> 'x'
+        }
 }

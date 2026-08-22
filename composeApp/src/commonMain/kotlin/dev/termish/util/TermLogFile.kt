@@ -5,7 +5,9 @@ package dev.termish.util
  * commonMain 不能直接引用 java.io.File（Kotlin/Native 无 JVM），
  * 平台实现：Android/desktop = java.io.File；iOS = NSFileManager/NSFileHandle。
  */
-internal expect class TermLogFile(path: String) {
+internal expect class TermLogFile(
+    path: String,
+) {
     fun exists(): Boolean
 
     fun length(): Long

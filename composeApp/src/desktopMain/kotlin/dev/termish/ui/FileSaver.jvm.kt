@@ -18,16 +18,19 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
                 val file = chooser.selectedFile
                 val out = file.outputStream()
                 main.launch {
-                    onReady(file.name, object : FileSink {
-                        override fun write(bytes: ByteArray) = out.write(bytes)
+                    onReady(
+                        file.name,
+                        object : FileSink {
+                            override fun write(bytes: ByteArray) = out.write(bytes)
 
-                        override fun close() {
-                            try {
-                                out.close()
-                            } catch (_: Exception) {
+                            override fun close() {
+                                try {
+                                    out.close()
+                                } catch (_: Exception) {
+                                }
                             }
-                        }
-                    })
+                        },
+                    )
                 }
             }
         }.start()

@@ -12,6 +12,24 @@ plugins {
 }
 
 // ---------------------------------------------------------------------------
+// ktlint：mavenCentral 的 CLI jar（JavaExec），不依赖插件门户（网络不稳）；
+// 规则读 .editorconfig，检查 composeApp 全部 Kotlin 源集
+// ---------------------------------------------------------------------------
+val ktlintVersion = "1.5.0"
+val ktlintConfig = configurations.create("ktlint") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    // ktlint-cli 发布 external/shadowed 两个 variant：选 shadowed（fat jar，
+    // 含全部依赖，JavaExec 可直接运行）
+    attributes {
+        attribute(Attribute.of("org.gradle.dependency.bundling", String::class.java), "shadowed")
+    }
+}
+dependencies {
+    ktlintConfig("com.pinterest.ktlint:ktlint-cli:$ktlintVersion")
+}
+
+// ---------------------------------------------------------------------------
 // 本地工作流统一入口（CI 与 Makefile 复用同一组任务，避免流程知识三处散落）
 // ---------------------------------------------------------------------------
 
@@ -106,3 +124,18 @@ tasks.register<CheckSigningSecretsTask>("checkSigningSecrets") {
     description = "检查 release 签名机密（项目根 .env 或 ANDROID_KEYSTORE_* 环境变量）"
     envFilePath.set(layout.projectDirectory.file(".env").asFile.absolutePath)
 }
+
+/** ktlint 检查/格式化（规则读 .editorconfig，覆盖 composeApp 全部 Kotlin 源集）。 */
+fun ktlintTask(name: String, group: String, format: Boolean) =
+    tasks.register<JavaExec>(name) {
+        this.group = group
+        classpath = ktlintConfig
+        mainClass.set("com.pinterest.ktlint.Main")
+        if (format) args("--format")
+        args("--relative", "composeApp/src")
+        // configuration cache：参数固定，无需额外配置
+        outputs.upToDateWhen { false }
+    }
+
+ktlintTask("ktlintCheck", "verification", format = false)
+ktlintTask("ktlintFormat", "formatting", format = true)

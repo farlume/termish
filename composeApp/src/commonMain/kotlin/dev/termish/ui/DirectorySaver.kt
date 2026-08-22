@@ -15,8 +15,7 @@ interface DirectorySink {
 }
 
 /** 目录名清洗：去掉路径分隔符与危险字符，空则回退 "download"。三端保存目录命名统一。 */
-internal fun sanitizeDirName(name: String): String =
-    name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "download" }
+internal fun sanitizeDirName(name: String): String = name.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "download" }
 
 /**
  * 平台目录保存器：返回"选择保存位置并开始写入目录"的函数（入参为目录名）。

@@ -19,7 +19,6 @@ import dev.termish.util.TermLog
  * 场景探测能过但启动必败。
  */
 object HerdrProbe {
-
     /** 探测结果：命中的二进制路径。 */
     data class Result(
         val bin: String,
@@ -47,7 +46,9 @@ object HerdrProbe {
      * 防 PATH 里同名异物/只打印 usage 的 shim 误判命中。
      */
     internal fun isVersionOutput(raw: String): Boolean =
-        raw.lineSequence().firstOrNull { it.isNotBlank() }
+        raw
+            .lineSequence()
+            .firstOrNull { it.isNotBlank() }
             ?.matches(Regex("herdr\\s+\\S+.*")) == true
 
     /**
@@ -63,7 +64,10 @@ object HerdrProbe {
      *
      * echo 失败的异常环境退回原样（尽力而为：探测至少证明该路径可用）。
      */
-    private fun resolveHome(bin: String, runCommand: (String) -> String?): String {
+    private fun resolveHome(
+        bin: String,
+        runCommand: (String) -> String?,
+    ): String {
         if (!bin.startsWith("\$HOME")) return bin
         val home = runCommand("echo \$HOME")?.trim()?.takeIf { it.startsWith("/") }
         return home?.let { bin.replaceFirst("\$HOME", it) } ?: bin

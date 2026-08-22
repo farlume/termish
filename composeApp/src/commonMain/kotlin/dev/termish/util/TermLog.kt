@@ -14,7 +14,6 @@ import kotlin.concurrent.Volatile
  * - 用法：TermLog.i("ssh") { "连接开始 $host:$port" }
  */
 object TermLog {
-
     /** 诊断模式（设置页开关）：release 也打点并写文件。 */
     @Volatile
     var diagnosticsEnabled: Boolean = false
@@ -23,17 +22,36 @@ object TermLog {
     val enabled: Boolean get() = termLogEnabled || diagnosticsEnabled
 
     /** 当前日志文件路径（诊断模式开启且文件输出可用时非空）。 */
-    val logFilePath: String? get() = if (diagnosticsEnabled) _logFile else null
+    val logFilePath: String? get() = if (diagnosticsEnabled) currentLogFile else null
 
-    fun d(tag: String, msg: () -> String) = log('D', tag, msg)
-    fun i(tag: String, msg: () -> String) = log('I', tag, msg)
-    fun w(tag: String, msg: () -> String) = log('W', tag, msg)
-    fun e(tag: String, msg: () -> String) = log('E', tag, msg)
+    fun d(
+        tag: String,
+        msg: () -> String,
+    ) = log('D', tag, msg)
+
+    fun i(
+        tag: String,
+        msg: () -> String,
+    ) = log('I', tag, msg)
+
+    fun w(
+        tag: String,
+        msg: () -> String,
+    ) = log('W', tag, msg)
+
+    fun e(
+        tag: String,
+        msg: () -> String,
+    ) = log('E', tag, msg)
 
     @Volatile
-    private var _logFile: String? = null
+    private var currentLogFile: String? = null
 
-    private fun log(level: Char, tag: String, msg: () -> String) {
+    private fun log(
+        level: Char,
+        tag: String,
+        msg: () -> String,
+    ) {
         if (!enabled) return
         val text = msg()
         platformLog(level, tag, text)
@@ -41,7 +59,11 @@ object TermLog {
     }
 
     /** 追加写日志文件（1MB 轮转：termish.log → termish.log.old）。失败静默。 */
-    private fun writeFile(level: Char, tag: String, msg: String) {
+    private fun writeFile(
+        level: Char,
+        tag: String,
+        msg: String,
+    ) {
         try {
             val dir = logFileDirectory() ?: return
             val file = TermLogFile("$dir/termish.log")
@@ -51,8 +73,8 @@ object TermLog {
                 }
                 file.renameTo("$dir/termish.log.old")
             }
-            file.appendText("[${level}/${tag}] $msg\n")
-            _logFile = file.absolutePath()
+            file.appendText("[$level/$tag] $msg\n")
+            currentLogFile = file.absolutePath()
         } catch (_: Throwable) {
         }
     }
@@ -62,7 +84,11 @@ object TermLog {
 expect val termLogEnabled: Boolean
 
 /** 平台日志输出：Android logcat / iOS NSLog / 桌面 stdout。 */
-expect fun platformLog(level: Char, tag: String, msg: String)
+expect fun platformLog(
+    level: Char,
+    tag: String,
+    msg: String,
+)
 
 /** 日志文件目录（诊断模式写文件用）；不可用时返回 null。 */
 expect fun logFileDirectory(): String?

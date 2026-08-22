@@ -17,7 +17,10 @@ import androidx.compose.ui.unit.dp
  * 语音输入反馈 / 复制粘贴等）统一走这里，避免各处默认样式不齐。
  */
 @Composable
-fun TermishSnackbarHost(hostState: SnackbarHostState, modifier: Modifier = Modifier) {
+fun TermishSnackbarHost(
+    hostState: SnackbarHostState,
+    modifier: Modifier = Modifier,
+) {
     SnackbarHost(hostState, modifier) { data ->
         BrandSnackbar(data)
     }

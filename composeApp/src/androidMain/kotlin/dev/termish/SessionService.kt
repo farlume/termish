@@ -8,10 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.os.Handler
-import android.os.Looper
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
@@ -22,9 +22,9 @@ import java.util.concurrent.atomic.AtomicInteger
  * 多个会话通过引用计数共享一个前台服务。
  */
 class SessionService : Service() {
-
     private var wakeLock: PowerManager.WakeLock? = null
     private val handler = Handler(Looper.getMainLooper())
+
     /**
      * 下次续期时刻（elapsedRealtime 单调钟）。只由 [scheduleRenew] 到点推进；
      * 后续会话 start 只补排班、不重置计时——否则新会话会推迟旧会话的续期，
@@ -33,11 +33,12 @@ class SessionService : Service() {
     private var nextRenewAt = 0L
 
     /** wakelock 兜底超时续期：有活跃会话时按 [nextRenewAt] 刷新 12h 超时。 */
-    private val renewWakeLock = object : Runnable {
-        override fun run() {
-            if (activeSessions.get() > 0) scheduleRenew()
+    private val renewWakeLock =
+        object : Runnable {
+            override fun run() {
+                if (activeSessions.get() > 0) scheduleRenew()
+            }
         }
-    }
 
     /** 按 [nextRenewAt] 安排续期；已到点则立即续期并推进时刻（幂等，可随时调用）。 */
     private fun scheduleRenew() {
@@ -53,7 +54,11 @@ class SessionService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(
+        intent: Intent?,
+        flags: Int,
+        startId: Int,
+    ): Int {
         if (intent?.action == ACTION_STOP) {
             val n = activeSessions.updateAndGet { it.coerceAtLeast(1) - 1 }
             Log.i(TAG, "stop: activeSessions=$n")
@@ -83,7 +88,10 @@ class SessionService : Service() {
         return START_STICKY
     }
 
-    override fun onTimeout(startId: Int, fgsType: Int) {
+    override fun onTimeout(
+        startId: Int,
+        fgsType: Int,
+    ) {
         // Android 15：dataSync 前台服务有 6 小时上限，超时后系统调用这里。
         // 保活到此为止，释放锁并退出；用户回前台时由生命周期钩子自动重连。
         Log.w(TAG, "foreground service timed out (Android 15 dataSync 6h limit)")
@@ -113,11 +121,12 @@ class SessionService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "termish:session").apply {
-            setReferenceCounted(false)
-            // 兜底 12 小时，正常随服务 onDestroy 释放
-            acquire(12 * 60 * 60 * 1000L)
-        }
+        wakeLock =
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "termish:session").apply {
+                setReferenceCounted(false)
+                // 兜底 12 小时，正常随服务 onDestroy 释放
+                acquire(12 * 60 * 60 * 1000L)
+            }
     }
 
     private fun releaseWakeLock() {
@@ -130,13 +139,15 @@ class SessionService : Service() {
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_ID, "SSH 会话", NotificationManager.IMPORTANCE_LOW),
         )
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            packageManager.getLaunchIntentForPackage(packageName),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        return Notification.Builder(this, CHANNEL_ID)
+        val openIntent =
+            PendingIntent.getActivity(
+                this,
+                0,
+                packageManager.getLaunchIntentForPackage(packageName),
+                PendingIntent.FLAG_IMMUTABLE,
+            )
+        return Notification
+            .Builder(this, CHANNEL_ID)
             .setContentTitle("Termish 会话进行中")
             .setContentText("保持 SSH 连接在后台存活")
             .setSmallIcon(applicationInfo.icon)

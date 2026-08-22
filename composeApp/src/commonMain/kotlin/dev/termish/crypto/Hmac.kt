@@ -2,8 +2,10 @@ package dev.termish.crypto
 
 /** HMAC (RFC 2104) over SHA-256 / SHA-512. */
 object Hmac {
-
-    fun sha256(key: ByteArray, data: ByteArray): ByteArray {
+    fun sha256(
+        key: ByteArray,
+        data: ByteArray,
+    ): ByteArray {
         val block = 64
         val k = normKey(key, block)
         val inner = ByteArray(block + data.size)
@@ -18,7 +20,10 @@ object Hmac {
         return Sha256.digest(outer)
     }
 
-    fun sha512(key: ByteArray, data: ByteArray): ByteArray {
+    fun sha512(
+        key: ByteArray,
+        data: ByteArray,
+    ): ByteArray {
         val block = 128
         val k = normKey(key, block)
         val inner = ByteArray(block + data.size)
@@ -33,7 +38,10 @@ object Hmac {
         return Sha512.digest(outer)
     }
 
-    private fun normKey(key: ByteArray, block: Int): ByteArray {
+    private fun normKey(
+        key: ByteArray,
+        block: Int,
+    ): ByteArray {
         if (key.size <= block) return key.copyOf(block)
         return if (block == 128) Sha512.digest(key) else Sha256.digest(key)
     }

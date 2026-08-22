@@ -26,19 +26,27 @@ import kotlinx.coroutines.launch
  * 环境缺任一依赖（sshd/私钥/ffmpeg）自动 SKIP（与传输层集成测试同模式）。
  */
 class ScreenStreamIntegrationTest {
+    private fun env(
+        key: String,
+        default: String,
+    ): String = System.getenv(key) ?: default
 
-    private fun env(key: String, default: String): String = System.getenv(key) ?: default
+    private fun sshdReachable(): Boolean =
+        runCatching {
+            Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
+        }.isSuccess
 
-    private fun sshdReachable(): Boolean = runCatching {
-        Socket().use { it.connect(InetSocketAddress("127.0.0.1", env("Termish_TEST_PORT", "22222").toInt()), 500) }
-    }.isSuccess
-
-    private fun ffmpegAvailable(): Boolean = runCatching {
-        val p = ProcessBuilder("sh", "-c", "command -v ffmpeg").redirectErrorStream(true).start()
-        val out = p.inputStream.readBytes().decodeToString().trim()
-        p.waitFor()
-        out.isNotEmpty()
-    }.getOrDefault(false)
+    private fun ffmpegAvailable(): Boolean =
+        runCatching {
+            val p = ProcessBuilder("sh", "-c", "command -v ffmpeg").redirectErrorStream(true).start()
+            val out =
+                p.inputStream
+                    .readBytes()
+                    .decodeToString()
+                    .trim()
+            p.waitFor()
+            out.isNotEmpty()
+        }.getOrDefault(false)
 
     private fun skipUnlessReady(): Boolean {
         if (!sshdReachable()) {
@@ -61,22 +69,28 @@ class ScreenStreamIntegrationTest {
     fun `raw exec channel streams h264 without stderr blocking`() {
         if (!skipUnlessReady()) return
         val pemFile = File(env("Termish_TEST_KEY", "/tmp/termish_test/client"))
-        val session = createSshSession(
-            SshConnection(
-                host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "22222").toInt(),
-                username = System.getProperty("user.name"),
-                privateKeyPem = pemFile.readText(),
-            ),
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-                override suspend fun onStderr(data: ByteArray) {}
-                override fun onExitStatus(status: Int) {}
-                override fun onClosed(reason: String?) {}
-                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
-                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
-            },
-        )
+        val session =
+            createSshSession(
+                SshConnection(
+                    host = "127.0.0.1",
+                    port = env("Termish_TEST_PORT", "22222").toInt(),
+                    username = System.getProperty("user.name"),
+                    privateKeyPem = pemFile.readText(),
+                ),
+                object : SshCallbacks {
+                    override suspend fun onOutput(data: ByteArray) {}
+
+                    override suspend fun onStderr(data: ByteArray) {}
+
+                    override fun onExitStatus(status: Int) {}
+
+                    override fun onClosed(reason: String?) {}
+
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+                },
+            )
         try {
             assertNotNull(session.connectAuthOnly(), "connectAuthOnly 应成功")
             val ch = session.startExecRaw(ScreenSession.LAVFI_SCRIPT)
@@ -84,12 +98,13 @@ class ScreenStreamIntegrationTest {
 
             // stderr 独立协程（ScreenSession 同款模式）：消费但不能阻塞 stdout
             val stderrBuf = StringBuilder()
-            val stderrJob = CoroutineScope(Dispatchers.IO).launch {
-                while (true) {
-                    val err = ch.readErr() ?: break
-                    stderrBuf.append(err.decodeToString())
+            val stderrJob =
+                CoroutineScope(Dispatchers.IO).launch {
+                    while (true) {
+                        val err = ch.readErr() ?: break
+                        stderrBuf.append(err.decodeToString())
+                    }
                 }
-            }
 
             // 主循环：阻塞读 stdout + NAL 计数，跑 5 秒。
             // 用 lavfi testsrc 源（不依赖屏幕录制权限——sshd 会话下 avfoundation
@@ -117,7 +132,11 @@ class ScreenStreamIntegrationTest {
             stderrJob.cancel()
 
             val errText = stderrBuf.toString()
-            println("--- screen stream: nals=$nalCount sps=$sawSps idr=$sawIdr eofEarly=$eofEarly stderr=${errText.take(300)}")
+            println(
+                "--- screen stream: nals=$nalCount sps=$sawSps idr=$sawIdr eofEarly=$eofEarly stderr=${errText.take(
+                    300,
+                )}",
+            )
             assertFalse(eofEarly, "5 秒内通道不应 EOF（远端 ffmpeg 正常推流），stderr: $errText")
             assertTrue(nalCount > 10, "5 秒内应收到大量 NAL，实际 $nalCount（疑似 stdout 被 stderr 阻塞读卡死）")
             assertTrue(sawSps && sawIdr, "应收到 SPS + IDR 关键帧（sps=$sawSps idr=$sawIdr）")
@@ -140,22 +159,28 @@ class ScreenStreamIntegrationTest {
             return
         }
         val pemFile = File(env("Termish_TEST_KEY", "/tmp/termish_test/client"))
-        val session = createSshSession(
-            SshConnection(
-                host = "127.0.0.1",
-                port = env("Termish_TEST_PORT", "22222").toInt(),
-                username = System.getProperty("user.name"),
-                privateKeyPem = pemFile.readText(),
-            ),
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-                override suspend fun onStderr(data: ByteArray) {}
-                override fun onExitStatus(status: Int) {}
-                override fun onClosed(reason: String?) {}
-                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
-                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
-            },
-        )
+        val session =
+            createSshSession(
+                SshConnection(
+                    host = "127.0.0.1",
+                    port = env("Termish_TEST_PORT", "22222").toInt(),
+                    username = System.getProperty("user.name"),
+                    privateKeyPem = pemFile.readText(),
+                ),
+                object : SshCallbacks {
+                    override suspend fun onOutput(data: ByteArray) {}
+
+                    override suspend fun onStderr(data: ByteArray) {}
+
+                    override fun onExitStatus(status: Int) {}
+
+                    override fun onClosed(reason: String?) {}
+
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+                },
+            )
         try {
             assertNotNull(session.connectAuthOnly())
             // 1. 跑安装脚本：应输出 TERMISH_SCREEN_OK
@@ -216,22 +241,28 @@ class SystemSshdStreamTest {
             println("SKIP: no key at ${pemFile.absolutePath}")
             return
         }
-        val session = createSshSession(
-            SshConnection(
-                host = "127.0.0.1",
-                port = 22,
-                username = System.getProperty("user.name"),
-                privateKeyPem = pemFile.readText(),
-            ),
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-                override suspend fun onStderr(data: ByteArray) {}
-                override fun onExitStatus(status: Int) {}
-                override fun onClosed(reason: String?) {}
-                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
-                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
-            },
-        )
+        val session =
+            createSshSession(
+                SshConnection(
+                    host = "127.0.0.1",
+                    port = 22,
+                    username = System.getProperty("user.name"),
+                    privateKeyPem = pemFile.readText(),
+                ),
+                object : SshCallbacks {
+                    override suspend fun onOutput(data: ByteArray) {}
+
+                    override suspend fun onStderr(data: ByteArray) {}
+
+                    override fun onExitStatus(status: Int) {}
+
+                    override fun onClosed(reason: String?) {}
+
+                    override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+
+                    override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
+                },
+            )
         try {
             val conn = session.connectAuthOnly()
             assertNotNull(conn, "系统 sshd 连接失败")
@@ -244,9 +275,15 @@ class SystemSshdStreamTest {
             val deadline = System.currentTimeMillis() + 4_000
             while (System.currentTimeMillis() < deadline) {
                 val data = ch.read()
-                if (data == null) { eof = true; break }
+                if (data == null) {
+                    eof = true
+                    break
+                }
                 var nal = parser.push(data)
-                while (nal != null) { nalCount++; nal = parser.drain() }
+                while (nal != null) {
+                    nalCount++
+                    nal = parser.drain()
+                }
             }
             println("--- system sshd stream: nals=$nalCount eof=$eof")
             assertTrue(nalCount > 10, "系统 sshd 下应读到流，实际 nals=$nalCount eof=$eof")

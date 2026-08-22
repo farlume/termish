@@ -3,7 +3,6 @@ package dev.termish.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,13 +13,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -48,19 +45,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.termish.herdr.parseHerdrSnapshot
 import dev.termish.ssh.AuthPrompt
@@ -80,6 +72,7 @@ import kotlinx.coroutines.withContext
 
 /** git 命令超时（本地 git 一般毫秒级；大仓库 status/diff 也远小于此）。 */
 private const val GIT_TIMEOUT_MS = 30_000L
+
 /** diff 输出上限（head 截断，防止超大文件刷爆终端回看）。 */
 private const val DIFF_MAX_LINES = 600
 
@@ -125,7 +118,9 @@ private const val WORKDIR_PROBE_SCRIPT =
 internal class GitTimeoutException : Exception("git command timed out")
 
 /** git 命令执行失败（非超时，如无法获取工作区）。 */
-internal class GitCommandException(message: String) : Exception(message)
+internal class GitCommandException(
+    message: String,
+) : Exception(message)
 
 /** 无法确定远端工作目录（无可用独立通道）——命令不执行，由面板映射为本地化文案。 */
 internal class GitWorkdirUnknownException : Exception()
@@ -136,10 +131,15 @@ internal class GitWorkdirUnknownException : Exception()
  */
 private object AuxCallbacks : SshCallbacks {
     override suspend fun onOutput(data: ByteArray) {}
+
     override suspend fun onStderr(data: ByteArray) {}
+
     override fun onExitStatus(status: Int) {}
+
     override fun onClosed(reason: String?) {}
+
     override suspend fun onPrompt(prompt: AuthPrompt): List<String>? = null
+
     override fun verifyHostKey(hostKey: HostKeyInfo): Boolean = true
 }
 
@@ -155,8 +155,9 @@ private object AuxCallbacks : SshCallbacks {
  * 工作目录由 [fetchWorkdir] 探测；探测不到时抛 [GitWorkdirUnknownException]
  * （面板内报错，终端画面零污染）。
  */
-internal class GitCommandRunner(private val controller: TerminalController) {
-
+internal class GitCommandRunner(
+    private val controller: TerminalController,
+) {
     /** herdr 工作台开关开启：cwd 优先走 herdr snapshot（焦点 pane 的工作区）。
      *  herdr 重构后不再是独立连接模式（Host.launchHerdr），探测路径不变。 */
     val herdrMode: Boolean get() = controller.host.launchHerdr && controller.herdrBin != null
@@ -186,11 +187,18 @@ internal class GitCommandRunner(private val controller: TerminalController) {
         if (herdrMode) {
             return withContext(ioDispatcher()) {
                 val bin = controller.herdrBin?.let { shellQuote(it) } ?: "herdr"
-                val raw = controller.session?.runCommand("$bin api snapshot", 5_000)
-                    ?: return@withContext null
+                val raw =
+                    controller.session?.runCommand("$bin api snapshot", 5_000)
+                        ?: return@withContext null
                 val snap = parseHerdrSnapshot(raw) ?: return@withContext null
-                snap.panes.firstOrNull { it.focused }?.cwd?.takeIf { it.isNotBlank() }
-                    ?: snap.agents.firstOrNull { it.focused }?.cwd?.takeIf { it.isNotBlank() }
+                snap.panes
+                    .firstOrNull { it.focused }
+                    ?.cwd
+                    ?.takeIf { it.isNotBlank() }
+                    ?: snap.agents
+                        .firstOrNull { it.focused }
+                        ?.cwd
+                        ?.takeIf { it.isNotBlank() }
                     ?: snap.panes.firstOrNull { !it.cwd.isNullOrBlank() }?.cwd
             }
         }
@@ -199,14 +207,16 @@ internal class GitCommandRunner(private val controller: TerminalController) {
         if (promptPath != null) {
             val session = execSession
             if (session != null) {
-                val home = withContext(ioDispatcher()) {
-                    session.runCommand("echo \$HOME", 3_000)
-                }?.trim().orEmpty()
-                val resolved = when {
-                    promptPath == "~" -> home
-                    promptPath.startsWith("~/") -> home + promptPath.removePrefix("~")
-                    else -> promptPath
-                }
+                val home =
+                    withContext(ioDispatcher()) {
+                        session.runCommand("echo \$HOME", 3_000)
+                    }?.trim().orEmpty()
+                val resolved =
+                    when {
+                        promptPath == "~" -> home
+                        promptPath.startsWith("~/") -> home + promptPath.removePrefix("~")
+                        else -> promptPath
+                    }
                 if (resolved.isNotBlank() && resolved.startsWith("/")) {
                     TermLog.d("git") { "workdir via prompt: $resolved" }
                     return resolved
@@ -220,9 +230,10 @@ internal class GitCommandRunner(private val controller: TerminalController) {
         // tmux → /proc 进程探测（agent 优先，回退交互 shell）
         val session = execSession
         if (session != null) {
-            val raw = withContext(ioDispatcher()) {
-                session.runCommand(WORKDIR_PROBE_SCRIPT, 5_000)
-            }
+            val raw =
+                withContext(ioDispatcher()) {
+                    session.runCommand(WORKDIR_PROBE_SCRIPT, 5_000)
+                }
             TermLog.d("git") { "probe raw=[${raw?.replace("\n", "\\n") ?: "null"}]" }
             val probed = firstPathLine(raw)
             if (probed != null) {
@@ -231,17 +242,21 @@ internal class GitCommandRunner(private val controller: TerminalController) {
             }
         } else if (controller.moshSession != null) {
             // mosh：SSH 引导通道已关，探测走控制面连接（一次连接）
-            val raw = withContext(ioDispatcher()) {
-                val aux = newAuxConnection() ?: return@withContext null
-                try {
-                    aux.connectAndRun(WORKDIR_PROBE_SCRIPT, 5_000).output
-                } catch (e: Exception) {
-                    TermLog.w("git") { "aux probe failed: ${e.message}" }
-                    null
-                } finally {
-                    try { aux.close() } catch (_: Exception) {}
+            val raw =
+                withContext(ioDispatcher()) {
+                    val aux = newAuxConnection() ?: return@withContext null
+                    try {
+                        aux.connectAndRun(WORKDIR_PROBE_SCRIPT, 5_000).output
+                    } catch (e: Exception) {
+                        TermLog.w("git") { "aux probe failed: ${e.message}" }
+                        null
+                    } finally {
+                        try {
+                            aux.close()
+                        } catch (_: Exception) {
+                        }
+                    }
                 }
-            }
             val probed = firstPathLine(raw)
             if (probed != null) {
                 TermLog.d("git") { "workdir via aux probe: $probed" }
@@ -253,25 +268,26 @@ internal class GitCommandRunner(private val controller: TerminalController) {
     }
 
     /** 探测输出取第一个绝对路径行（tmux 与 /proc 可能各输出一行，不能拼接）。 */
-    private fun firstPathLine(raw: String?): String? =
-        raw?.lineSequence()?.firstOrNull { it.trimStart().startsWith("/") }?.trim()
+    private fun firstPathLine(raw: String?): String? = raw?.lineSequence()?.firstOrNull { it.trimStart().startsWith("/") }?.trim()
 
     /** 新建 mosh 控制面连接（mosh 官方架构：交互走 UDP，控制面走独立 SSH）。 */
-    private fun newAuxConnection(): SshSession? = try {
-        val conn = SshConnection(
-            host = controller.host.hostname,
-            port = controller.host.port,
-            username = controller.host.username,
-            password = controller.password,
-            privateKeyPem = controller.privateKeyPem,
-            connectTimeoutMillis = 10_000,
-            keepAliveSeconds = 0,
-        )
-        controller.sessionFactory(conn, AuxCallbacks)
-    } catch (e: Exception) {
-        TermLog.w("git") { "aux connection failed: ${e.message}" }
-        null
-    }
+    private fun newAuxConnection(): SshSession? =
+        try {
+            val conn =
+                SshConnection(
+                    host = controller.host.hostname,
+                    port = controller.host.port,
+                    username = controller.host.username,
+                    password = controller.password,
+                    privateKeyPem = controller.privateKeyPem,
+                    connectTimeoutMillis = 10_000,
+                    keepAliveSeconds = 0,
+                )
+            controller.sessionFactory(conn, AuxCallbacks)
+        } catch (e: Exception) {
+            TermLog.w("git") { "aux connection failed: ${e.message}" }
+            null
+        }
 
     /** bash 默认 PS1 `user@host:~/path$`（或 `#` root）的 \w 提取；
      *  输入中的行（`$` 后还有内容）不匹配，避免把半行命令当提示符。 */
@@ -295,12 +311,16 @@ internal class GitCommandRunner(private val controller: TerminalController) {
      * 工作目录未知时抛 [GitWorkdirUnknownException]（面板内报错；herdr 模式
      * 抛 [GitCommandException]，禁止注入 herdr/pi 输入框）。
      */
-    suspend fun run(command: String, timeoutMs: Long = GIT_TIMEOUT_MS): String {
-        val dir = workdir ?: run {
-            // herdr 模式报具体原因；其余场景统一「无法确定工作目录」
-            if (herdrMode) throw GitCommandException("无法获取 herdr 工作区（snapshot 失败）")
-            throw GitWorkdirUnknownException()
-        }
+    suspend fun run(
+        command: String,
+        timeoutMs: Long = GIT_TIMEOUT_MS,
+    ): String {
+        val dir =
+            workdir ?: run {
+                // herdr 模式报具体原因；其余场景统一「无法确定工作目录」
+                if (herdrMode) throw GitCommandException("无法获取 herdr 工作区（snapshot 失败）")
+                throw GitWorkdirUnknownException()
+            }
         val full = "git -C ${shellQuote(dir)} ${command.removePrefix("git ")}"
         // 1) 独立 exec 通道：复用已认证连接（SSH/herdr）
         val session = execSession
@@ -321,7 +341,10 @@ internal class GitCommandRunner(private val controller: TerminalController) {
                     TermLog.w("git") { "aux ssh failed: ${e.message}" }
                     throw GitTimeoutException()
                 } finally {
-                    try { aux.close() } catch (_: Exception) {}
+                    try {
+                        aux.close()
+                    } catch (_: Exception) {
+                    }
                 }
             }.let { stripAnsi(it) }
         }
@@ -353,7 +376,10 @@ internal class GitCommandRunner(private val controller: TerminalController) {
 }
 
 /** Git 状态徽章配色：贴合终端 ANSI 语义（修改=黄，新增=绿，删除=红…）。 */
-private fun statusColor(code: String, theme: TerminalTheme): Color {
+private fun statusColor(
+    code: String,
+    theme: TerminalTheme,
+): Color {
     val c = code.firstOrNull() ?: return theme.ansi(7)
     return when {
         c == '?' || c == '!' -> theme.ansi(6) // 未跟踪/忽略：青
@@ -418,19 +444,22 @@ fun GitOverlay(
     // 目录时面板内报错（全屏程序中提示先退出）。
     val inAltScreen = controller.buffer.altScreen
 
-    fun friendly(raw: String): String = when {
-        raw.contains("not a git repository") -> s.git.notRepo
-        raw.contains("command not found") -> s.git.notInstalled
-        raw.contains("nothing to commit") -> s.git.nothingToCommit
-        else -> raw.take(240)
-    }
+    fun friendly(raw: String): String =
+        when {
+            raw.contains("not a git repository") -> s.git.notRepo
+            raw.contains("command not found") -> s.git.notInstalled
+            raw.contains("nothing to commit") -> s.git.nothingToCommit
+            else -> raw.take(240)
+        }
 
     /** 提取输出中的错误行并转友好文案；无错误返回 null。 */
     fun extractError(out: String): String? {
         for (raw in out.lineSequence()) {
             val l = raw.trim()
-            if (l.startsWith("fatal:") || l.startsWith("error:") ||
-                l.contains("command not found") || l.contains("nothing to commit")
+            if (l.startsWith("fatal:") ||
+                l.startsWith("error:") ||
+                l.contains("command not found") ||
+                l.contains("nothing to commit")
             ) {
                 return friendly(l)
             }
@@ -476,9 +505,10 @@ fun GitOverlay(
         error = null
         try {
             probeWorkdir()
-            val out = runner.run(
-                "git -c color.ui=false -c core.quotepath=false status --porcelain=v1 --branch 2>&1 | head -n 2001",
-            )
+            val out =
+                runner.run(
+                    "git -c color.ui=false -c core.quotepath=false status --porcelain=v1 --branch 2>&1 | head -n 2001",
+                )
             val res = parseGitStatus(out)
             error = res.error?.let { friendly(it) }
             branch = res.branch
@@ -499,20 +529,27 @@ fun GitOverlay(
         }
     }
 
-    suspend fun loadDiff(entry: GitEntry, staged: Boolean) {
+    suspend fun loadDiff(
+        entry: GitEntry,
+        staged: Boolean,
+    ) {
         if (busy || !entry.diffable) return
         busy = true
         diffLoading = true
         diffError = null
         try {
-            val cmd = when {
-                entry.untracked ->
-                    "git -c color.ui=false -c core.quotepath=false diff --no-index --no-color -- /dev/null ${shellQuote(entry.path)}"
-                staged ->
-                    "git -c color.ui=false -c core.quotepath=false diff --cached --no-color -- ${shellQuote(entry.path)}"
-                else ->
-                    "git -c color.ui=false -c core.quotepath=false diff --no-color -- ${shellQuote(entry.path)}"
-            }
+            val cmd =
+                when {
+                    entry.untracked ->
+                        "git -c color.ui=false -c core.quotepath=false diff --no-index --no-color -- /dev/null " +
+                            "${shellQuote(entry.path)}"
+                    staged ->
+                        "git -c color.ui=false -c core.quotepath=false diff --cached --no-color -- ${shellQuote(
+                            entry.path,
+                        )}"
+                    else ->
+                        "git -c color.ui=false -c core.quotepath=false diff --no-color -- ${shellQuote(entry.path)}"
+                }
             val out = runner.run("$cmd 2>&1 | head -n ${DIFF_MAX_LINES + 1}")
             diffLines = parseGitDiff(out)
             diffError = extractError(out)
@@ -575,7 +612,7 @@ fun GitOverlay(
                     .imePadding(),
             ) {
                 // 全屏程序（vim/tmux）且探测不到工作目录：只提示不执行
-                //（不注入 TUI）；探测成功（独立 exec 通道）则正常使用
+                // （不注入 TUI）；探测成功（独立 exec 通道）则正常使用
                 if (inAltScreen && runner.workdir == null && !loading) {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -590,109 +627,121 @@ fun GitOverlay(
                             }
                         }
                     }
-                    } else if (selected == null) {
-                        GitStatusHeader(
-                            theme = theme,
-                            branch = branch,
-                            ahead = ahead,
-                            behind = behind,
-                            entryCount = entries.size,
-                            loading = loading,
-                            onRefresh = { scope.launch { refresh() } },
-                            onClose = { onOpenChange(false) },
-                        )
-                        HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
-                        when {
-                            loading -> GitCenteredHint(theme, s.git.loading, spinner = true, modifier = Modifier.weight(1f))
-                            error != null -> GitCenteredHint(
-                                theme, error!!,
+                } else if (selected == null) {
+                    GitStatusHeader(
+                        theme = theme,
+                        branch = branch,
+                        ahead = ahead,
+                        behind = behind,
+                        entryCount = entries.size,
+                        loading = loading,
+                        onRefresh = { scope.launch { refresh() } },
+                        onClose = { onOpenChange(false) },
+                    )
+                    HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
+                    when {
+                        loading -> GitCenteredHint(theme, s.git.loading, spinner = true, modifier = Modifier.weight(1f))
+                        error != null ->
+                            GitCenteredHint(
+                                theme,
+                                error!!,
                                 retry = { scope.launch { refresh() } },
                                 onClose = { onOpenChange(false) },
                                 modifier = Modifier.weight(1f),
                             )
-                            entries.isEmpty() -> GitCenteredHint(theme, s.git.empty, modifier = Modifier.weight(1f))
-                            else -> LazyColumn(
+                        entries.isEmpty() -> GitCenteredHint(theme, s.git.empty, modifier = Modifier.weight(1f))
+                        else ->
+                            LazyColumn(
                                 Modifier.weight(1f),
                             ) {
                                 items(entries, key = { it.path }) { entry ->
                                     GitFileRow(entry, theme, s) { selected = entry }
                                 }
                             }
-                        }
-                        // 底部操作：暂存 / 取消暂存 / 提交
-                        HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                    }
+                    // 底部操作：暂存 / 取消暂存 / 提交
+                    HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    exec("git add -A 2>&1")
+                                    refresh()
+                                }
+                            },
+                            enabled = entries.isNotEmpty() && !busy,
                         ) {
+                            Text(s.git.stageAll, color = theme.ansi(2))
+                        }
+                        if (entries.any { it.isStaged }) {
                             TextButton(
                                 onClick = {
                                     scope.launch {
-                                        exec("git add -A 2>&1")
+                                        exec("git reset -q 2>&1")
                                         refresh()
                                     }
                                 },
-                                enabled = entries.isNotEmpty() && !busy,
+                                enabled = !busy,
                             ) {
-                                Text(s.git.stageAll, color = theme.ansi(2))
-                            }
-                            if (entries.any { it.isStaged }) {
-                                TextButton(
-                                    onClick = {
-                                        scope.launch {
-                                            exec("git reset -q 2>&1")
-                                            refresh()
-                                        }
-                                    },
-                                    enabled = !busy,
-                                ) {
-                                    Text(s.git.unstageAll, color = theme.ansi(3))
-                                }
-                            }
-                            Spacer(Modifier.weight(1f))
-                            TextButton(
-                                onClick = { commitOpen = true },
-                                enabled = entries.isNotEmpty() && !busy,
-                            ) {
-                                Text(s.git.commit, color = theme.ansi(2), fontWeight = FontWeight.SemiBold)
+                                Text(s.git.unstageAll, color = theme.ansi(3))
                             }
                         }
-                    } else {
-                        // ---- Diff 页 ----
-                        val entry = selected!!
-                        GitDiffHeader(
-                            theme = theme,
-                            entry = entry,
-                            staged = showStaged,
-                            canToggle = canToggleStaged,
-                            lines = diffLines,
-                            onBack = { selected = null },
-                            onToggleStaged = { stagedOverride = it },
-                        )
-                        HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
-                        when {
-                            !entry.diffable -> GitCenteredHint(theme, s.git.dirHint, modifier = Modifier.weight(1f))
-                            diffLoading -> GitCenteredHint(theme, s.git.diffLoading, spinner = true, modifier = Modifier.weight(1f))
-                            diffError != null -> GitCenteredHint(
-                                theme, diffError!!,
+                        Spacer(Modifier.weight(1f))
+                        TextButton(
+                            onClick = { commitOpen = true },
+                            enabled = entries.isNotEmpty() && !busy,
+                        ) {
+                            Text(s.git.commit, color = theme.ansi(2), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                } else {
+                    // ---- Diff 页 ----
+                    val entry = selected!!
+                    GitDiffHeader(
+                        theme = theme,
+                        entry = entry,
+                        staged = showStaged,
+                        canToggle = canToggleStaged,
+                        lines = diffLines,
+                        onBack = { selected = null },
+                        onToggleStaged = { stagedOverride = it },
+                    )
+                    HorizontalDivider(color = theme.foreground().copy(alpha = 0.2f))
+                    when {
+                        !entry.diffable -> GitCenteredHint(theme, s.git.dirHint, modifier = Modifier.weight(1f))
+                        diffLoading ->
+                            GitCenteredHint(
+                                theme,
+                                s.git.diffLoading,
+                                spinner = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                        diffError != null ->
+                            GitCenteredHint(
+                                theme,
+                                diffError!!,
                                 retry = {
                                     scope.launch { loadDiff(entry, showStaged) }
                                 },
                                 onClose = { selected = null },
                                 modifier = Modifier.weight(1f),
                             )
-                            diffLines.isEmpty() -> GitCenteredHint(theme, s.git.noDiff, modifier = Modifier.weight(1f))
-                            else -> LazyColumn(Modifier.weight(1f)) {
+                        diffLines.isEmpty() -> GitCenteredHint(theme, s.git.noDiff, modifier = Modifier.weight(1f))
+                        else ->
+                            LazyColumn(Modifier.weight(1f)) {
                                 items(diffLines) { line -> GitDiffRow(line, theme) }
                                 if (diffLines.size >= DIFF_MAX_LINES) {
                                     item { GitCenteredHint(theme, s.git.diffTruncated) }
                                 }
                             }
-                        }
                     }
                 }
             }
         }
+    }
 
     // ---- 提交对话框 ----
     if (commitOpen) {
@@ -836,7 +885,8 @@ private fun GitDiffHeader(
         if (canToggle) {
             // 已暂存 / 未暂存 切换
             Row(
-                Modifier.clip(RoundedCornerShape(8.dp))
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
                     .background(theme.foreground().copy(alpha = 0.08f)),
             ) {
                 DiffTab(s.git.stagedTab, selected = staged, theme) { onToggleStaged(true) }
@@ -854,25 +904,37 @@ private fun GitDiffHeader(
 }
 
 @Composable
-private fun DiffTab(label: String, selected: Boolean, theme: TerminalTheme, onClick: () -> Unit) {
+private fun DiffTab(
+    label: String,
+    selected: Boolean,
+    theme: TerminalTheme,
+    onClick: () -> Unit,
+) {
     Text(
         label,
         style = MaterialTheme.typography.labelSmall,
         color = if (selected) theme.background() else theme.foreground().copy(alpha = 0.7f),
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) theme.cursor() else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) theme.cursor() else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(horizontal = 10.dp, vertical = 5.dp),
     )
 }
 
 /** 文件行：状态徽章 + 路径（重命名显示新路径）。 */
 @Composable
-private fun GitFileRow(entry: GitEntry, theme: TerminalTheme, s: AppStrings, onClick: () -> Unit) {
+private fun GitFileRow(
+    entry: GitEntry,
+    theme: TerminalTheme,
+    s: AppStrings,
+    onClick: () -> Unit,
+) {
     val badgeColor = statusColor(entry.statusCode, theme)
     Row(
-        Modifier.fillMaxWidth()
+        Modifier
+            .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -882,11 +944,12 @@ private fun GitFileRow(entry: GitEntry, theme: TerminalTheme, s: AppStrings, onC
             style = MaterialTheme.typography.labelSmall,
             fontFamily = monospaceFontFamily(),
             color = badgeColor,
-            modifier = Modifier
-                .width(30.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(badgeColor.copy(alpha = 0.14f))
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+            modifier =
+                Modifier
+                    .width(30.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(badgeColor.copy(alpha = 0.14f))
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
             maxLines = 1,
         )
         Spacer(Modifier.width(10.dp))
@@ -922,24 +985,29 @@ private fun GitFileRow(entry: GitEntry, theme: TerminalTheme, s: AppStrings, onC
 
 /** 单行 diff 渲染：+ 绿 / - 红 / @@ 蓝 / 上下文灰，等宽字体。 */
 @Composable
-private fun GitDiffRow(line: GitDiffLine, theme: TerminalTheme) {
-    val (color, bg) = when (line.kind) {
-        GitDiffKind.ADD -> theme.ansi(2) to theme.ansi(2).copy(alpha = 0.10f)
-        GitDiffKind.REMOVE -> theme.ansi(1) to theme.ansi(1).copy(alpha = 0.10f)
-        GitDiffKind.HUNK -> theme.ansi(4) to Color.Transparent
-        GitDiffKind.HEADER, GitDiffKind.NO_NEWLINE ->
-            theme.foreground().copy(alpha = 0.5f) to Color.Transparent
-        GitDiffKind.CONTEXT -> theme.foreground().copy(alpha = 0.8f) to Color.Transparent
-    }
+private fun GitDiffRow(
+    line: GitDiffLine,
+    theme: TerminalTheme,
+) {
+    val (color, bg) =
+        when (line.kind) {
+            GitDiffKind.ADD -> theme.ansi(2) to theme.ansi(2).copy(alpha = 0.10f)
+            GitDiffKind.REMOVE -> theme.ansi(1) to theme.ansi(1).copy(alpha = 0.10f)
+            GitDiffKind.HUNK -> theme.ansi(4) to Color.Transparent
+            GitDiffKind.HEADER, GitDiffKind.NO_NEWLINE ->
+                theme.foreground().copy(alpha = 0.5f) to Color.Transparent
+            GitDiffKind.CONTEXT -> theme.foreground().copy(alpha = 0.8f) to Color.Transparent
+        }
     Text(
         line.text,
         style = MaterialTheme.typography.labelSmall,
         fontFamily = monospaceFontFamily(),
         color = color,
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(bg)
-            .padding(horizontal = 12.dp, vertical = 1.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .background(bg)
+                .padding(horizontal = 12.dp, vertical = 1.dp),
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
@@ -988,27 +1056,41 @@ private fun GitCenteredHint(
 
 /** 手绘 git 分支图标（三节点 + 两段曲线，24 viewport 归一化坐标）。 */
 @Composable
-fun GitBranchIcon(tint: Color, modifier: Modifier = Modifier) {
+fun GitBranchIcon(
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
     Canvas(modifier) {
         val w = size.width
         val h = size.height
         val stroke = w * 0.11f
-        fun p(fx: Float, fy: Float) = Offset(w * fx, h * fy)
-        val curve = Path().apply {
-            // 左上 tip → 右侧分叉点
-            moveTo(p(0.333f, 0.292f).x, p(0.333f, 0.292f).y)
-            cubicTo(
-                p(0.333f, 0.45f).x, p(0.333f, 0.45f).y,
-                p(0.52f, 0.45f).x, p(0.52f, 0.45f).y,
-                p(0.708f, 0.5f).x, p(0.708f, 0.5f).y,
-            )
-            // 右侧分叉点 → 左下 main
-            cubicTo(
-                p(0.52f, 0.55f).x, p(0.52f, 0.55f).y,
-                p(0.333f, 0.55f).x, p(0.333f, 0.55f).y,
-                p(0.333f, 0.708f).x, p(0.333f, 0.708f).y,
-            )
-        }
+
+        fun p(
+            fx: Float,
+            fy: Float,
+        ) = Offset(w * fx, h * fy)
+        val curve =
+            Path().apply {
+                // 左上 tip → 右侧分叉点
+                moveTo(p(0.333f, 0.292f).x, p(0.333f, 0.292f).y)
+                cubicTo(
+                    p(0.333f, 0.45f).x,
+                    p(0.333f, 0.45f).y,
+                    p(0.52f, 0.45f).x,
+                    p(0.52f, 0.45f).y,
+                    p(0.708f, 0.5f).x,
+                    p(0.708f, 0.5f).y,
+                )
+                // 右侧分叉点 → 左下 main
+                cubicTo(
+                    p(0.52f, 0.55f).x,
+                    p(0.52f, 0.55f).y,
+                    p(0.333f, 0.55f).x,
+                    p(0.333f, 0.55f).y,
+                    p(0.333f, 0.708f).x,
+                    p(0.333f, 0.708f).y,
+                )
+            }
         drawPath(curve, color = tint, style = Stroke(width = stroke, cap = StrokeCap.Round))
         drawCircle(tint, w * 0.085f, p(0.333f, 0.292f))
         drawCircle(tint, w * 0.085f, p(0.333f, 0.708f))

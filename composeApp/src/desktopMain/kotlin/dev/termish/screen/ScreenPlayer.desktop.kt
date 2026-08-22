@@ -22,6 +22,9 @@ actual class ScreenPlayer actual constructor(
 }
 
 @Composable
-actual fun ScreenVideoSurface(player: ScreenPlayer?, modifier: Modifier) {
+actual fun ScreenVideoSurface(
+    player: ScreenPlayer?,
+    modifier: Modifier,
+) {
     Box(modifier.background(Color.Black))
 }

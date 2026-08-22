@@ -26,11 +26,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import dev.termish.ssh.SftpSession
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
 import dev.termish.ssh.createSftpSession
-import dev.termish.ui.theme.TerminalTheme
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -41,12 +39,26 @@ import kotlinx.coroutines.withContext
 /** 上传会话状态（驱动右下角进度浮层）。 */
 sealed interface UploadUiState {
     data object Idle : UploadUiState
+
     /** 上传中：当前文件进度。 */
-    data class Uploading(val name: String, val sent: Long, val total: Long, val doneCount: Int, val totalCount: Int) : UploadUiState
+    data class Uploading(
+        val name: String,
+        val sent: Long,
+        val total: Long,
+        val doneCount: Int,
+        val totalCount: Int,
+    ) : UploadUiState
+
     /** 全部完成（paths = 成功上传的远端路径，用于自动输入终端）。 */
-    data class Done(val count: Int, val paths: List<String>) : UploadUiState
+    data class Done(
+        val count: Int,
+        val paths: List<String>,
+    ) : UploadUiState
+
     /** 失败（含原因，UI 提示后回 Idle）。 */
-    data class Failed(val message: String) : UploadUiState
+    data class Failed(
+        val message: String,
+    ) : UploadUiState
 }
 
 /**
@@ -67,7 +79,10 @@ class TerminalFileUploader(
     private var job: Job? = null
 
     /** 入队并启动（若未在传）串行上传。 */
-    fun enqueue(file: PickedFile, targetDir: String) {
+    fun enqueue(
+        file: PickedFile,
+        targetDir: String,
+    ) {
         if (job?.isActive == true) {
             queue.addLast(file)
             return
@@ -101,24 +116,36 @@ class TerminalFileUploader(
     /**
      * 上传单个文件到远端目录。SFTP 会话每次新建并关闭（与 SftpScreen 一致）。
      */
-    private suspend fun uploadOne(picked: PickedFile, targetDir: String, index: Int, queueTotal: Int): String {
-        val callbacks = object : SshCallbacks {
-            override suspend fun onOutput(data: ByteArray) {}
-            override suspend fun onStderr(data: ByteArray) {}
-            override fun onExitStatus(status: Int) {}
-            override fun onClosed(reason: String?) {}
-            override suspend fun onPrompt(prompt: dev.termish.ssh.AuthPrompt): List<String>? = null
-            override fun verifyHostKey(hostKey: dev.termish.ssh.HostKeyInfo): Boolean = true
-        }
-        val conn = SshConnection(
-            host = controller.host.hostname,
-            port = controller.host.port,
-            username = controller.host.username,
-            password = controller.password,
-            privateKeyPem = controller.privateKeyPem,
-            connectTimeoutMillis = 10_000,
-            keepAliveSeconds = 0,
-        )
+    private suspend fun uploadOne(
+        picked: PickedFile,
+        targetDir: String,
+        index: Int,
+        queueTotal: Int,
+    ): String {
+        val callbacks =
+            object : SshCallbacks {
+                override suspend fun onOutput(data: ByteArray) {}
+
+                override suspend fun onStderr(data: ByteArray) {}
+
+                override fun onExitStatus(status: Int) {}
+
+                override fun onClosed(reason: String?) {}
+
+                override suspend fun onPrompt(prompt: dev.termish.ssh.AuthPrompt): List<String>? = null
+
+                override fun verifyHostKey(hostKey: dev.termish.ssh.HostKeyInfo): Boolean = true
+            }
+        val conn =
+            SshConnection(
+                host = controller.host.hostname,
+                port = controller.host.port,
+                username = controller.host.username,
+                password = controller.password,
+                privateKeyPem = controller.privateKeyPem,
+                connectTimeoutMillis = 10_000,
+                keepAliveSeconds = 0,
+            )
         val sftp = createSftpSession(conn, callbacks)
         try {
             val remotePath = if (targetDir.endsWith("/")) "$targetDir${picked.name}" else "$targetDir/${picked.name}"
@@ -164,7 +191,11 @@ fun UploadDirOptionCard(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(36.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+            Modifier
+                .size(
+                    36.dp,
+                ).clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

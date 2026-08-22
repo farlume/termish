@@ -2,7 +2,6 @@ package dev.termish.util
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -23,7 +22,10 @@ import org.jetbrains.compose.resources.Font
  * （终端有粗体渲染），且为等宽字体（度量一致性是终端正确渲染的前提）。
  */
 @Immutable
-enum class TerminalFont(val id: String, val label: String) {
+enum class TerminalFont(
+    val id: String,
+    val label: String,
+) {
     JETBRAINS("jetbrains", "JetBrains Mono"),
     FIRA("fira", "Fira Code"),
     SOURCE_CODE("sourcecode", "Source Code Pro"),
@@ -32,8 +34,7 @@ enum class TerminalFont(val id: String, val label: String) {
     ;
 
     companion object {
-        fun byId(id: String): TerminalFont =
-            entries.firstOrNull { it.id == id } ?: JETBRAINS
+        fun byId(id: String): TerminalFont = entries.firstOrNull { it.id == id } ?: JETBRAINS
     }
 }
 
@@ -59,27 +60,32 @@ val LocalTerminalFont = staticCompositionLocalOf { TerminalFont.JETBRAINS }
 fun monospaceFontFamily(): FontFamily {
     val font = LocalTerminalFont.current
     return when (font) {
-        TerminalFont.JETBRAINS -> FontFamily(
-            Font(Res.font.jetbrains_mono_regular, FontWeight.Normal),
-            Font(Res.font.jetbrains_mono_bold, FontWeight.Bold),
-        )
-        TerminalFont.FIRA -> FontFamily(
-            Font(Res.font.fira_code_regular, FontWeight.Normal),
-            Font(Res.font.fira_code_bold, FontWeight.Bold),
-        )
-        TerminalFont.SOURCE_CODE -> FontFamily(
-            Font(Res.font.source_code_pro_regular, FontWeight.Normal),
-            Font(Res.font.source_code_pro_bold, FontWeight.Bold),
-        )
-        TerminalFont.UBUNTU -> FontFamily(
-            Font(Res.font.ubuntu_mono_regular, FontWeight.Normal),
-            Font(Res.font.ubuntu_mono_bold, FontWeight.Bold),
-        )
+        TerminalFont.JETBRAINS ->
+            FontFamily(
+                Font(Res.font.jetbrains_mono_regular, FontWeight.Normal),
+                Font(Res.font.jetbrains_mono_bold, FontWeight.Bold),
+            )
+        TerminalFont.FIRA ->
+            FontFamily(
+                Font(Res.font.fira_code_regular, FontWeight.Normal),
+                Font(Res.font.fira_code_bold, FontWeight.Bold),
+            )
+        TerminalFont.SOURCE_CODE ->
+            FontFamily(
+                Font(Res.font.source_code_pro_regular, FontWeight.Normal),
+                Font(Res.font.source_code_pro_bold, FontWeight.Bold),
+            )
+        TerminalFont.UBUNTU ->
+            FontFamily(
+                Font(Res.font.ubuntu_mono_regular, FontWeight.Normal),
+                Font(Res.font.ubuntu_mono_bold, FontWeight.Bold),
+            )
         // PT Mono 仅单字重：Bold 请求由 regular 合成（Compose 伪粗），可接受
-        TerminalFont.PT_MONO -> FontFamily(
-            Font(Res.font.pt_mono_regular, FontWeight.Normal),
-            Font(Res.font.pt_mono_regular, FontWeight.Bold),
-        )
+        TerminalFont.PT_MONO ->
+            FontFamily(
+                Font(Res.font.pt_mono_regular, FontWeight.Normal),
+                Font(Res.font.pt_mono_regular, FontWeight.Bold),
+            )
     }
 }
 

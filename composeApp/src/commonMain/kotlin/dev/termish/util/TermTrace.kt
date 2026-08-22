@@ -21,14 +21,16 @@ import kotlin.time.TimeSource
  * 嵌套：span 内可再开子 span（如认证方法级）。
  */
 object TermTrace {
-
     const val SLOW_THRESHOLD_MS = 10_000L
 
     /** Span 状态。 */
     enum class Status { OK, FAILED }
 
     /** 单阶段记录：名称 + 该时刻相对 span 开始的耗时。 */
-    class Step(val name: String, val elapsedMs: Long)
+    class Step(
+        val name: String,
+        val elapsedMs: Long,
+    )
 
     class Span internal constructor(
         val name: String,
@@ -63,10 +65,11 @@ object TermTrace {
             val total = startMark.elapsedNow().inWholeMilliseconds
             val stepsText = steps.joinToString(", ") { "${it.name} ${it.elapsedMs}ms" }
             val attrsText = attrs.entries.joinToString(" ") { "${it.key}=${it.value}" }
-            val msg = "span[$name] total=${total}ms ${status.name.lowercase()}" +
-                (error?.let { "($it)" } ?: "") +
-                (if (steps.isEmpty()) "" else " steps=[$stepsText]") +
-                (if (attrs.isEmpty()) "" else " $attrsText")
+            val msg =
+                "span[$name] total=${total}ms ${status.name.lowercase()}" +
+                    (error?.let { "($it)" } ?: "") +
+                    (if (steps.isEmpty()) "" else " steps=[$stepsText]") +
+                    (if (attrs.isEmpty()) "" else " $attrsText")
             if (status == Status.FAILED || total >= SLOW_THRESHOLD_MS) {
                 TermLog.w(tag) { msg }
             } else {
@@ -76,8 +79,11 @@ object TermTrace {
     }
 
     /** 开启 span（手动模式，配合 [Span.step]/[Span.end]；跨函数场景用）。 */
-    fun begin(name: String, tag: String = "trace", vararg attrs: Pair<String, String>): Span =
-        Span(name, tag, attrs.toMap(), TimeSource.Monotonic.markNow())
+    fun begin(
+        name: String,
+        tag: String = "trace",
+        vararg attrs: Pair<String, String>,
+    ): Span = Span(name, tag, attrs.toMap(), TimeSource.Monotonic.markNow())
 
     /** 作用域模式：块结束自动 end；抛异常自动 fail 后重抛。 */
     inline fun span(

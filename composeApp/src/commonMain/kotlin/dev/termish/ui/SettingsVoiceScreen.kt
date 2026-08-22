@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -142,16 +141,16 @@ fun SettingsVoiceScreen(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        editing = AsrProvider(
-                            id = newId(),
-                            type = AsrProviderType.VOLC_STREAMING,
-                            name = "",
-                            resourceId = VolcAsrProtocol.DEFAULT_RESOURCE_ID,
-                            enabled = true,
-                        )
+                        editing =
+                            AsrProvider(
+                                id = newId(),
+                                type = AsrProviderType.VOLC_STREAMING,
+                                name = "",
+                                resourceId = VolcAsrProtocol.DEFAULT_RESOURCE_ID,
+                                enabled = true,
+                            )
                         isNew = true
-                    }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                    }.padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -280,7 +279,11 @@ private fun AsrProviderRow(
             onCheckedChange = { onToggle() },
         )
         IconButton(onClick = onEdit, modifier = Modifier.size(32.dp)) {
-            Text(s.voice.providerEdit, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+            Text(
+                s.voice.providerEdit,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
         }
         IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
             Icon(
@@ -382,11 +385,16 @@ private fun AsrProviderEditDialog(
 }
 
 /** provider 类型图标。 */
-private fun providerIcon(type: AsrProviderType) = when (type) {
-    AsrProviderType.VOLC_STREAMING -> Icons.Filled.Mic
-}
+private fun providerIcon(type: AsrProviderType) =
+    when (type) {
+        AsrProviderType.VOLC_STREAMING -> Icons.Filled.Mic
+    }
 
 /** provider 类型显示名。 */
-internal fun providerTypeLabel(type: AsrProviderType, s: AppStrings): String = when (type) {
-    AsrProviderType.VOLC_STREAMING -> s.voice.providerTypeVolc
-}
+internal fun providerTypeLabel(
+    type: AsrProviderType,
+    s: AppStrings,
+): String =
+    when (type) {
+        AsrProviderType.VOLC_STREAMING -> s.voice.providerTypeVolc
+    }

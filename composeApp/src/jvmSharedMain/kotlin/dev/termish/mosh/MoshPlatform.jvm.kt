@@ -7,27 +7,32 @@ import java.net.SocketTimeoutException
 import java.util.zip.Deflater
 import java.util.zip.Inflater
 
-internal actual class MoshUdpSocket actual constructor(ip: String, port: Int) {
+internal actual class MoshUdpSocket actual constructor(
+    ip: String,
+    port: Int,
+) {
     private val remoteAddr = InetAddress.getByName(ip)
     actual val isIpv6: Boolean = remoteAddr is java.net.Inet6Address
-    private val socket = DatagramSocket().apply {
-        connect(remoteAddr, port)
-    }
+    private val socket =
+        DatagramSocket().apply {
+            connect(remoteAddr, port)
+        }
     private val buf = ByteArray(4096)
 
-    actual fun send(data: ByteArray): SendResult = try {
-        socket.send(DatagramPacket(data, data.size))
-        SendResult.OK
-    } catch (e: java.net.SocketException) {
-        // Linux/Android 的 Java 层不暴露 errno；"Message too long" 是 EMSGSIZE 的常见文本
-        if (e.message?.contains("too long", ignoreCase = true) == true) {
-            SendResult.TOO_LARGE
-        } else {
+    actual fun send(data: ByteArray): SendResult =
+        try {
+            socket.send(DatagramPacket(data, data.size))
+            SendResult.OK
+        } catch (e: java.net.SocketException) {
+            // Linux/Android 的 Java 层不暴露 errno；"Message too long" 是 EMSGSIZE 的常见文本
+            if (e.message?.contains("too long", ignoreCase = true) == true) {
+                SendResult.TOO_LARGE
+            } else {
+                SendResult.FAILED
+            }
+        } catch (_: Exception) {
             SendResult.FAILED
         }
-    } catch (_: Exception) {
-        SendResult.FAILED
-    }
 
     actual fun receive(timeoutMillis: Int): UdpDatagram? {
         socket.soTimeout = timeoutMillis.coerceAtLeast(1)

@@ -3,12 +3,10 @@ package dev.termish.term
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /** TerminalBuffer 回归测试：覆盖 resize 收缩、宽字符尾巴颜色继承等已修 bug。 */
 class TerminalBufferTest {
-
     @Test
     fun unlimitedScrollbackNotTruncated() {
         // 影子终端用 Int.MAX_VALUE 表示无上限（mosh Framebuffer 语义），
@@ -85,7 +83,12 @@ class TerminalBufferTest {
     @Test
     fun fullScreenScrollKeepsLineIdentityAndVersion() {
         val b = TerminalBuffer(10, 5)
-        repeat(5) { r -> b.lineAt(r).let { it.cells[0].codePoint = 'a'.code + r; it.touch() } }
+        repeat(5) { r ->
+            b.lineAt(r).let {
+                it.cells[0].codePoint = 'a'.code + r
+                it.touch()
+            }
+        }
         val first = b.lineAt(0)
         val firstVersion = first.version
         b.scrollUp(1)
@@ -193,7 +196,7 @@ class TerminalBufferTest {
     fun writeOnWideTailClearsHead() {
         val b = TerminalBuffer(10, 3)
         val e = TerminalEmulator(b)
-        e.writeText("中")   // 占 0-1 列，光标到 2
+        e.writeText("中") // 占 0-1 列，光标到 2
         e.writeText("[1D") // 光标左移一格，落在尾巴上
         e.writeText("x")
         val line = b.visibleLines()[0]

@@ -23,25 +23,29 @@ import androidx.compose.ui.platform.LocalContext
 actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (name: String) -> Unit {
     val context = LocalContext.current
     // API < 29 回退：SAF CreateDocument 让用户选保存位置
-    val safLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri: Uri? ->
-        if (uri != null) {
-            val out = context.contentResolver.openOutputStream(uri)
-            if (out != null) {
-                onReady(queryName(context, uri) ?: "file", object : FileSink {
-                    override fun write(bytes: ByteArray) = out.write(bytes)
+    val safLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri: Uri? ->
+            if (uri != null) {
+                val out = context.contentResolver.openOutputStream(uri)
+                if (out != null) {
+                    onReady(
+                        queryName(context, uri) ?: "file",
+                        object : FileSink {
+                            override fun write(bytes: ByteArray) = out.write(bytes)
 
-                    override val openUri: String? = uri.toString()
+                            override val openUri: String? = uri.toString()
 
-                    override fun close() {
-                        try {
-                            out.close()
-                        } catch (_: Exception) {
-                        }
-                    }
-                })
+                            override fun close() {
+                                try {
+                                    out.close()
+                                } catch (_: Exception) {
+                                }
+                            }
+                        },
+                    )
+                }
             }
         }
-    }
     return { name ->
         if (Build.VERSION.SDK_INT >= 29) {
             val uri = insertDownload(context, name)
@@ -50,21 +54,24 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
                 if (out != null) {
                     // 取实际文件名（MediaStore 同名自动去重后可能变成 name (1).ext）
                     val actualName = queryName(context, uri) ?: name
-                    onReady(actualName, object : FileSink {
-                        override fun write(bytes: ByteArray) = out.write(bytes)
+                    onReady(
+                        actualName,
+                        object : FileSink {
+                            override fun write(bytes: ByteArray) = out.write(bytes)
 
-                        override val openUri: String? = uri.toString()
+                            override val openUri: String? = uri.toString()
 
-                        override fun close() {
-                            try {
-                                out.close()
-                            } catch (_: Exception) {
+                            override fun close() {
+                                try {
+                                    out.close()
+                                } catch (_: Exception) {
+                                }
+                                // 清除 IS_PENDING，文件转为可见的完成态
+                                val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                                context.contentResolver.update(uri, done, null, null)
                             }
-                            // 清除 IS_PENDING，文件转为可见的完成态
-                            val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
-                            context.contentResolver.update(uri, done, null, null)
-                        }
-                    })
+                        },
+                    )
                 }
             }
         } else {
@@ -75,19 +82,26 @@ actual fun rememberFileSaver(onReady: (name: String, sink: FileSink) -> Unit): (
 
 /** MediaStore.Downloads 插入（IS_PENDING=1 占位）；同名由 MediaStore 自动去重。 */
 @RequiresApi(29)
-private fun insertDownload(context: Context, name: String): Uri? {
-    val values = ContentValues().apply {
-        put(MediaStore.Downloads.DISPLAY_NAME, name)
-        put(MediaStore.Downloads.MIME_TYPE, guessMimeType(name))
-        put(MediaStore.Downloads.IS_PENDING, 1)
-    }
+private fun insertDownload(
+    context: Context,
+    name: String,
+): Uri? {
+    val values =
+        ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
+            put(MediaStore.Downloads.MIME_TYPE, guessMimeType(name))
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
     return context.contentResolver.insert(
         MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY),
         values,
     )
 }
 
-private fun queryName(context: Context, uri: Uri): String? =
+private fun queryName(
+    context: Context,
+    uri: Uri,
+): String? =
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
         if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null

@@ -1,12 +1,11 @@
 package dev.termish.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,25 +24,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.InputChipDefaults
-import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -61,20 +55,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
@@ -82,7 +73,6 @@ import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.newId
-import dev.termish.util.monospaceFontFamily
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -123,26 +113,30 @@ fun HostEditScreen(
                         // 系统探测失败时无回调刷新），用 existing 快照会把已授信
                         // 指纹抹回 null → 重连重复弹「确认服务器身份」
                         val latest = repository.getHost(id)
-                        val host = Host(
-                            id = id,
-                            name = name.ifBlank { hostname },
-                            hostname = hostname.trim(),
-                            port = port.toIntOrNull() ?: 22,
-                            username = username.ifBlank { "root" },
-                            // 系统由连接后自动探测写入（Termius 式），编辑页不手填；
-                            // 保留已探测到的值，不覆盖。
-                            system = latest?.system ?: existing?.system ?: "",
-                            authMethod = authMethod,
-                            connectionMode = connectionMode,
-                            launchHerdr = launchHerdr,
-                            tags = tags,
-                            createdAt = existing?.createdAt ?: kotlinx.datetime.Clock.System.now().toEpochMilliseconds(),
-                            lastConnectedAt = latest?.lastConnectedAt ?: existing?.lastConnectedAt ?: 0L,
-                            knownHostFingerprint = latest?.knownHostFingerprint ?: existing?.knownHostFingerprint,
-                            startupCommand = startupCommand.trim(),
-                            moshThemeSync = moshThemeSync,
-                            moshUdpPort = moshUdpPort.toIntOrNull()?.takeIf { it in 1024..65535 } ?: 0,
-                        )
+                        val host =
+                            Host(
+                                id = id,
+                                name = name.ifBlank { hostname },
+                                hostname = hostname.trim(),
+                                port = port.toIntOrNull() ?: 22,
+                                username = username.ifBlank { "root" },
+                                // 系统由连接后自动探测写入（Termius 式），编辑页不手填；
+                                // 保留已探测到的值，不覆盖。
+                                system = latest?.system ?: existing?.system ?: "",
+                                authMethod = authMethod,
+                                connectionMode = connectionMode,
+                                launchHerdr = launchHerdr,
+                                tags = tags,
+                                createdAt =
+                                    existing?.createdAt ?: kotlinx.datetime.Clock.System
+                                        .now()
+                                        .toEpochMilliseconds(),
+                                lastConnectedAt = latest?.lastConnectedAt ?: existing?.lastConnectedAt ?: 0L,
+                                knownHostFingerprint = latest?.knownHostFingerprint ?: existing?.knownHostFingerprint,
+                                startupCommand = startupCommand.trim(),
+                                moshThemeSync = moshThemeSync,
+                                moshUdpPort = moshUdpPort.toIntOrNull()?.takeIf { it in 1024..65535 } ?: 0,
+                            )
                         onSave(host, password, privateKey)
                     }) { Text(s.editSave) }
                 },
@@ -152,14 +146,39 @@ fun HostEditScreen(
         // adjustNothing 下键盘不缩放窗口：消费 ime inset 把整个表单顶起，
         // 否则底部字段（mosh 端口/启动命令）被键盘盖住（与终端页同一套机制）。
         Column(
-            Modifier.fillMaxSize().padding(padding).imePadding().padding(16.dp).verticalScroll(rememberScrollState()),
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text(s.editName) }, singleLine = true)
-            OutlinedTextField(hostname, { hostname = it }, Modifier.fillMaxWidth(), label = { Text(s.editHostname) }, singleLine = true)
+            OutlinedTextField(
+                name,
+                { name = it },
+                Modifier.fillMaxWidth(),
+                label = { Text(s.editName) },
+                singleLine = true,
+            )
+            OutlinedTextField(hostname, {
+                hostname = it
+            }, Modifier.fillMaxWidth(), label = { Text(s.editHostname) }, singleLine = true)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(port, { port = it }, Modifier.weight(1f), label = { Text(s.editPort) }, singleLine = true)
-                OutlinedTextField(username, { username = it }, Modifier.weight(2f), label = { Text(s.editUsername) }, singleLine = true)
+                OutlinedTextField(
+                    port,
+                    { port = it },
+                    Modifier.weight(1f),
+                    label = { Text(s.editPort) },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    username,
+                    { username = it },
+                    Modifier.weight(2f),
+                    label = { Text(s.editUsername) },
+                    singleLine = true,
+                )
             }
 
             Text(s.editAuthMethod, style = MaterialTheme.typography.labelLarge)
@@ -172,7 +191,10 @@ fun HostEditScreen(
                 Text(s.editAuthKey)
             }
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                RadioButton(authMethod == HostAuthMethod.KEY_OR_PASSWORD, { authMethod = HostAuthMethod.KEY_OR_PASSWORD })
+                RadioButton(
+                    authMethod == HostAuthMethod.KEY_OR_PASSWORD,
+                    { authMethod = HostAuthMethod.KEY_OR_PASSWORD },
+                )
                 Text(s.editAuthKeyOrPassword)
             }
 
@@ -206,7 +228,9 @@ fun HostEditScreen(
 
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {
                 OutlinedTextField(
-                    password, { password = it }, Modifier.fillMaxWidth(),
+                    password,
+                    { password = it },
+                    Modifier.fillMaxWidth(),
                     label = { Text(if (existing == null) s.editPassword else s.editPasswordKeep) },
                     visualTransformation = PasswordVisualTransformation(),
                     singleLine = true,
@@ -214,7 +238,9 @@ fun HostEditScreen(
             }
             if (authMethod != HostAuthMethod.PASSWORD) {
                 OutlinedTextField(
-                    privateKey, { privateKey = it }, Modifier.fillMaxWidth(),
+                    privateKey,
+                    { privateKey = it },
+                    Modifier.fillMaxWidth(),
                     label = { Text(if (existing == null) s.editPrivateKey else s.editPrivateKeyKeep) },
                     minLines = 3,
                 )
@@ -264,7 +290,9 @@ fun HostEditScreen(
                 )
             }
             OutlinedTextField(
-                startupCommand, { startupCommand = it }, Modifier.fillMaxWidth(),
+                startupCommand,
+                { startupCommand = it },
+                Modifier.fillMaxWidth(),
                 label = { Text(s.editStartupCommand) },
                 placeholder = { Text(s.editStartupPlaceholder) },
                 singleLine = true,
@@ -279,7 +307,9 @@ fun HostEditScreen(
                     Switch(moshThemeSync, { moshThemeSync = it })
                 }
                 OutlinedTextField(
-                    moshUdpPort, { moshUdpPort = it }, Modifier.fillMaxWidth(),
+                    moshUdpPort,
+                    { moshUdpPort = it },
+                    Modifier.fillMaxWidth(),
                     label = { Text(s.editMoshUdpPort) },
                     placeholder = { Text("0") },
                     supportingText = { Text(s.editMoshUdpPortHint) },
@@ -360,9 +390,10 @@ private fun TagInputField(
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = null,
-                            modifier = Modifier
-                                .size(InputChipDefaults.IconSize)
-                                .clickable { onTagsChange(tags - t) },
+                            modifier =
+                                Modifier
+                                    .size(InputChipDefaults.IconSize)
+                                    .clickable { onTagsChange(tags - t) },
                         )
                     },
                     modifier = Modifier.align(Alignment.CenterVertically),
@@ -382,38 +413,39 @@ private fun TagInputField(
                     }
                 },
                 // 单行：光标不换行、placeholder 不折行；宽度自适应内容
-                //（固定 120dp 时中文 placeholder 会折行成两行，撑高输入框）
+                // （固定 120dp 时中文 placeholder 会折行成两行，撑高输入框）
                 singleLine = true,
                 // 软键盘回车走 IME action（单行框不产生 key event），
                 // onPreviewKeyEvent 只兜硬件键盘/桌面端
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { commit() }),
-                modifier = Modifier
-                    .widthIn(min = 100.dp)
-                    .align(Alignment.CenterVertically)
-                    .focusRequester(focusRequester)
-                    .onPreviewKeyEvent { ev ->
-                        if (ev.type == KeyEventType.KeyDown) {
-                            when (ev.key) {
-                                Key.Enter, Key.NumPadEnter -> {
-                                    commit()
-                                    true
-                                }
-                                Key.Backspace -> {
-                                    // 输入为空时退格 = 删除最后一个 tag
-                                    if (state.text.isEmpty() && tags.isNotEmpty()) {
-                                        onTagsChange(tags.dropLast(1))
+                modifier =
+                    Modifier
+                        .widthIn(min = 100.dp)
+                        .align(Alignment.CenterVertically)
+                        .focusRequester(focusRequester)
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown) {
+                                when (ev.key) {
+                                    Key.Enter, Key.NumPadEnter -> {
+                                        commit()
                                         true
-                                    } else {
-                                        false
                                     }
+                                    Key.Backspace -> {
+                                        // 输入为空时退格 = 删除最后一个 tag
+                                        if (state.text.isEmpty() && tags.isNotEmpty()) {
+                                            onTagsChange(tags.dropLast(1))
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                                    else -> false
                                 }
-                                else -> false
+                            } else {
+                                false
                             }
-                        } else {
-                            false
-                        }
-                    },
+                        },
                 // placeholder 与输入文本共用同一 textStyle：行高一致，光标/文字对齐
                 textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -436,5 +468,3 @@ private fun TagInputField(
         }
     }
 }
-
-

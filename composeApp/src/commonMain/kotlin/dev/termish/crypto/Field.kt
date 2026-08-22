@@ -7,14 +7,20 @@ package dev.termish.crypto
  * All public functions return fully reduced values in [0, p) unless documented otherwise.
  */
 object Field {
-
     private const val MASK = 0xffffffffL
 
     // p = 2^255 - 19 as 8×32-bit limbs
-    private val P = longArrayOf(
-        0xffffffffL - 18, 0xffffffffL, 0xffffffffL, 0xffffffffL,
-        0xffffffffL, 0xffffffffL, 0xffffffffL, 0x7fffffffL,
-    )
+    private val P =
+        longArrayOf(
+            0xffffffffL - 18,
+            0xffffffffL,
+            0xffffffffL,
+            0xffffffffL,
+            0xffffffffL,
+            0xffffffffL,
+            0xffffffffL,
+            0x7fffffffL,
+        )
 
     val ONE = feOf(1)
     val ZERO = feOf(0)
@@ -52,7 +58,10 @@ object Field {
         return out
     }
 
-    fun add(a: LongArray, b: LongArray): LongArray {
+    fun add(
+        a: LongArray,
+        b: LongArray,
+    ): LongArray {
         // inputs must be reduced (< p); sum < 2p < 2^256
         val r = LongArray(8)
         var carry = 0L
@@ -77,7 +86,10 @@ object Field {
     }
 
     /** a - b (both reduced), result fully reduced. */
-    fun sub(a: LongArray, b: LongArray): LongArray {
+    fun sub(
+        a: LongArray,
+        b: LongArray,
+    ): LongArray {
         val r = LongArray(8)
         var borrow = 0L
         for (i in 0 until 8) {
@@ -102,7 +114,10 @@ object Field {
         return r
     }
 
-    fun mul(a: LongArray, b: LongArray): LongArray {
+    fun mul(
+        a: LongArray,
+        b: LongArray,
+    ): LongArray {
         val t = LongArray(16)
         // 32-bit limb multiply via 16-bit halves so all intermediates fit in Long:
         //   a_i*b_j = ahi*bhi*2^32 + (ahi*blo + alo*bhi)*2^16 + alo*blo
@@ -143,7 +158,9 @@ object Field {
             t[7] = t[7] and MASK
             if (c != 0L) {
                 t[0] += 38 * c
-            } else break
+            } else {
+                break
+            }
         }
         // now value < 2^256; reduce mod p
         return modP(t.copyOf(8))
@@ -157,10 +174,13 @@ object Field {
     /** a^(p-2) — Fermat inverse via fixed square-and-multiply chain. */
     fun invert(a: LongArray): LongArray {
         // e = p - 2 = 2^255 - 21 (little-endian 64-bit limbs)
-        val e = longArrayOf(
-            0xffffffffffffffebUL.toLong(), 0xffffffffffffffffUL.toLong(),
-            0xffffffffffffffffUL.toLong(), 0x7fffffffffffffffL,
-        )
+        val e =
+            longArrayOf(
+                0xffffffffffffffebUL.toLong(),
+                0xffffffffffffffffUL.toLong(),
+                0xffffffffffffffffUL.toLong(),
+                0x7fffffffffffffffL,
+            )
         var result = ONE
         var base = a
         for (bit in 0 until 255) {
@@ -171,7 +191,11 @@ object Field {
     }
 
     /** Constant-time conditional swap. */
-    fun cswap(swap: Boolean, a: LongArray, b: LongArray) {
+    fun cswap(
+        swap: Boolean,
+        a: LongArray,
+        b: LongArray,
+    ) {
         val mask = if (swap) -1L else 0L
         for (i in 0 until 8) {
             val x = mask and (a[i] xor b[i])
@@ -189,7 +213,10 @@ object Field {
         return r2 // 2p <= a < 3p
     }
 
-    private fun subWithBorrow(a: LongArray, b: LongArray): Pair<LongArray, Long> {
+    private fun subWithBorrow(
+        a: LongArray,
+        b: LongArray,
+    ): Pair<LongArray, Long> {
         val r = LongArray(8)
         var borrow = 0L
         for (i in 0 until 8) {
@@ -210,7 +237,10 @@ object Field {
         return m.all { it == 0L }
     }
 
-    fun equals(a: LongArray, b: LongArray): Boolean {
+    fun equals(
+        a: LongArray,
+        b: LongArray,
+    ): Boolean {
         val (d, borrow) = subWithBorrow(a, b)
         if (borrow != 0L) {
             // a < b; check a - b + p == p  => a == b (only if a==b, a-b+p=p, but borrow means a<b so no)
@@ -224,7 +254,6 @@ object Field {
  * X25519 (RFC 7748) key agreement.
  */
 object X25519 {
-
     private const val A24 = 121665L
 
     /** Clamp a 32-byte scalar per RFC 7748. */
@@ -236,7 +265,10 @@ object X25519 {
         return s
     }
 
-    fun scalarMult(privateKey: ByteArray, publicKey: ByteArray): ByteArray {
+    fun scalarMult(
+        privateKey: ByteArray,
+        publicKey: ByteArray,
+    ): ByteArray {
         require(privateKey.size == 32 && publicKey.size == 32)
         val scalar = clamp(privateKey)
         val x1 = Field.fromBytes(publicKey)

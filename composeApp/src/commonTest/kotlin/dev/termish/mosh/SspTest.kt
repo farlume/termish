@@ -9,20 +9,20 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class SspTest {
-
     // ---- Proto / Message ----
 
     @Test
     fun transportInstructionRoundTrip() {
-        val inst = TransportInstruction(
-            protocolVersion = 2,
-            oldNum = 3u,
-            newNum = 7u,
-            ackNum = 11u,
-            throwawayNum = 1u,
-            diff = byteArrayOf(1, 2, 3, -1, 0),
-            chaff = byteArrayOf(9, 9),
-        )
+        val inst =
+            TransportInstruction(
+                protocolVersion = 2,
+                oldNum = 3u,
+                newNum = 7u,
+                ackNum = 11u,
+                throwawayNum = 1u,
+                diff = byteArrayOf(1, 2, 3, -1, 0),
+                chaff = byteArrayOf(9, 9),
+            )
         val parsed = TransportInstruction.parse(inst.serialize())
         assertEquals(2, parsed.protocolVersion)
         assertEquals(3uL, parsed.oldNum)
@@ -36,13 +36,14 @@ class SspTest {
     @Test
     fun userMessageKeystrokeMerge() {
         // 相邻 keystroke 合并、resize 独立成条
-        val bytes = encodeUserMessage(
-            listOf(
-                UserEventOut.Keystrokes(byteArrayOf('a'.code.toByte())),
-                UserEventOut.Keystrokes(byteArrayOf('b'.code.toByte())),
-                UserEventOut.Resize(120, 40),
-            ),
-        )
+        val bytes =
+            encodeUserMessage(
+                listOf(
+                    UserEventOut.Keystrokes(byteArrayOf('a'.code.toByte())),
+                    UserEventOut.Keystrokes(byteArrayOf('b'.code.toByte())),
+                    UserEventOut.Resize(120, 40),
+                ),
+            )
         // 直接按 wire 格式解析验证：UserMessage { instruction: 2 条 }
         val r = ProtoReader(bytes)
         var count = 0
@@ -108,13 +109,14 @@ class SspTest {
     @Test
     fun fragmentRoundTripAndAssembly() {
         val fragmenter = Fragmenter()
-        val big = TransportInstruction(
-            oldNum = 0u,
-            newNum = 1u,
-            ackNum = 0u,
-            throwawayNum = 0u,
-            diff = kotlin.random.Random(42).nextBytes(5000), // 固定种子随机数据，防 zlib 压缩成单片
-        )
+        val big =
+            TransportInstruction(
+                oldNum = 0u,
+                newNum = 1u,
+                ackNum = 0u,
+                throwawayNum = 0u,
+                diff = kotlin.random.Random(42).nextBytes(5000), // 固定种子随机数据，防 zlib 压缩成单片
+            )
         val frags = fragmenter.makeFragments(big, 400)
         assertTrue(frags.size > 3)
         val asm = FragmentAssembly()
@@ -146,7 +148,10 @@ class SspTest {
     @Test
     fun cryptoSessionRoundTrip() {
         val keyRaw = ByteArray(16) { it.toByte() }
-        val key = dev.termish.util.base64Encode(keyRaw).substring(0, 22)
+        val key =
+            dev.termish.util
+                .base64Encode(keyRaw)
+                .substring(0, 22)
         val sender = MoshCryptoSession(key)
         val serverOcb = Ocb(keyRaw) // 服务器侧等价原语（方向位=1 加密）
         val payload = "fragment-bytes".encodeToByteArray()
@@ -188,7 +193,10 @@ class SspTest {
 
     @Test
     fun cryptoSessionRejectsTamper() {
-        val key = dev.termish.util.base64Encode(ByteArray(16) { (it * 3).toByte() }).substring(0, 22)
+        val key =
+            dev.termish.util
+                .base64Encode(ByteArray(16) { (it * 3).toByte() })
+                .substring(0, 22)
         val s = MoshCryptoSession(key)
         val dg = s.encrypt(0uL, 0, 0xffff, byteArrayOf(1, 2, 3))
         dg[10] = (dg[10].toInt() xor 0x40).toByte()
@@ -199,7 +207,10 @@ class SspTest {
     @Test
     fun cryptoSessionRejectsClientDirectionReplay() {
         // 方向位=0（TO_SERVER）是客户端自己发出的包；重放回来必须被拒绝
-        val key = dev.termish.util.base64Encode(ByteArray(16) { it.toByte() }).substring(0, 22)
+        val key =
+            dev.termish.util
+                .base64Encode(ByteArray(16) { it.toByte() })
+                .substring(0, 22)
         val s = MoshCryptoSession(key)
         val dg = s.encrypt(0uL, 0, 0xffff, byteArrayOf(1, 2, 3))
         assertNull(s.decrypt(dg))
@@ -207,7 +218,10 @@ class SspTest {
 
     @Test
     fun cryptoSessionValidatesKeyEncoding() {
-        val canonical = dev.termish.util.base64Encode(ByteArray(16)).substring(0, 22)
+        val canonical =
+            dev.termish.util
+                .base64Encode(ByteArray(16))
+                .substring(0, 22)
         // 21 个 A + B：22 字符但尾部 4 bit 非零，mosh Base64Key 会拒绝
         val nonCanonical = "AAAAAAAAAAAAAAAAAAAAAB"
         assertFailsWith<IllegalArgumentException> { MoshCryptoSession(nonCanonical) }

@@ -11,16 +11,18 @@ import platform.UIKit.UIApplicationWillEnterForegroundNotification
  */
 actual fun observeAppLifecycle(listener: (foreground: Boolean) -> Unit): () -> Unit {
     val center = NSNotificationCenter.defaultCenter
-    val backgroundObserver = center.addObserverForName(
-        UIApplicationDidEnterBackgroundNotification,
-        null,
-        null,
-    ) { _ -> listener(false) }
-    val foregroundObserver = center.addObserverForName(
-        UIApplicationWillEnterForegroundNotification,
-        null,
-        null,
-    ) { _ -> listener(true) }
+    val backgroundObserver =
+        center.addObserverForName(
+            UIApplicationDidEnterBackgroundNotification,
+            null,
+            null,
+        ) { _ -> listener(false) }
+    val foregroundObserver =
+        center.addObserverForName(
+            UIApplicationWillEnterForegroundNotification,
+            null,
+            null,
+        ) { _ -> listener(true) }
     return {
         center.removeObserver(backgroundObserver)
         center.removeObserver(foregroundObserver)

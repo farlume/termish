@@ -31,7 +31,10 @@ actual object SecretStore {
         lockDown(f, directory = false)
     }
 
-    private fun lockDown(f: File, directory: Boolean) {
+    private fun lockDown(
+        f: File,
+        directory: Boolean,
+    ) {
         try {
             f.setReadable(false, false)
             f.setReadable(true, true)
@@ -43,15 +46,25 @@ actual object SecretStore {
         }
     }
 
-    actual fun get(service: String, account: String): String? = load().getProperty("$service/$account")
+    actual fun get(
+        service: String,
+        account: String,
+    ): String? = load().getProperty("$service/$account")
 
-    actual fun set(service: String, account: String, value: String) {
+    actual fun set(
+        service: String,
+        account: String,
+        value: String,
+    ) {
         val p = load()
         p.setProperty("$service/$account", value)
         save(p)
     }
 
-    actual fun delete(service: String, account: String) {
+    actual fun delete(
+        service: String,
+        account: String,
+    ) {
         val p = load()
         p.remove("$service/$account")
         save(p)

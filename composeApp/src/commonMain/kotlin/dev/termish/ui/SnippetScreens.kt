@@ -1,13 +1,11 @@
 package dev.termish.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,8 +16,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -41,8 +39,6 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -98,12 +94,12 @@ fun SnippetManageScreen(
     var showTagPage by remember { mutableStateOf(false) }
 
     val q = query.trim()
-    val filtered = snippets
-        .filter { filterTagId == null || it.tagIds.contains(filterTagId) }
-        .filter {
-            q.isEmpty() || it.name.contains(q, ignoreCase = true) || it.content.contains(q, ignoreCase = true)
-        }
-        .sortedByDescending { it.updatedAt }
+    val filtered =
+        snippets
+            .filter { filterTagId == null || it.tagIds.contains(filterTagId) }
+            .filter {
+                q.isEmpty() || it.name.contains(q, ignoreCase = true) || it.content.contains(q, ignoreCase = true)
+            }.sortedByDescending { it.updatedAt }
 
     Scaffold(
         topBar = {
@@ -119,7 +115,10 @@ fun SnippetManageScreen(
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { editing = null; showEditor = true },
+                onClick = {
+                    editing = null
+                    showEditor = true
+                },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 shape = RoundedCornerShape(16.dp),
@@ -131,9 +130,10 @@ fun SnippetManageScreen(
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                 placeholder = { Text(s.snippetsSearch) },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
@@ -212,7 +212,7 @@ fun SnippetManageScreen(
     }
 
     // 覆盖层系统返回：先关最上层（标签页 > 编辑页），不穿透到 AppRoot 直接退页
-    //（Compose 返回链 LIFO：后注册的 enabled handler 先触发，此处两级均晚于 AppRoot）
+    // （Compose 返回链 LIFO：后注册的 enabled handler 先触发，此处两级均晚于 AppRoot）
     PlatformBackHandler(enabled = showTagPage) {
         showTagPage = false
         tags = repository.listTagGroups()
@@ -299,10 +299,11 @@ private fun SnippetRow(
                         name,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        modifier =
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
             }
@@ -357,14 +358,24 @@ private fun SnippetEditPage(
             )
             if (existing != null) {
                 IconButton(onClick = { pendingDelete = true }) {
-                    Icon(Icons.Filled.Delete, contentDescription = s.snippetDelete, tint = MaterialTheme.colorScheme.error)
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = s.snippetDelete,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
             TextButton(onClick = { save() }, enabled = name.isNotBlank() && content.isNotBlank()) {
                 Text(s.editSave, fontWeight = FontWeight.SemiBold)
             }
         }
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        ) {
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
@@ -469,7 +480,13 @@ fun TagManagePage(
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        ) {
             Text(
                 s.tagsHint,
                 style = MaterialTheme.typography.bodySmall,
@@ -572,16 +589,17 @@ fun SnippetInsertSheet(
     var filterTagId by remember { mutableStateOf<String?>(null) }
     var menuFor by remember { mutableStateOf<Snippet?>(null) }
     var pendingDelete by remember { mutableStateOf<Snippet?>(null) }
+
     /** 空态「新建片段」对话框开关。 */
     var adding by remember { mutableStateOf(false) }
 
     val q = query.trim()
-    val filtered = snippets
-        .filter { filterTagId == null || it.tagIds.contains(filterTagId) }
-        .filter {
-            q.isEmpty() || it.name.contains(q, ignoreCase = true) || it.content.contains(q, ignoreCase = true)
-        }
-        .sortedByDescending { it.updatedAt }
+    val filtered =
+        snippets
+            .filter { filterTagId == null || it.tagIds.contains(filterTagId) }
+            .filter {
+                q.isEmpty() || it.name.contains(q, ignoreCase = true) || it.content.contains(q, ignoreCase = true)
+            }.sortedByDescending { it.updatedAt }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -620,13 +638,14 @@ fun SnippetInsertSheet(
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = theme.foreground(),
-                    unfocusedTextColor = theme.foreground(),
-                    focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
-                    unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
-                    cursorColor = theme.cursor(),
-                ),
+                colors =
+                    OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = theme.foreground(),
+                        unfocusedTextColor = theme.foreground(),
+                        focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                        unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                        cursorColor = theme.cursor(),
+                    ),
             )
             if (tags.isNotEmpty()) {
                 Row(
@@ -695,8 +714,7 @@ fun SnippetInsertSheet(
                                 .combinedClickable(
                                     onClick = { onUse(snippet.content, false) },
                                     onLongClick = { menuFor = snippet },
-                                )
-                                .padding(horizontal = Spacing.Xs, vertical = Spacing.Sm),
+                                ).padding(horizontal = Spacing.Xs, vertical = Spacing.Sm),
                         ) {
                             // 名称小灰在上（助记符是辅信息）；内容等宽拿主宽度——扫读目标是命令本身
                             Text(
@@ -726,10 +744,11 @@ fun SnippetInsertSheet(
                                             name,
                                             style = MaterialTheme.typography.labelSmall,
                                             color = theme.foreground(),
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(theme.foreground().copy(alpha = 0.12f))
-                                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                                            modifier =
+                                                Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(theme.foreground().copy(alpha = 0.12f))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp),
                                         )
                                     }
                                 }
@@ -780,7 +799,9 @@ fun SnippetInsertSheet(
                     }) { Text(s.snippetDelete, color = MaterialTheme.colorScheme.error) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingDelete = null }) { Text(s.terminalCancel, color = theme.foreground()) }
+                    TextButton(
+                        onClick = { pendingDelete = null },
+                    ) { Text(s.terminalCancel, color = theme.foreground()) }
                 },
             )
         }
@@ -803,13 +824,14 @@ fun SnippetInsertSheet(
                             label = { Text(s.snippetName) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = theme.foreground(),
-                                unfocusedTextColor = theme.foreground(),
-                                focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
-                                unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
-                                cursorColor = theme.cursor(),
-                            ),
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = theme.foreground(),
+                                    unfocusedTextColor = theme.foreground(),
+                                    focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                                    unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                                    cursorColor = theme.cursor(),
+                                ),
                         )
                         OutlinedTextField(
                             value = newContent,
@@ -818,13 +840,14 @@ fun SnippetInsertSheet(
                             minLines = 3,
                             textStyle = LocalTextStyle.current.copy(fontFamily = monospaceFontFamily()),
                             modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = theme.foreground(),
-                                unfocusedTextColor = theme.foreground(),
-                                focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
-                                unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
-                                cursorColor = theme.cursor(),
-                            ),
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedTextColor = theme.foreground(),
+                                    unfocusedTextColor = theme.foreground(),
+                                    focusedBorderColor = theme.foreground().copy(alpha = 0.5f),
+                                    unfocusedBorderColor = theme.foreground().copy(alpha = 0.25f),
+                                    cursorColor = theme.cursor(),
+                                ),
                         )
                     }
                 },

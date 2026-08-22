@@ -7,9 +7,10 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class TerminalEmulatorTest {
-
-    private fun emu(cols: Int = 10, rows: Int = 5) =
-        TerminalBuffer(cols, rows).let { TerminalEmulator(it) to it }
+    private fun emu(
+        cols: Int = 10,
+        rows: Int = 5,
+    ) = TerminalBuffer(cols, rows).let { TerminalEmulator(it) to it }
 
     private fun TerminalBuffer.lineText(row: Int): String {
         val sb = StringBuilder()
@@ -46,7 +47,14 @@ class TerminalEmulatorTest {
         e.writeText("\u001b[3;4HX") // row 3, col 4 (1-based)
         assertEquals(2, b.cursorRow)
         assertEquals(4, b.cursorCol)
-        assertEquals('X', b.lineAt(2).cells[3].codePoint.toChar())
+        assertEquals(
+            'X',
+            b
+                .lineAt(2)
+                .cells[3]
+                .codePoint
+                .toChar(),
+        )
     }
 
     @Test
@@ -175,7 +183,14 @@ class TerminalEmulatorTest {
     fun utf8MultibyteDecode() {
         val (e, b) = emu()
         e.write("中".encodeToByteArray())
-        assertEquals('中', b.lineAt(0).cells[0].codePoint.toChar())
+        assertEquals(
+            '中',
+            b
+                .lineAt(0)
+                .cells[0]
+                .codePoint
+                .toChar(),
+        )
         assertEquals(2, b.cursorCol)
     }
 
@@ -427,7 +442,7 @@ class TerminalEmulatorTest {
     @Test
     fun ctrlLClearScreenFlow() {
         // 工具栏 ⌃L 端到端语义：发 0x0C → 远端 readline 回 clear 序列
-        //（xterm-256color/xterm: ESC[H ESC[2J；vt100/linux: ESC[H ESC[J）→
+        // （xterm-256color/xterm: ESC[H ESC[2J；vt100/linux: ESC[H ESC[J）→
         // 可视屏全清 + 光标归顶 + 滚动回看保留。锁定整条链路契约，防回归。
         for (clearSeq in listOf("\u001b[H\u001b[2J", "\u001b[H\u001b[J")) {
             val (e, b) = emu(10, 3)

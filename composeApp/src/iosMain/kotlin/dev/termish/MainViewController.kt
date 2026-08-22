@@ -5,23 +5,28 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSTemporaryDirectory
+import platform.UIKit.UIViewController
 import platform.posix.O_APPEND
 import platform.posix.O_CREAT
 import platform.posix.O_WRONLY
 import platform.posix.close
 import platform.posix.open
 import platform.posix.write
-import platform.UIKit.UIViewController
 
 @OptIn(kotlin.experimental.ExperimentalNativeApi::class, ExperimentalForeignApi::class)
 private fun installUncaughtHook() {
     kotlin.native.setUnhandledExceptionHook { throwable ->
         try {
-            val text = buildString {
-                append("=== Termish-DIAG ").append(kotlinx.datetime.Clock.System.now()).append(" ===\n")
-                append(throwable.toString()).append("\n")
-                append(throwable.stackTraceToString()).append("\n")
-            }
+            val text =
+                buildString {
+                    append("=== Termish-DIAG ")
+                        .append(
+                            kotlinx.datetime.Clock.System
+                                .now(),
+                        ).append(" ===\n")
+                    append(throwable.toString()).append("\n")
+                    append(throwable.stackTraceToString()).append("\n")
+                }
             val base = NSTemporaryDirectory() ?: "/tmp"
             val path = "$base/termish-diag.log"
             val fd = open(path, O_CREAT or O_WRONLY or O_APPEND, 0x1A4u)
@@ -42,6 +47,7 @@ private fun installUncaughtHook() {
     }
 }
 
+@Suppress("ktlint:standard:function-naming") // Swift 互操作入口（MainViewControllerKt.MainViewController()）
 fun MainViewController(): UIViewController {
     installUncaughtHook()
     return ComposeUIViewController { App() }

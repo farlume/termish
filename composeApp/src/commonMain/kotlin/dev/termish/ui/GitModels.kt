@@ -5,9 +5,10 @@ package dev.termish.ui
  *
  * 数据源：通过终端通道执行 `git status --porcelain=v1 --branch` /
  * `git diff --no-color`，解析远端输出为结构化 UI 数据。
+ *
+ * git status 单文件条目（porcelain=v1 的 XY 行）。
  */
 
-/** git status 单文件条目（porcelain=v1 的 XY 行）。 */
 data class GitEntry(
     val path: String,
     /** 暂存区（index）状态码；' ' = 无改动。 */
@@ -25,12 +26,15 @@ data class GitEntry(
 ) {
     /** 展示用路径：重命名显示新路径。 */
     val displayPath: String get() = renameTarget ?: path
+
     /** 暂存区是否有改动（A/M/D/R/C 等）。 */
     val isStaged: Boolean get() = indexStatus != ' '
+
     /** 是否可查看 diff（未跟踪目录除外）。 */
     val diffable: Boolean get() = !(untracked && isDir)
+
     /** 状态码文本（徽章显示）。 */
-    val statusCode: String get() = if (untracked) "??" else "${indexStatus}${worktreeStatus}"
+    val statusCode: String get() = if (untracked) "??" else "${indexStatus}$worktreeStatus"
 }
 
 /** `git status --porcelain=v1 --branch` 解析结果。 */
@@ -50,7 +54,10 @@ data class GitStatusResult(
 enum class GitDiffKind { HEADER, HUNK, CONTEXT, ADD, REMOVE, NO_NEWLINE }
 
 /** 一行解析后的 diff。 */
-data class GitDiffLine(val kind: GitDiffKind, val text: String)
+data class GitDiffLine(
+    val kind: GitDiffKind,
+    val text: String,
+)
 
 /**
  * 解析 `git status --porcelain=v1 --branch` 输出。
@@ -70,8 +77,13 @@ fun parseGitStatus(text: String): GitStatusResult {
         val line = raw.trimEnd('\r')
         if (line.isEmpty()) continue
         // 错误识别（git 输出到 stderr，已 2>&1 合并）
-        if (error == null && (line.startsWith("fatal:") || line.startsWith("error:") ||
-                line.contains("command not found") || line.contains("not a git repository"))
+        if (error == null &&
+            (
+                line.startsWith("fatal:") ||
+                    line.startsWith("error:") ||
+                    line.contains("command not found") ||
+                    line.contains("not a git repository")
+            )
         ) {
             error = line
             continue
@@ -93,7 +105,9 @@ fun parseGitStatus(text: String): GitStatusResult {
         }
         // 条目行：`XY path`（X=index，Y=worktree；` M`=仅工作区修改，
         // `??`=未跟踪，`!!`=忽略，`R  old -> new`=重命名；至少一列非空格）
-        if (line.length >= 4 && line[2] == ' ' && (line[0] != ' ' || line[1] != ' ') &&
+        if (line.length >= 4 &&
+            line[2] == ' ' &&
+            (line[0] != ' ' || line[1] != ' ') &&
             (line[0] == ' ' || line[0].isLetter() || line[0] == '?' || line[0] == '!') &&
             (line[1] == ' ' || line[1].isLetter() || line[1] == '?' || line[1] == '!')
         ) {
@@ -141,20 +155,27 @@ fun parseGitDiff(text: String): List<GitDiffLine> {
             lines.add(GitDiffLine(GitDiffKind.CONTEXT, ""))
             continue
         }
-        val kind = when {
-            line.startsWith("diff --git ") || line.startsWith("index ") ||
-                line.startsWith("new file mode ") || line.startsWith("deleted file mode ") ||
-                line.startsWith("old mode ") || line.startsWith("new mode ") ||
-                line.startsWith("similarity ") || line.startsWith("rename ") ||
-                line.startsWith("copy ") || line.startsWith("Binary files ") ||
-                line.startsWith("--- ") || line.startsWith("+++ ") -> GitDiffKind.HEADER
-            line.startsWith("@@") -> GitDiffKind.HUNK
-            line.startsWith("+") -> GitDiffKind.ADD
-            line.startsWith("-") -> GitDiffKind.REMOVE
-            line.startsWith("\\ No newline") -> GitDiffKind.NO_NEWLINE
-            line.startsWith(" ") -> GitDiffKind.CONTEXT
-            else -> continue // 杂讯（命令回显等）跳过
-        }
+        val kind =
+            when {
+                line.startsWith("diff --git ") ||
+                    line.startsWith("index ") ||
+                    line.startsWith("new file mode ") ||
+                    line.startsWith("deleted file mode ") ||
+                    line.startsWith("old mode ") ||
+                    line.startsWith("new mode ") ||
+                    line.startsWith("similarity ") ||
+                    line.startsWith("rename ") ||
+                    line.startsWith("copy ") ||
+                    line.startsWith("Binary files ") ||
+                    line.startsWith("--- ") ||
+                    line.startsWith("+++ ") -> GitDiffKind.HEADER
+                line.startsWith("@@") -> GitDiffKind.HUNK
+                line.startsWith("+") -> GitDiffKind.ADD
+                line.startsWith("-") -> GitDiffKind.REMOVE
+                line.startsWith("\\ No newline") -> GitDiffKind.NO_NEWLINE
+                line.startsWith(" ") -> GitDiffKind.CONTEXT
+                else -> continue // 杂讯（命令回显等）跳过
+            }
         lines.add(GitDiffLine(kind, line))
     }
     return lines
@@ -181,15 +202,42 @@ fun unescapePorcelainPath(p: String): String {
         }
         val n = inner[i + 1]
         when (n) {
-            'a' -> { sb.append('\u0007'); i += 2 }
-            'b' -> { sb.append('\b'); i += 2 }
-            't' -> { sb.append('\t'); i += 2 }
-            'n' -> { sb.append('\n'); i += 2 }
-            'v' -> { sb.append('\u000b'); i += 2 }
-            'f' -> { sb.append('\u000c'); i += 2 }
-            'r' -> { sb.append('\r'); i += 2 }
-            '"' -> { sb.append('"'); i += 2 }
-            '\\' -> { sb.append('\\'); i += 2 }
+            'a' -> {
+                sb.append('\u0007')
+                i += 2
+            }
+            'b' -> {
+                sb.append('\b')
+                i += 2
+            }
+            't' -> {
+                sb.append('\t')
+                i += 2
+            }
+            'n' -> {
+                sb.append('\n')
+                i += 2
+            }
+            'v' -> {
+                sb.append('\u000b')
+                i += 2
+            }
+            'f' -> {
+                sb.append('\u000c')
+                i += 2
+            }
+            'r' -> {
+                sb.append('\r')
+                i += 2
+            }
+            '"' -> {
+                sb.append('"')
+                i += 2
+            }
+            '\\' -> {
+                sb.append('\\')
+                i += 2
+            }
             in '0'..'7' -> {
                 // 八进制转义 \ooo（最多 3 位）
                 var v = n - '0'
@@ -203,7 +251,10 @@ fun unescapePorcelainPath(p: String): String {
                 sb.append(v.toChar())
                 i = j
             }
-            else -> { sb.append(n); i += 2 }
+            else -> {
+                sb.append(n)
+                i += 2
+            }
         }
     }
     return sb.toString()

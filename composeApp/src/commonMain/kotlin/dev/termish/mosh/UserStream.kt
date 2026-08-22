@@ -6,19 +6,27 @@ package dev.termish.mosh
  */
 internal class UserStream {
     sealed class Event {
-        class Byte(val b: kotlin.Byte) : Event()
-        class Resize(val width: Int, val height: Int) : Event()
+        class Byte(
+            val b: kotlin.Byte,
+        ) : Event()
 
-        override fun equals(other: Any?): Boolean = when {
-            this is Byte && other is Byte -> b == other.b
-            this is Resize && other is Resize -> width == other.width && height == other.height
-            else -> false
-        }
+        class Resize(
+            val width: Int,
+            val height: Int,
+        ) : Event()
 
-        override fun hashCode(): Int = when (this) {
-            is Byte -> b.toInt()
-            is Resize -> 31 * width + height
-        }
+        override fun equals(other: Any?): Boolean =
+            when {
+                this is Byte && other is Byte -> b == other.b
+                this is Resize && other is Resize -> width == other.width && height == other.height
+                else -> false
+            }
+
+        override fun hashCode(): Int =
+            when (this) {
+                is Byte -> b.toInt()
+                is Resize -> 31 * width + height
+            }
     }
 
     private val actions = ArrayDeque<Event>()
@@ -27,7 +35,10 @@ internal class UserStream {
 
     fun pushByte(b: Byte) = actions.addLast(Event.Byte(b))
 
-    fun pushResize(width: Int, height: Int) = actions.addLast(Event.Resize(width, height))
+    fun pushResize(
+        width: Int,
+        height: Int,
+    ) = actions.addLast(Event.Resize(width, height))
 
     /** 从 existing 是 this 的前缀出发生成 diff（UserMessage protobuf 编码）。 */
     fun diffFrom(existing: UserStream): ByteArray {
@@ -40,6 +51,7 @@ internal class UserStream {
         // 增长式字节缓冲：避免逐字节 "pending += b" 造成的 O(n²) 拷贝（大粘贴场景）
         var buf = ByteArray(64)
         var len = 0
+
         fun flushKeys() {
             if (len == 0) return
             events.add(UserEventOut.Keystrokes(buf.copyOf(len)))

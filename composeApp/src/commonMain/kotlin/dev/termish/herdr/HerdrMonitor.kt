@@ -46,19 +46,24 @@ class HerdrMonitor(
         private val SNAPSHOT_CMD_CANDIDATES = HerdrApi.SNAPSHOT_CMD_CANDIDATES
         private const val MIN_BACKOFF_MS = 3_000L
         private const val MAX_BACKOFF_MS = 15_000L
+
         /** 连续失败后的暂停轮数（≈60s @ 4s 轮询）：纯 delay 驱动，测试可虚拟时间推进。 */
         private const val PAUSE_ROUNDS = 15
         private const val MAX_CONSECUTIVE_FAILURES = 3
+
         /** blocked 确认轮数：进入后需连续两轮仍 blocked 才发通知。 */
         private const val BLOCKED_CONFIRM_ROUNDS = 2
     }
 
     private val machine = HerdrAgentStateMachine()
     private var job: Job? = null
+
     /** pane_id → 已确认 blocked 的轮数（达到阈值即发通知并移除）。 */
     private val pendingNotify = HashMap<String, Int>()
+
     /** 已发过 blocked 通知的 pane（防重复通知；Unblocked/离开 blocked 时清除）。 */
     private val notifiedBlocked = HashSet<String>()
+
     /** 当前使用的 herdr 命令候选下标（失败轮询时切换探测）。 */
     private var cmdIndex = 0
 
@@ -74,45 +79,48 @@ class HerdrMonitor(
         pendingNotify.clear()
         notifiedBlocked.clear()
         TermLog.i("herdr") { "monitor start $hostName" }
-        job = scope.launch {
-            var backoffMs = MIN_BACKOFF_MS
-            var failures = 0
-            var pauseRounds = 0
-            while (isActive) {
-                // 连续失败暂停期：不轰炸远端（herdr 未装/未启动/连接断开）
-                if (pauseRounds > 0) {
-                    pauseRounds--
-                    delay(jitter(pollIntervalMs))
-                    continue
-                }
-                val raw = runCommand(currentCmd())
-                val snapshot = raw?.let { parseHerdrSnapshot(it) }
-                if (snapshot == null) {
-                    // 失败退避：herdr 未装/未启动/连接断开；换下一个候选命令（循环探测）
-                    cmdIndex = (cmdIndex + 1) % SNAPSHOT_CMD_CANDIDATES.size
-                    failures++
-                    backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
-                    TermLog.d("herdr") { "poll failed $hostName #$failures: ${raw?.take(80) ?: "null"}" }
-                    if (failures >= MAX_CONSECUTIVE_FAILURES) {
-                        pauseRounds = PAUSE_ROUNDS
-                        failures = 0
-                        backoffMs = MIN_BACKOFF_MS
+        job =
+            scope.launch {
+                var backoffMs = MIN_BACKOFF_MS
+                var failures = 0
+                var pauseRounds = 0
+                while (isActive) {
+                    // 连续失败暂停期：不轰炸远端（herdr 未装/未启动/连接断开）
+                    if (pauseRounds > 0) {
+                        pauseRounds--
+                        delay(jitter(pollIntervalMs))
+                        continue
                     }
-                    delay(backoffMs)
-                    continue
+                    val raw = runCommand(currentCmd())
+                    val snapshot = raw?.let { parseHerdrSnapshot(it) }
+                    if (snapshot == null) {
+                        // 失败退避：herdr 未装/未启动/连接断开；换下一个候选命令（循环探测）
+                        cmdIndex = (cmdIndex + 1) % SNAPSHOT_CMD_CANDIDATES.size
+                        failures++
+                        backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+                        TermLog.d("herdr") { "poll failed $hostName #$failures: ${raw?.take(80) ?: "null"}" }
+                        if (failures >= MAX_CONSECUTIVE_FAILURES) {
+                            pauseRounds = PAUSE_ROUNDS
+                            failures = 0
+                            backoffMs = MIN_BACKOFF_MS
+                        }
+                        delay(backoffMs)
+                        continue
+                    }
+                    failures = 0
+                    backoffMs = MIN_BACKOFF_MS
+                    val events = machine.update(snapshot)
+                    if (events.isNotEmpty()) {
+                        TermLog.d(
+                            "herdr",
+                        ) { "events $hostName: ${events.joinToString { it::class.simpleName ?: "?" }}" }
+                        onEvents(events)
+                    }
+                    onAgents(snapshot.agents)
+                    confirmBlocked(snapshot)
+                    delay(jitter(pollIntervalMs))
                 }
-                failures = 0
-                backoffMs = MIN_BACKOFF_MS
-                val events = machine.update(snapshot)
-                if (events.isNotEmpty()) {
-                    TermLog.d("herdr") { "events $hostName: ${events.joinToString { it::class.simpleName ?: "?" }}" }
-                    onEvents(events)
-                }
-                onAgents(snapshot.agents)
-                confirmBlocked(snapshot)
-                delay(jitter(pollIntervalMs))
             }
-        }
     }
 
     fun stop() {
@@ -159,7 +167,10 @@ class HerdrMonitor(
     }
 
     /** 通知正文（独立纯函数便于测试）。 */
-    internal fun blockedNotificationText(hostName: String, a: HerdrAgentInfo): String {
+    internal fun blockedNotificationText(
+        hostName: String,
+        a: HerdrAgentInfo,
+    ): String {
         val agent = a.agent?.takeIf { it.isNotBlank() } ?: "agent"
         return "$agent 在 $hostName 等待回答：${a.title() ?: a.cwd ?: "请查看会话"}"
     }

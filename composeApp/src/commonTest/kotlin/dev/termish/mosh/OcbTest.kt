@@ -8,9 +8,7 @@ import kotlin.test.assertNull
  * 期望值来自独立的 AES-128-OCB 标准测试向量：nonce 96bit / tag 128bit / 无 AD，与线上一致。
  */
 class OcbTest {
-
-    private fun hex(s: String): ByteArray =
-        ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+    private fun hex(s: String): ByteArray = ByteArray(s.length / 2) { s.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
 
     private val key = hex("000102030405060708090A0B0C0D0E0F")
 
@@ -28,10 +26,11 @@ class OcbTest {
 
     @Test
     fun sixteenBytes() {
-        val out = Ocb(key).encrypt(
-            hex("BBAA99887766554433221102"),
-            hex("000102030405060708090A0B0C0D0E0F"),
-        )
+        val out =
+            Ocb(key).encrypt(
+                hex("BBAA99887766554433221102"),
+                hex("000102030405060708090A0B0C0D0E0F"),
+            )
         assertContentEquals(
             hex("C050A7E919AA5643BFF595B66ACC106C92537991AB4B8C84A250F74868833FB8"),
             out,
@@ -41,10 +40,11 @@ class OcbTest {
     @Test
     fun twentyFourBytes() {
         // 一整块 + 8 字节尾部
-        val out = Ocb(key).encrypt(
-            hex("BBAA99887766554433221103"),
-            hex("000102030405060708090A0B0C0D0E0F1011121314151617"),
-        )
+        val out =
+            Ocb(key).encrypt(
+                hex("BBAA99887766554433221103"),
+                hex("000102030405060708090A0B0C0D0E0F1011121314151617"),
+            )
         assertContentEquals(
             hex("1591E0EC9E6FC5A83475F939906EB53E5E93E9CFEEEC495FA4E32618DD97FAD9A80F61C1A055EBA7"),
             out,
@@ -54,10 +54,11 @@ class OcbTest {
     @Test
     fun thirtyThreeBytes() {
         // 两整块 + 1 字节尾部
-        val out = Ocb(key).encrypt(
-            hex("BBAA99887766554433221104"),
-            hex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20"),
-        )
+        val out =
+            Ocb(key).encrypt(
+                hex("BBAA99887766554433221104"),
+                hex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20"),
+            )
         assertContentEquals(
             hex(
                 "571D535B60B277188BE5147170A9A22CDB9EF96F538354AF0E6E5D7F6F640AF83" +
@@ -93,7 +94,10 @@ class OcbTest {
         )
         assertContentEquals(
             hex("000102030405060708090A0B0C0D0E0F"),
-            ocb.decrypt(hex("BBAA99887766554433221102"), hex("C050A7E919AA5643BFF595B66ACC106C92537991AB4B8C84A250F74868833FB8")),
+            ocb.decrypt(
+                hex("BBAA99887766554433221102"),
+                hex("C050A7E919AA5643BFF595B66ACC106C92537991AB4B8C84A250F74868833FB8"),
+            ),
         )
         assertContentEquals(
             hex("000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20"),

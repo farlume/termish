@@ -4,13 +4,12 @@ import dev.termish.term.CellAttr
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /** 本地预测回显（speculative local echo）回归测试。 */
 class PredictionTest {
-
     private var now = 0L
+
     private fun layer() = PredictionLayer(nowMs = { now })
 
     @Test
@@ -25,7 +24,13 @@ class PredictionTest {
         assertEquals('a'.code, cell.codePoint)
         assertTrue(cell.attrs and CellAttr.UNDERLINE != 0) // send_interval>80 → flagging 下划线
         // 确认态本身不受影响
-        assertEquals(' '.code, base.buffer.lineAt(0).cells[0].codePoint)
+        assertEquals(
+            ' '.code,
+            base.buffer
+                .lineAt(0)
+                .cells[0]
+                .codePoint,
+        )
     }
 
     @Test
@@ -35,7 +40,12 @@ class PredictionTest {
         l.onConfirmed(base)
         // 30 < send_interval <= 50：预测启用（>30）但不下划线（<=50，mosh FLAG_TRIGGER）
         assertTrue(l.onUserInput("a".encodeToByteArray(), 40, 0u))
-        val cell = l.currentForDisplay()!!.buffer.lineAt(0).cells[0]
+        val cell =
+            l
+                .currentForDisplay()!!
+                .buffer
+                .lineAt(0)
+                .cells[0]
         assertEquals('a'.code, cell.codePoint)
         assertTrue(cell.attrs and CellAttr.UNDERLINE == 0)
     }
@@ -60,8 +70,20 @@ class PredictionTest {
         assertTrue(l.onUserInput(byteArrayOf(0x7f), 100, 0u)) // 删 b
 
         val shown = l.currentForDisplay()!!
-        assertEquals('a'.code, shown.buffer.lineAt(0).cells[0].codePoint)
-        assertEquals(' '.code, shown.buffer.lineAt(0).cells[1].codePoint) // b 被抹掉
+        assertEquals(
+            'a'.code,
+            shown.buffer
+                .lineAt(0)
+                .cells[0]
+                .codePoint,
+        )
+        assertEquals(
+            ' '.code,
+            shown.buffer
+                .lineAt(0)
+                .cells[1]
+                .codePoint,
+        ) // b 被抹掉
         assertEquals(1, shown.buffer.cursorCol) // 光标回退
     }
 
@@ -105,7 +127,15 @@ class PredictionTest {
         l.onConfirmed(base)
         // alt 屏（vim/tmux pane 内的 shell 等回显路径）：可打印字符仍预测
         assertTrue(l.onUserInput("a".encodeToByteArray(), 100, 0u))
-        assertEquals('a'.code, l.currentForDisplay()!!.buffer.lineAt(0).cells[0].codePoint)
+        assertEquals(
+            'a'.code,
+            l
+                .currentForDisplay()!!
+                .buffer
+                .lineAt(0)
+                .cells[0]
+                .codePoint,
+        )
         // 控制字节不预测：全屏程序里语义各异，等回显
         assertFalse(l.onUserInput(byteArrayOf(0x7f), 100, 0u))
     }
@@ -122,7 +152,13 @@ class PredictionTest {
         // 无回显确认的帧到达：预测跨帧存活（不再整段丢弃 → 无回退闪烁）
         val shown = l.currentForDisplay()!!
         assertTrue(shown !== next)
-        assertEquals('a'.code, shown.buffer.lineAt(0).cells[0].codePoint)
+        assertEquals(
+            'a'.code,
+            shown.buffer
+                .lineAt(0)
+                .cells[0]
+                .codePoint,
+        )
     }
 
     @Test

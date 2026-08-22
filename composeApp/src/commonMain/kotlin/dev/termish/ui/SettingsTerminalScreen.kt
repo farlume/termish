@@ -1,6 +1,5 @@
 package dev.termish.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,14 +12,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -42,7 +38,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.layout.statusBarsPadding
 import dev.termish.ui.theme.TerminalTheme
 import dev.termish.ui.theme.TerminalThemes
 import dev.termish.util.TerminalFont
@@ -104,7 +99,14 @@ fun SettingsTerminalScreen(
                     Text(
                         selectedFont.label,
                         style = MaterialTheme.typography.bodyLarge,
-                        fontFamily = if (selectedFont == TerminalFont.JETBRAINS) monospaceFontFamily() else FontFamily.Monospace,
+                        fontFamily =
+                            if (selectedFont ==
+                                TerminalFont.JETBRAINS
+                            ) {
+                                monospaceFontFamily()
+                            } else {
+                                FontFamily.Monospace
+                            },
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
@@ -137,7 +139,9 @@ fun SettingsTerminalScreen(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize().weight(1f),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                contentPadding =
+                    androidx.compose.foundation.layout
+                        .PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
@@ -155,12 +159,17 @@ fun SettingsTerminalScreen(
 
 /** 主题预览卡片：真实配色（背景/前景/16 色块）+ 名称 + 选中高亮。 */
 @Composable
-private fun ThemeCard(theme: TerminalTheme, selected: Boolean, onClick: () -> Unit) {
-    val borderColor = if (selected) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.outlineVariant
-    }
+private fun ThemeCard(
+    theme: TerminalTheme,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val borderColor =
+        if (selected) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.outlineVariant
+        }
     Column(
         Modifier
             .fillMaxWidth()
@@ -202,7 +211,14 @@ private fun ThemeCard(theme: TerminalTheme, selected: Boolean, onClick: () -> Un
             theme.name,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+            color =
+                if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(
+                        alpha = 0.8f,
+                    )
+                },
         )
     }
 }

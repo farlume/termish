@@ -3,6 +3,7 @@ package dev.termish.term
 /** 终端颜色：以 0xRRGGBB 编码的 Int。默认前景/背景用负哨兵值。 */
 const val DEFAULT_FG = -1
 const val DEFAULT_BG = -2
+
 /** 光标颜色未设置（用主题默认色）的哨兵值。 */
 const val DEFAULT_CURSOR = -3
 
@@ -15,52 +16,58 @@ fun argbToRgb(c: Long): Int {
 }
 
 object TerminalPalette {
-
     /** 16 个基础 ANSI 颜色（VGA 标准）。 */
-    val BASIC_16: IntArray = intArrayOf(
-        0x000000, // 0 black
-        0xcd0000, // 1 red
-        0x00cd00, // 2 green
-        0xcdcd00, // 3 yellow
-        0x0000ee, // 4 blue
-        0xcd00cd, // 5 magenta
-        0x00cdcd, // 6 cyan
-        0xe5e5e5, // 7 white
-        0x7f7f7f, // 8 bright black
-        0xff0000, // 9 bright red
-        0x00ff00, // 10 bright green
-        0xffff00, // 11 bright yellow
-        0x5c5cff, // 12 bright blue
-        0xff00ff, // 13 bright magenta
-        0x00ffff, // 14 bright cyan
-        0xffffff, // 15 bright white
-    )
+    val BASIC_16: IntArray =
+        intArrayOf(
+            0x000000, // 0 black
+            0xcd0000, // 1 red
+            0x00cd00, // 2 green
+            0xcdcd00, // 3 yellow
+            0x0000ee, // 4 blue
+            0xcd00cd, // 5 magenta
+            0x00cdcd, // 6 cyan
+            0xe5e5e5, // 7 white
+            0x7f7f7f, // 8 bright black
+            0xff0000, // 9 bright red
+            0x00ff00, // 10 bright green
+            0xffff00, // 11 bright yellow
+            0x5c5cff, // 12 bright blue
+            0xff00ff, // 13 bright magenta
+            0x00ffff, // 14 bright cyan
+            0xffffff, // 15 bright white
+        )
 
     private val CUBE = intArrayOf(0, 95, 135, 175, 215, 255)
 
     /** xterm 256 色板：16 基础色 + 216 色立方体 + 24 灰度。 */
-    val PALETTE_256: IntArray = IntArray(256) { i ->
-        when {
-            i < 16 -> BASIC_16[i]
-            i < 232 -> {
-                val n = i - 16
-                val r = CUBE[n / 36]
-                val g = CUBE[(n % 36) / 6]
-                val b = CUBE[n % 6]
-                rgb(r, g, b)
-            }
-            else -> {
-                val v = 8 + (i - 232) * 10
-                rgb(v, v, v)
+    val PALETTE_256: IntArray =
+        IntArray(256) { i ->
+            when {
+                i < 16 -> BASIC_16[i]
+                i < 232 -> {
+                    val n = i - 16
+                    val r = CUBE[n / 36]
+                    val g = CUBE[(n % 36) / 6]
+                    val b = CUBE[n % 6]
+                    rgb(r, g, b)
+                }
+                else -> {
+                    val v = 8 + (i - 232) * 10
+                    rgb(v, v, v)
+                }
             }
         }
-    }
 
-    fun rgb(r: Int, g: Int, b: Int): Int =
-        ((r and 0xff) shl 16) or ((g and 0xff) shl 8) or (b and 0xff)
+    fun rgb(
+        r: Int,
+        g: Int,
+        b: Int,
+    ): Int = ((r and 0xff) shl 16) or ((g and 0xff) shl 8) or (b and 0xff)
 
     fun red(c: Int): Int = (c ushr 16) and 0xff
+
     fun green(c: Int): Int = (c ushr 8) and 0xff
+
     fun blue(c: Int): Int = c and 0xff
 }
 

@@ -17,10 +17,13 @@ interface AsrEngine {
 
     /** 状态变化回调（平台线程）。 */
     var onState: ((State) -> Unit)?
+
     /** 中间结果（平台线程）：每包增量全量文本，可实时上屏。 */
     var onPartial: ((String) -> Unit)?
+
     /** 最终识别文本（平台线程）。 */
     var onFinalText: ((String) -> Unit)?
+
     /** 错误（平台线程）。 */
     var onError: ((String) -> Unit)?
 
@@ -40,10 +43,15 @@ interface AsrEngine {
 }
 
 /** 按 provider 类型创建引擎实例。 */
-fun createAsrEngine(provider: AsrProvider, apiKey: String): AsrEngine = when (provider.type) {
-    AsrProviderType.VOLC_STREAMING -> VolcStreamingAsrEngine(
-        apiKey = apiKey,
-        resourceId = provider.resourceId.ifBlank { VolcAsrProtocol.DEFAULT_RESOURCE_ID },
-        ws = createVoiceWebSocket(),
-    )
-}
+fun createAsrEngine(
+    provider: AsrProvider,
+    apiKey: String,
+): AsrEngine =
+    when (provider.type) {
+        AsrProviderType.VOLC_STREAMING ->
+            VolcStreamingAsrEngine(
+                apiKey = apiKey,
+                resourceId = provider.resourceId.ifBlank { VolcAsrProtocol.DEFAULT_RESOURCE_ID },
+                ws = createVoiceWebSocket(),
+            )
+    }

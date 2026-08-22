@@ -65,11 +65,13 @@ fun ConnectionsScreen(
             searchFocusRequester.requestFocus()
         }
     }
-    val filtered = sessions.filter { item ->
-            val host = when (item) {
-                is HostSessionItem.Terminal -> item.controller.host
-                is HostSessionItem.Sftp -> item.host
-            }
+    val filtered =
+        sessions.filter { item ->
+            val host =
+                when (item) {
+                    is HostSessionItem.Terminal -> item.controller.host
+                    is HostSessionItem.Sftp -> item.host
+                }
             query.isBlank() ||
                 host.name.contains(query, ignoreCase = true) ||
                 host.hostname.contains(query, ignoreCase = true) ||
@@ -113,10 +115,11 @@ fun ConnectionsScreen(
                     OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                            .focusRequester(searchFocusRequester),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .focusRequester(searchFocusRequester),
                         placeholder = { Text(s.connSearch) },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         trailingIcon = {
@@ -154,20 +157,23 @@ fun ConnectionsScreen(
                             is HostSessionItem.Sftp -> "sftp:${it.host.id}:${it.session.hashCode()}"
                         }
                     }) { item ->
-                        val host = when (item) {
-                            is HostSessionItem.Terminal -> item.controller.host
-                            is HostSessionItem.Sftp -> item.host
-                        }
-                        val title = when (item) {
-                            is HostSessionItem.Terminal -> item.controller.title
-                            is HostSessionItem.Sftp -> "${host.username}@${host.hostname}"
-                        }
+                        val host =
+                            when (item) {
+                                is HostSessionItem.Terminal -> item.controller.host
+                                is HostSessionItem.Sftp -> item.host
+                            }
+                        val title =
+                            when (item) {
+                                is HostSessionItem.Terminal -> item.controller.title
+                                is HostSessionItem.Sftp -> "${host.username}@${host.hostname}"
+                            }
                         val active = item.isActive
                         Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .clickable { onOpen(item) },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .clickable { onOpen(item) },
                         ) {
                             ListItem(
                                 headlineContent = {
@@ -185,8 +191,12 @@ fun ConnectionsScreen(
                                     )
                                 },
                                 leadingContent = {
-                                    val isConnecting = item is HostSessionItem.Terminal &&
-                                        (item.controller.status == ConnStatus.CONNECTING || item.controller.status == ConnStatus.AUTH)
+                                    val isConnecting =
+                                        item is HostSessionItem.Terminal &&
+                                            (
+                                                item.controller.status == ConnStatus.CONNECTING ||
+                                                    item.controller.status == ConnStatus.AUTH
+                                            )
                                     if (isConnecting) {
                                         // 连接中：状态点位置换小 spinner（与首页头像转圈同语义）
                                         Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
@@ -194,10 +204,15 @@ fun ConnectionsScreen(
                                         }
                                     } else {
                                         Box(
-                                            Modifier.size(10.dp).clip(CircleShape)
+                                            Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
                                                 .background(
                                                     if (item is HostSessionItem.Terminal) {
-                                                        statusColor(item.controller.status, item.controller.linkLostSeconds)
+                                                        statusColor(
+                                                            item.controller.status,
+                                                            item.controller.linkLostSeconds,
+                                                        )
                                                     } else {
                                                         StatusColors.Connected
                                                     },
@@ -224,11 +239,15 @@ fun ConnectionsScreen(
     }
 }
 
-internal fun statusColor(status: ConnStatus, linkLostSeconds: Int = 0): Color = when {
-    // 链路失联（会话保持中）：琥珀色，与终端页状态点/banner 同源
-    status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS -> StatusColors.Warning
-    status == ConnStatus.CONNECTED -> StatusColors.Connected
-    status == ConnStatus.CONNECTING || status == ConnStatus.AUTH -> StatusColors.Warning
-    status == ConnStatus.ERROR -> StatusColors.Error
-    else -> StatusColors.Neutral // CLOSED / IDLE
-}
+internal fun statusColor(
+    status: ConnStatus,
+    linkLostSeconds: Int = 0,
+): Color =
+    when {
+        // 链路失联（会话保持中）：琥珀色，与终端页状态点/banner 同源
+        status == ConnStatus.CONNECTED && linkLostSeconds >= LINK_LOST_THRESHOLD_SECONDS -> StatusColors.Warning
+        status == ConnStatus.CONNECTED -> StatusColors.Connected
+        status == ConnStatus.CONNECTING || status == ConnStatus.AUTH -> StatusColors.Warning
+        status == ConnStatus.ERROR -> StatusColors.Error
+        else -> StatusColors.Neutral // CLOSED / IDLE
+    }

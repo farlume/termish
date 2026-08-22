@@ -2,7 +2,6 @@ package dev.termish.ui
 
 import dev.termish.data.ConnectionMode
 import dev.termish.herdr.HerdrProbe
-import dev.termish.herdr.parseHerdrSnapshot
 import dev.termish.mosh.MoshExitReason
 import dev.termish.notify.NotificationCenter
 import dev.termish.notify.NotificationEvent
@@ -19,7 +18,6 @@ import dev.termish.util.TermTrace
 import dev.termish.util.ioDispatcher
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -41,40 +39,53 @@ internal class SessionConnector(
     private val c: TerminalController,
     private val strings: () -> AppStrings,
 ) {
-
     companion object {
         /** SSH 意外断线自动重连上限次数（指数退避，见 [RECONNECT_BASE_DELAY_MS]）。 */
         private const val RECONNECT_SSH_MAX = 3
+
         /** mosh 已连接后异常退出自动重连上限（UDP 环境更脆弱，上限更低）。 */
         private const val RECONNECT_MOSH_MAX = 2
+
         /** UDP 首包确认窗口：引导成功但首包未到 = mosh 连接失败 → 降级 SSH。 */
         private const val MOSH_UDP_CONFIRM_MS = 5_000L
+
         /** mosh 降级提示自动消失时长（提示常驻会压住终端顶部）。 */
         private const val MOSH_DEGRADE_NOTICE_MS = 6_000L
+
         /** 自动重连基础退避：第 n 次重连延迟 2n 秒。 */
         private const val RECONNECT_BASE_DELAY_MS = 2_000L
+
         /** 连接成功后的网络事件免疫期：刚连上不折腾，避免「连上即断」循环。 */
         private const val NETWORK_IMMUNE_MS = 30_000L
+
         /** 网络切换主动重连的防抖窗口。 */
         private const val NETWORK_DEBOUNCE_MS = 15_000L
+
         /** 连接保持稳定后重连计数归零的观察期（mosh「连上即退」防循环）。 */
         private const val MOSH_STABLE_RESET_MS = 30_000L
+
         /** mosh 主题注入延迟：太早会被 shell readline 当输入回显成乱码，太晚 herdr 显示灰蒙层。 */
         private const val MOSH_THEME_INJECT_DELAY_MS = 1_200L
+
         /**
          * herdr 注入时机：等终端输出静默（登录 shell 的 PAM MOTD——Ubuntu
          * landscape/ESM 检测可能耗时 1-3s 且输出几十行——已打完）再注入。
          * 静默阈值：连续这么久无新输出即认为 MOTD 结束。
          */
         private const val HERDR_OUTPUT_QUIET_MS = 250L
+
         /** 静默检测轮询步长。 */
         private const val HERDR_QUIET_POLL_MS = 50L
+
         /** 静默等待上限：持续有输出的异常场景（如登录脚本在跑日志）到此强制注入。 */
         private const val HERDR_INJECT_MAX_WAIT_MS = 3_000L
+
         /** herdr 官网安装命令（curl 管道 sh，默认装到 ~/.local/bin）。 */
         private const val HERDR_INSTALL_CMD = "curl -fsSL https://herdr.dev/install.sh | sh"
+
         /** 安装超时：下载二进制 + 校验，给足时间（默认 exec 15s 不够）。 */
         private const val HERDR_INSTALL_TIMEOUT_MS = 180_000L
+
         /** mosh 安装超时：包管理器下载 + 依赖，给足时间。 */
         private const val MOSH_INSTALL_TIMEOUT_MS = 180_000L
     }
@@ -83,7 +94,10 @@ internal class SessionConnector(
     // 入口
     // ------------------------------------------------------------------
 
-    fun connect(columns: Int, rows: Int) {
+    fun connect(
+        columns: Int,
+        rows: Int,
+    ) {
         // 允许 IDLE / 已断开 / 失败状态下（重）连接，缓冲保留
         if (c.status != ConnStatus.IDLE && c.status != ConnStatus.CLOSED && c.status != ConnStatus.ERROR) return
         c.lastCols = columns
@@ -102,28 +116,34 @@ internal class SessionConnector(
         connect(c.lastCols, c.lastRows)
     }
 
-    private fun newConnection() = SshConnection(
-        host = c.host.hostname,
-        port = c.host.port,
-        username = c.host.username,
-        password = c.password,
-        privateKeyPem = c.privateKeyPem,
-        keepAliveSeconds = c.repository.loadSettings().keepaliveSeconds,
-        terminalType = c.repository.loadSettings().terminalType,
-        // 重连场景网络多半已断：TCP 超时从 15s 缩短到 5s——
-        // 否则 3 次重连 × 15s ≈ 1 分钟「连接中」（用户感知卡死）
-        connectTimeoutMillis = if (c.reconnectAttempts > 0) 5_000 else 15_000,
-    )
+    private fun newConnection() =
+        SshConnection(
+            host = c.host.hostname,
+            port = c.host.port,
+            username = c.host.username,
+            password = c.password,
+            privateKeyPem = c.privateKeyPem,
+            keepAliveSeconds = c.repository.loadSettings().keepaliveSeconds,
+            terminalType = c.repository.loadSettings().terminalType,
+            // 重连场景网络多半已断：TCP 超时从 15s 缩短到 5s——
+            // 否则 3 次重连 × 15s ≈ 1 分钟「连接中」（用户感知卡死）
+            connectTimeoutMillis = if (c.reconnectAttempts > 0) 5_000 else 15_000,
+        )
 
     private fun doConnect() {
         val t0 = c.nowMs()
-        TermLog.i("ssh") { "connect start ${c.host.name} ${c.host.hostname}:${c.host.port} mode=${c.host.connectionMode} attempt=${c.reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms" }
+        TermLog.i("ssh") {
+            "connect start ${c.host.name} ${c.host.hostname}:${c.host.port} mode=${c.host.connectionMode} attempt=${c.reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms"
+        }
         // 连接 span：引擎经 onTraceStep 填充阶段耗时（tcp+kex/auth/shell）
-        val trace = TermTrace.begin(
-            "ssh.connect", "ssh",
-            "host" to c.host.name, "attempt" to c.reconnectAttempts.toString(),
-            "mode" to c.host.connectionMode.name,
-        )
+        val trace =
+            TermTrace.begin(
+                "ssh.connect",
+                "ssh",
+                "host" to c.host.name,
+                "attempt" to c.reconnectAttempts.toString(),
+                "mode" to c.host.connectionMode.name,
+            )
         c.status = ConnStatus.CONNECTING
         c.scope.launch {
             try {
@@ -140,7 +160,9 @@ internal class SessionConnector(
                 // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须释放刚建好的连接
                 if (c.status == ConnStatus.CLOSED) {
                     c.session = null
-                    try { s.close() } catch (_: Exception) {
+                    try {
+                        s.close()
+                    } catch (_: Exception) {
                     }
                     return@launch
                 }
@@ -150,7 +172,7 @@ internal class SessionConnector(
                 trace.end()
                 TermLog.i("ssh") { "connected ${c.host.name} kex=${info.kexAlgorithm} in ${c.nowMs() - t0}ms" }
                 // herdr 工作台开关：探测远端 herdr；缺失 → 引导安装卡片
-                //（会话保活；勾选开关 = 显式同意 agent 监控）
+                // （会话保活；勾选开关 = 显式同意 agent 监控）
                 if (c.host.launchHerdr) {
                     val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
                     if (probed == null) {
@@ -170,14 +192,16 @@ internal class SessionConnector(
                     val elapsed = c.nowMs() - t0
                     trace.fail(e.message)
                     if (elapsed > 10_000) {
-                        TermLog.w("ssh") { "connect SLOW/FAIL after ${elapsed}ms ${c.host.name}: ${e.message}（TCP 超时特征：网络黑洞/防火墙丢包）" }
+                        TermLog.w(
+                            "ssh",
+                        ) { "connect SLOW/FAIL after ${elapsed}ms ${c.host.name}: ${e.message}（TCP 超时特征：网络黑洞/防火墙丢包）" }
                     } else {
                         TermLog.e("ssh") { "connect failed after ${elapsed}ms ${c.host.name}: ${e.message}" }
                     }
                     c.status = ConnStatus.ERROR
                     c.errorMessage = e.message
                     // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
-                    //（首连失败时 keepAliveActive=false，stopKeepAlive 有 guard，安全）
+                    // （首连失败时 keepAliveActive=false，stopKeepAlive 有 guard，安全）
                     c.stopKeepAlive()
                     // 重连上下文（非首次连接）失败：后台通知，提示需人工干预
                     if (c.reconnectAttempts > 0) {
@@ -205,9 +229,7 @@ internal class SessionConnector(
      *
      * @param existingSession 复用已认证连接（安装引导后续连；null = 自建）
      */
-    private suspend fun doConnectMosh(
-        existingSession: SshSession? = null,
-    ) {
+    private suspend fun doConnectMosh(existingSession: SshSession? = null) {
         val t0 = c.nowMs()
         try {
             // 1. SSH 连接 + shell（引导通道；降级时变显示通道，Mosh 成功时关闭）
@@ -217,14 +239,17 @@ internal class SessionConnector(
                 val info = s.connectAndStart(c.lastCols, c.lastRows)
                 if (c.status == ConnStatus.CLOSED) {
                     c.session = null
-                    try { s.close() } catch (_: Exception) { }
+                    try {
+                        s.close()
+                    } catch (_: Exception) {
+                    }
                     return
                 }
                 info.hostKey?.let { c.repository.touchConnected(c.host.id, it.fingerprintSha256) }
             }
 
             // UDP 不通降级过的会话条目（moshDegradedToSsh）：不再重试 mosh 引导
-            //（UDP 阻断不会因重连自愈，重试只会每次多耗一次引导 + 5s UDP 确认等待），
+            // （UDP 阻断不会因重连自愈，重试只会每次多耗一次引导 + 5s UDP 确认等待），
             // 直接走降级显示通道：SSH shell（launchHerdr 时注入 herdr）
             if (c.moshDegradedToSsh) {
                 TermLog.i("mosh") { "mosh degraded earlier ${c.host.name}——重连直走 ssh（跳过 mosh 引导）" }
@@ -235,20 +260,22 @@ internal class SessionConnector(
 
             // herdr 工作台：引导前探测（缺失 → 安装卡片，SSH 显示通道保留）
             if (!ensureHerdrProbed(s)) return
-            val bootstrapExtra = if (c.host.launchHerdr) {
-                " -- ${shSingleQuote(c.herdrBin ?: "herdr")}"
-            } else {
-                ""
-            }
+            val bootstrapExtra =
+                if (c.host.launchHerdr) {
+                    " -- ${shSingleQuote(c.herdrBin ?: "herdr")}"
+                } else {
+                    ""
+                }
 
             // 2. 同连接引导 mosh-server（runCommand 复用已认证连接；探测输出跟在
             //    MOSH CONNECT 之后，不影响 parseMoshConnect，自动识别系统）
             val moshColors = if (c.repository.loadSettings().terminalType == "xterm-256color") "256" else "8"
-            val baseBootstrap = if (c.host.moshUdpPort in 1024..65535) {
-                "mosh-server new -c $moshColors -p ${c.host.moshUdpPort} -l LANG=en_US.UTF-8$bootstrapExtra"
-            } else {
-                "mosh-server new -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
-            }
+            val baseBootstrap =
+                if (c.host.moshUdpPort in 1024..65535) {
+                    "mosh-server new -c $moshColors -p ${c.host.moshUdpPort} -l LANG=en_US.UTF-8$bootstrapExtra"
+                } else {
+                    "mosh-server new -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
+                }
             val bootstrap = "$baseBootstrap 2>&1; $SYSTEM_PROBE_COMMAND"
             TermLog.i("mosh") { "bootstrap ${c.host.name}: $baseBootstrap" }
             val raw = s.runCommand(bootstrap, 5_000)
@@ -265,17 +292,19 @@ internal class SessionConnector(
                 // 3a. 引导失败 = 远端未装 mosh-server（或固定端口被占）→ 降级路径之一
                 val rawTrimmed = raw?.trim()?.take(120)
                 // 2>&1 后 command not found 进 stdout：精确识别「未安装 mosh-server」
-                val missing = raw?.contains("not found") == true ||
-                    raw?.contains("No such file") == true ||
-                    rawTrimmed.isNullOrEmpty()
-                val reason = when {
-                    c.host.moshUdpPort in 1024..65535 && raw?.contains("Address already in use") == true ->
-                        strings().moshPortBusy(c.host.moshUdpPort)
-                    missing -> strings().moshServerMissing
-                    else -> strings().moshBootstrapFailed(rawTrimmed)
-                }
+                val missing =
+                    raw?.contains("not found") == true ||
+                        raw?.contains("No such file") == true ||
+                        rawTrimmed.isNullOrEmpty()
+                val reason =
+                    when {
+                        c.host.moshUdpPort in 1024..65535 && raw?.contains("Address already in use") == true ->
+                            strings().moshPortBusy(c.host.moshUdpPort)
+                        missing -> strings().moshServerMissing
+                        else -> strings().moshBootstrapFailed(rawTrimmed)
+                    }
                 // 远端未装 mosh-server → 引导安装（SSH 显示通道保留，卡片可选
-                //「安装」或「降级 SSH」）；herdr 工作台开关同样引导——装上 mosh
+                // 「安装」或「降级 SSH」）；herdr 工作台开关同样引导——装上 mosh
                 // 才有漫游能力，静默降级用户永远不知道少了什么
                 if (missing) {
                     TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
@@ -299,31 +328,32 @@ internal class SessionConnector(
             // 3b. 引导成功：建 mosh client，等 UDP 首包确认（连接成功判定）
             withContext(Dispatchers.Main) { prepareThemeSync() }
             val peerReady = CompletableDeferred<Unit>()
-            val client = createKmpMoshSession(
-                ip = c.host.hostname,
-                port = moshPort,
-                key = moshKey,
-                columns = c.lastCols,
-                rows = c.lastRows,
-                scope = c.scope,
-                uiBuffer = c.buffer,
-                onTitle = { t -> c.title = t },
-                onClipboard = { text ->
-                    if (c.repository.loadSettings().osc52Clipboard) c.onRemoteClipboard?.invoke(text)
-                },
-                onExit = { reason -> handleMoshExit(reason) },
-                onFrame = { c.frame++ },
-                onPeerConnected = {
-                    peerReady.complete(Unit)
-                    c.moshSession?.let { onMoshConnected(it) }
-                },
-                onLinkStatus = { secs ->
-                    if (secs >= LINK_LOST_THRESHOLD_SECONDS && c.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
-                        TermLog.w("mosh") { "link lost ${c.host.name} ${secs}s" }
-                    }
-                    c.linkLostSeconds = secs
-                },
-            )
+            val client =
+                createKmpMoshSession(
+                    ip = c.host.hostname,
+                    port = moshPort,
+                    key = moshKey,
+                    columns = c.lastCols,
+                    rows = c.lastRows,
+                    scope = c.scope,
+                    uiBuffer = c.buffer,
+                    onTitle = { t -> c.title = t },
+                    onClipboard = { text ->
+                        if (c.repository.loadSettings().osc52Clipboard) c.onRemoteClipboard?.invoke(text)
+                    },
+                    onExit = { reason -> handleMoshExit(reason) },
+                    onFrame = { c.frame++ },
+                    onPeerConnected = {
+                        peerReady.complete(Unit)
+                        c.moshSession?.let { onMoshConnected(it) }
+                    },
+                    onLinkStatus = { secs ->
+                        if (secs >= LINK_LOST_THRESHOLD_SECONDS && c.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
+                            TermLog.w("mosh") { "link lost ${c.host.name} ${secs}s" }
+                        }
+                        c.linkLostSeconds = secs
+                    },
+                )
             c.moshSession = client
             TermLog.i("mosh") { "mosh client started ${c.host.name} cols=${c.lastCols}x${c.lastRows}" }
             if (c.status == ConnStatus.CLOSED) {
@@ -334,7 +364,7 @@ internal class SessionConnector(
             val udpOk = withTimeoutOrNull(MOSH_UDP_CONFIRM_MS) { peerReady.await() }
             if (udpOk == null && c.status != ConnStatus.CONNECTED) {
                 // 3c. 引导成功但 UDP 首包超时 = mosh 连接失败：降级到 SSH
-                //（SSH 引导通道还活着，直接当显示通道；UDP 不通是真实故障但
+                // （SSH 引导通道还活着，直接当显示通道；UDP 不通是真实故障但
                 // 用户至少拿到一个可用 shell，banner 提示原因与固定端口解法）
                 TermLog.w("mosh") { "mosh UDP unconfirmed ${c.host.name} ${MOSH_UDP_CONFIRM_MS}ms——降级 SSH" }
                 c.moshSession?.close()
@@ -353,7 +383,10 @@ internal class SessionConnector(
             c.moshDisplayTakeover = true
             c.swallowClosed = true
             c.session = null
-            try { s.close() } catch (_: Exception) { }
+            try {
+                s.close()
+            } catch (_: Exception) {
+            }
             c.swallowClosed = false
             TermLog.i("mosh") { "mosh connected ${c.host.name} in ${c.nowMs() - t0}ms（SSH 引导通道已关）" }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -404,11 +437,19 @@ internal class SessionConnector(
                 val log = StringBuilder()
                 // 非交互 exec 的 $HOME 可能空/错（install.sh 会 mkdir 到 /.local/bin 失败），
                 // 用 pwd 拿真实主目录（sshd 默认 chdir 到 home），显式传给安装脚本
-                val home = withContext(ioDispatcher()) {
-                    s.runCommand("pwd")?.trim()?.takeIf { it.startsWith("/") }
-                }
+                val home =
+                    withContext(ioDispatcher()) {
+                        s.runCommand("pwd")?.trim()?.takeIf { it.startsWith("/") }
+                    }
                 // 单引号转义主目录（含空格/特殊字符时不破坏 shell 语义）
-                val installCmd = if (home != null) "HOME=${shSingleQuote(home)} $HERDR_INSTALL_CMD" else HERDR_INSTALL_CMD
+                val installCmd =
+                    if (home !=
+                        null
+                    ) {
+                        "HOME=${shSingleQuote(home)} $HERDR_INSTALL_CMD"
+                    } else {
+                        HERDR_INSTALL_CMD
+                    }
                 withContext(ioDispatcher()) {
                     // 流式 exec（JVM）：逐块读脚本输出进日志；iOS 无 startExec 回退 runCommand
                     val exec = s.startExec(installCmd, c.lastCols, c.lastRows)
@@ -430,22 +471,33 @@ internal class SessionConnector(
                 // 探测：install.sh 输出解析的实际路径 → $home/.local/bin → HerdrProbe 候选。
                 // 用 --version（判安装）：刚装完 daemon 必然未运行，api snapshot 会
                 // server_not_running 报错——此前装完仍报失败正是这个误判
-                val probed = withContext(ioDispatcher()) {
-                    val candidates = buildList {
-                        parseInstallPath(log.toString())?.let(::add)
-                        home?.let { add("$it/.local/bin/herdr") }
-                    }.distinct()
-                    val explicit = candidates.firstNotNullOfOrNull { path ->
-                        val raw = s.runCommand("${shSingleQuote(path)} --version", 5_000)
-                        raw?.takeIf { HerdrProbe.isVersionOutput(it) }
-                            ?.let { HerdrProbe.Result(path) }
+                val probed =
+                    withContext(ioDispatcher()) {
+                        val candidates =
+                            buildList {
+                                parseInstallPath(log.toString())?.let(::add)
+                                home?.let { add("$it/.local/bin/herdr") }
+                            }.distinct()
+                        val explicit =
+                            candidates.firstNotNullOfOrNull { path ->
+                                val raw = s.runCommand("${shSingleQuote(path)} --version", 5_000)
+                                raw
+                                    ?.takeIf { HerdrProbe.isVersionOutput(it) }
+                                    ?.let { HerdrProbe.Result(path) }
+                            }
+                        explicit ?: HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
                     }
-                    explicit ?: HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
-                }
                 if (probed == null) {
                     TermLog.e("herdr") { "install then probe failed ${c.host.name}: ${log.take(120)}" }
                     c.herdrInstalling = false
-                    c.errorMessage = strings().herdrInstallFailed(log.toString().trim().take(200).ifBlank { null })
+                    c.errorMessage =
+                        strings().herdrInstallFailed(
+                            log
+                                .toString()
+                                .trim()
+                                .take(200)
+                                .ifBlank { null },
+                        )
                     return@launch
                 }
                 TermLog.i("herdr") { "herdr installed ${c.host.name} bin=${probed.bin}" }
@@ -457,7 +509,7 @@ internal class SessionConnector(
                     doConnectMosh(existingSession = s)
                 } else {
                     // SSH / 已降级条目：会话已 CONNECTED，直接注入 herdr 命令
-                    //（延迟 + 清屏，与 finishConnected 的注入路径一致：登录 shell
+                    // （延迟 + 清屏，与 finishConnected 的注入路径一致：登录 shell
                     //  的 MOTD 迟到输出会把 herdr 画面顶上去）
                     sendHerdrLaunch(s)
                     // 安装成功 → 启动 agent 监控（正常路径由 finishConnected 启动，
@@ -504,20 +556,21 @@ internal class SessionConnector(
                     return@launch
                 }
                 // sudo 需求探测：非 root 时看 `sudo -n true` 是否免密
-                val sudoNeedsPassword = if (isRoot) {
-                    false
-                } else {
-                    val hasSudo = s.runCommand("command -v sudo", 3_000)?.isNotBlank() == true
-                    if (!hasSudo) {
-                        // 非 root 且无 sudo：无法自动安装，提示手动（避免让用户白输密码）
-                        TermLog.w("mosh") { "mosh install ${c.host.name}: sudo not found（非 root）" }
-                        c.moshInstalling = false
-                        c.errorMessage = strings().moshInstallFailed("sudo not found on remote (non-root user)")
-                        return@launch
+                val sudoNeedsPassword =
+                    if (isRoot) {
+                        false
+                    } else {
+                        val hasSudo = s.runCommand("command -v sudo", 3_000)?.isNotBlank() == true
+                        if (!hasSudo) {
+                            // 非 root 且无 sudo：无法自动安装，提示手动（避免让用户白输密码）
+                            TermLog.w("mosh") { "mosh install ${c.host.name}: sudo not found（非 root）" }
+                            c.moshInstalling = false
+                            c.errorMessage = strings().moshInstallFailed("sudo not found on remote (non-root user)")
+                            return@launch
+                        }
+                        val sudoNaked = s.runCommand("sudo -n true 2>&1 && echo SUDO_OK", 3_000)
+                        sudoNaked?.contains("SUDO_OK") != true
                     }
-                    val sudoNaked = s.runCommand("sudo -n true 2>&1 && echo SUDO_OK", 3_000)
-                    sudoNaked?.contains("SUDO_OK") != true
-                }
                 if (sudoNeedsPassword && password.isNullOrBlank()) {
                     // 需要密码但用户还没输：卡片显示密码输入框，等用户输入后重试
                     TermLog.w("mosh") { "mosh install ${c.host.name}: sudo needs password——等待用户输入" }
@@ -525,12 +578,15 @@ internal class SessionConnector(
                     c.moshNeedsSudoPassword = true
                     return@launch
                 }
-                val fullCmd = when {
-                    isRoot -> installCmd
-                    sudoNeedsPassword -> "sudo -S -p '' sh -c '$installCmd'"
-                    else -> "sudo -n $installCmd"
-                }
-                TermLog.i("mosh") { "mosh install ${c.host.name}: $installCmd${if (sudoNeedsPassword) "（sudo -S）" else ""}" }
+                val fullCmd =
+                    when {
+                        isRoot -> installCmd
+                        sudoNeedsPassword -> "sudo -S -p '' sh -c '$installCmd'"
+                        else -> "sudo -n $installCmd"
+                    }
+                TermLog.i(
+                    "mosh",
+                ) { "mosh install ${c.host.name}: $installCmd${if (sudoNeedsPassword) "（sudo -S）" else ""}" }
                 val log = StringBuilder()
                 withContext(ioDispatcher()) {
                     // 流式 exec（JVM）：逐块读安装输出进日志；iOS 无 startExec 回退 runCommand
@@ -551,11 +607,12 @@ internal class SessionConnector(
                     } else {
                         // iOS 无 exec 通道：POSIX printf 管道喂密码（单引号转义，跨平台无
                         // base64 -d 参数差异问题）；密码错时 sudo 输出 Sorry, try again
-                        val piped = if (sudoNeedsPassword) {
-                            "printf '%s' ${shSingleQuote(password!!)} | $fullCmd"
-                        } else {
-                            fullCmd
-                        }
+                        val piped =
+                            if (sudoNeedsPassword) {
+                                "printf '%s' ${shSingleQuote(password!!)} | $fullCmd"
+                            } else {
+                                fullCmd
+                            }
                         log.append(s.runCommand(piped, MOSH_INSTALL_TIMEOUT_MS) ?: "")
                         c.moshInstallLog = log.toString()
                     }
@@ -570,7 +627,14 @@ internal class SessionConnector(
                 if (!verified) {
                     TermLog.e("mosh") { "mosh install then verify failed ${c.host.name}: ${log.take(120)}" }
                     c.moshInstalling = false
-                    c.errorMessage = strings().moshInstallFailed(log.toString().trim().take(200).ifBlank { null })
+                    c.errorMessage =
+                        strings().moshInstallFailed(
+                            log
+                                .toString()
+                                .trim()
+                                .take(200)
+                                .ifBlank { null },
+                        )
                     return@launch
                 }
                 // 安装完成：直接重新引导（bootstrap 即最终验证：成功 → mosh；
@@ -599,11 +663,14 @@ internal class SessionConnector(
         c.moshNeedsInstall = false
         c.moshNeedsSudoPassword = false
         c.moshDegradedToSsh = true
-        val cmd = if (c.host.launchHerdr) {
-            c.herdrBin
-        } else {
-            c.host.startupCommand.trim().takeIf { it.isNotBlank() }
-        }
+        val cmd =
+            if (c.host.launchHerdr) {
+                c.herdrBin
+            } else {
+                c.host.startupCommand
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+            }
         if (cmd != null) {
             if (c.host.launchHerdr) {
                 // herdr 注入统一走延迟 + 清屏路径（防 MOTD 迟到输出顶掉画面）
@@ -616,18 +683,23 @@ internal class SessionConnector(
     }
 
     /** 系统 → mosh 安装命令（无 sudo 前缀，权限层在 [installMosh] 按 root/免密/密码组装）；未知系统返回 null。 */
-    private fun moshInstallCommand(system: String?): String? = when (system) {        "ubuntu", "debian" -> "apt-get update -y && apt-get install -y mosh"
-        "fedora", "centos", "rhel", "rocky", "almalinux" -> "dnf install -y mosh"
-        "arch", "manjaro", "endeavouros" -> "pacman -S --noconfirm mosh"
-        "alpine" -> "apk add --no-cache mosh"
-        "opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse" -> "zypper -n install mosh"
-        "void" -> "xbps-install -y mosh"
-        "macos", "darwin" -> "brew install mosh"
-        else -> null
-    }
+    private fun moshInstallCommand(system: String?): String? =
+        when (system) {
+            "ubuntu", "debian" -> "apt-get update -y && apt-get install -y mosh"
+            "fedora", "centos", "rhel", "rocky", "almalinux" -> "dnf install -y mosh"
+            "arch", "manjaro", "endeavouros" -> "pacman -S --noconfirm mosh"
+            "alpine" -> "apk add --no-cache mosh"
+            "opensuse", "opensuse-leap", "opensuse-tumbleweed", "suse" -> "zypper -n install mosh"
+            "void" -> "xbps-install -y mosh"
+            "macos", "darwin" -> "brew install mosh"
+            else -> null
+        }
 
     /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
-    private fun finishConnected(s: SshSession, sendStartup: Boolean = true) {
+    private fun finishConnected(
+        s: SshSession,
+        sendStartup: Boolean = true,
+    ) {
         c.status = ConnStatus.CONNECTED
         // 静默检测起点：从连接完成算起。MOTD 已打完 → 250ms 后注入 herdr；
         // 还在打 → lastOutputAtMs 被消费循环持续刷新，等它打完再注入。
@@ -657,7 +729,10 @@ internal class SessionConnector(
             if (c.host.launchHerdr) {
                 sendHerdrLaunch(s)
             } else {
-                val cmd = c.host.startupCommand.trim().takeIf { it.isNotBlank() }
+                val cmd =
+                    c.host.startupCommand
+                        .trim()
+                        .takeIf { it.isNotBlank() }
                 if (cmd != null) s.sendData((cmd + "\n").encodeToByteArray())
             }
         }
@@ -722,10 +797,11 @@ internal class SessionConnector(
                 c.status = ConnStatus.CONNECTING
                 c.reconnectCount = c.reconnectAttempts
                 c.errorMessage = null
-                c.scope.launch {
-                    delay(RECONNECT_BASE_DELAY_MS * c.reconnectAttempts)
-                    if (c.status != ConnStatus.CLOSED) doConnect()
-                }.also { c.reconnectJob = it }
+                c.scope
+                    .launch {
+                        delay(RECONNECT_BASE_DELAY_MS * c.reconnectAttempts)
+                        if (c.status != ConnStatus.CLOSED) doConnect()
+                    }.also { c.reconnectJob = it }
             } else {
                 c.status = ConnStatus.CLOSED
                 // 会话异常/超时等原因必须浮现（此前被静默丢弃，
@@ -741,11 +817,12 @@ internal class SessionConnector(
     }
 
     /** 退出原因 → 用户可见文案；NORMAL（正常关闭）返回 null（不显示错误）。 */
-    private fun moshExitMessage(reason: MoshExitReason): String? = when (reason) {
-        MoshExitReason.SESSION_ERROR -> strings().moshSessionError
-        MoshExitReason.CONNECT_TIMEOUT -> strings().moshConnectTimeout
-        MoshExitReason.NORMAL -> null
-    }
+    private fun moshExitMessage(reason: MoshExitReason): String? =
+        when (reason) {
+            MoshExitReason.SESSION_ERROR -> strings().moshSessionError
+            MoshExitReason.CONNECT_TIMEOUT -> strings().moshConnectTimeout
+            MoshExitReason.NORMAL -> null
+        }
 
     /** mosh 会话真正建立后的统一收尾（收到对端首包时回调）。 */
     private fun onMoshConnected(client: MoshSession) {
@@ -775,7 +852,7 @@ internal class SessionConnector(
             if (c.status == ConnStatus.CONNECTED) c.reconnectAttempts = 0
         }
         // 启动命令仅普通会话发送：herdr 工作台下 mosh-server 直接跑 herdr
-        //（`-- herdr`），再发启动命令会打进 herdr TUI 的输入流
+        // （`-- herdr`），再发启动命令会打进 herdr TUI 的输入流
         if (!c.host.launchHerdr && c.host.startupCommand.isNotBlank()) {
             client.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
         }
@@ -821,10 +898,11 @@ internal class SessionConnector(
             c.status = ConnStatus.CONNECTING
             c.reconnectCount = c.reconnectAttempts
             c.errorMessage = null
-            c.scope.launch {
-                delay(RECONNECT_BASE_DELAY_MS * c.reconnectAttempts)
-                if (c.status != ConnStatus.CLOSED) doConnect()
-            }.also { c.reconnectJob = it }
+            c.scope
+                .launch {
+                    delay(RECONNECT_BASE_DELAY_MS * c.reconnectAttempts)
+                    if (c.status != ConnStatus.CLOSED) doConnect()
+                }.also { c.reconnectJob = it }
             return
         }
         TermLog.e("ssh") { "reconnect exhausted ${c.host.name} -> CLOSED" }
@@ -874,8 +952,14 @@ internal class SessionConnector(
             return
         }
         val now = c.nowMs()
-        if (now < c.networkImmuneUntilMs) { TermLog.d("net") { "TRANSPORT: 免疫期内跳过 ${c.host.name}" }; return }
-        if (now - c.lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) { TermLog.d("net") { "TRANSPORT: 防抖跳过 ${c.host.name}" }; return }
+        if (now < c.networkImmuneUntilMs) {
+            TermLog.d("net") { "TRANSPORT: 免疫期内跳过 ${c.host.name}" }
+            return
+        }
+        if (now - c.lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) {
+            TermLog.d("net") { "TRANSPORT: 防抖跳过 ${c.host.name}" }
+            return
+        }
         c.lastNetworkReconnectAtMs = now
         when (c.status) {
             ConnStatus.CONNECTED -> {
@@ -904,7 +988,8 @@ internal fun parseInstallPath(log: String): String? {
     val marker = "installed herdr to "
     val idx = log.indexOf(marker)
     if (idx < 0) return null
-    return log.substring(idx + marker.length)
+    return log
+        .substring(idx + marker.length)
         .substringBefore('\n')
         .trim()
         .takeIf { it.startsWith("/") }

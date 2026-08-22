@@ -3,8 +3,8 @@ package dev.termish
 import android.app.Activity
 import android.app.Application
 import android.content.Context
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.security.Security
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 /** 进程级 Application Context（用于无参 expect 存储）。 */
 object AppContext {

@@ -9,8 +9,11 @@ import dev.termish.util.base64Encode
  *   8B nonce 低位 || OCB 密文 || 16B tag
  * 明文格式：2B timestamp || 2B timestamp_reply || 分片载荷。
  */
-internal class MoshCryptoSession(keyBase64: String) {
+internal class MoshCryptoSession(
+    keyBase64: String,
+) {
     private val ocb: Ocb
+
     /** 加密块计数（协议：达到 2^47 块即终止会话，防 OCB 生日界）。 */
     private var blocksEncrypted = 0L
 
@@ -32,7 +35,12 @@ internal class MoshCryptoSession(keyBase64: String) {
     )
 
     /** 加密一个待发数据报（客户端方向，方向位 0）。 */
-    fun encrypt(seq: ULong, timestamp: Int, timestampReply: Int, payload: ByteArray): ByteArray {
+    fun encrypt(
+        seq: ULong,
+        timestamp: Int,
+        timestampReply: Int,
+        payload: ByteArray,
+    ): ByteArray {
         require(seq and DIRECTION_BIT == 0uL) { "客户端发往服务器方向位必须为 0" }
         val plain = ByteArray(4 + payload.size)
         plain[0] = (timestamp shr 8).toByte()

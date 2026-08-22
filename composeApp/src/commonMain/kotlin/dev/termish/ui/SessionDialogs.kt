@@ -26,7 +26,10 @@ import dev.termish.ssh.HostKeyInfo
  */
 
 @Composable
-fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Unit) {
+fun AuthPromptDialog(
+    prompt: AuthPrompt,
+    onResult: (List<String>?) -> Unit,
+) {
     val s = LocalAppStrings.current
     var values by remember { mutableStateOf(List(prompt.prompts.size) { "" }) }
     AlertDialog(
@@ -46,8 +49,12 @@ fun AuthPromptDialog(prompt: AuthPrompt, onResult: (List<String>?) -> Unit) {
                             values = list
                         },
                         label = { Text(field.label) },
-                        visualTransformation = if (field.echo) VisualTransformation.None
-                        else PasswordVisualTransformation(),
+                        visualTransformation =
+                            if (field.echo) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
                         singleLine = true,
                     )
                 }
@@ -72,8 +79,11 @@ fun HostKeyDialog(
         text = {
             Column {
                 Text(
-                    if (changed) s.terminalHostkeyChangedBody
-                    else s.terminalHostkeyBody
+                    if (changed) {
+                        s.terminalHostkeyChangedBody
+                    } else {
+                        s.terminalHostkeyBody
+                    },
                 )
                 if (changed && previousFingerprint != null) {
                     Text(

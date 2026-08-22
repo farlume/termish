@@ -7,4 +7,8 @@ package dev.termish.notify
  * @param openUri Android 为 MediaStore content:// uri（点击用默认应用打开）；
  *  其他平台传 null（iOS 下载走 Files 转存、桌面走文件管理器，无需打开动作）。
  */
-expect fun showDownloadDoneNotification(title: String, body: String, openUri: String?)
+expect fun showDownloadDoneNotification(
+    title: String,
+    body: String,
+    openUri: String?,
+)

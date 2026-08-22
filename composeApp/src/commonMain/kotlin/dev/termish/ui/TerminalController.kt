@@ -11,7 +11,6 @@ import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.MoshSession
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
-import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import dev.termish.ssh.createSshSession
 import dev.termish.term.TerminalBuffer
@@ -19,9 +18,9 @@ import dev.termish.term.TerminalEmulator
 import dev.termish.term.TerminalSelection
 import dev.termish.term.argbToRgb
 import dev.termish.ui.theme.TerminalThemes
-import dev.termish.util.TermLog
 import dev.termish.util.NetworkChangeKind
 import dev.termish.util.SessionKeepAlive
+import dev.termish.util.TermLog
 import dev.termish.util.TermTrace
 import dev.termish.util.ioDispatcher
 import kotlin.concurrent.Volatile
@@ -46,7 +45,9 @@ enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
  *  失联 banner 与状态点共用。 */
 internal const val LINK_LOST_THRESHOLD_SECONDS = 5
 
-data class AuthPromptRequest(val prompt: AuthPrompt) {
+data class AuthPromptRequest(
+    val prompt: AuthPrompt,
+) {
     internal val deferred = CompletableDeferred<List<String>?>()
 }
 
@@ -87,9 +88,11 @@ class TerminalController(
         internal set
     var errorMessage by mutableStateOf<String?>(null)
         internal set
+
     /** 当前重连尝试次数：>0 且状态为 CONNECTING 时表示正在自动重连。 */
     var reconnectCount by mutableStateOf(0)
         internal set
+
     /** mosh 链路失联秒数（0=健康；达到阈值时 UI 显示「失去联系」banner，会话仍保持）。 */
     var linkLostSeconds by mutableStateOf(0)
         internal set
@@ -160,9 +163,11 @@ class TerminalController(
         /** SSH 输出队列容量（chunk 数，单 chunk ≤64KB）：满时 reader 协程挂起施加
          *  TCP 背压，不丢字节也不无限撑爆内存（cat 大文件场景）。 */
         private const val OUTPUT_QUEUE_CAPACITY = 256
+
         /** 主线程批量消费单帧预算：抽干同帧到达的输出后一次性触发重绘，
          *  避免小包洪泛时每包一次 frame 抖动；到预算即让出主线程。 */
         private const val OUTPUT_BATCH_BUDGET_MS = 8
+
         /** 认证/主机密钥弹窗等待上限：页面销毁或用户长期不响应时按拒绝处理，
          *  防止连接线程永久阻塞（sshd 自身也有登录宽限，超时连接本就会被掐断）。 */
         private const val PROMPT_TIMEOUT_MS = 120_000L
@@ -171,6 +176,7 @@ class TerminalController(
     // ---- 传输通道（connector 读写；close 时统一释放）----
     internal var session: SshSession? = null
     internal var moshSession: MoshSession? = null
+
     /** Mosh 成功路径关闭 SSH 引导通道时短路 onClosed（避免误判为意外断线）。 */
     internal var swallowClosed = false
 
@@ -185,9 +191,11 @@ class TerminalController(
     internal var moshDisplayTakeover = false
 
     internal val scope = CoroutineScope(ioDispatcher() + SupervisorJob())
+
     /** destroy() 后置位：reader 协程停止向输出队列投递（队列已关闭，投递会抛）。 */
     @Volatile
     private var destroyed = false
+
     /**
      * SSH 字节输出队列。reader 协程只投递，主线程单点消费喂 emulator——
      * 由此 buffer 的全部读写（渲染 / resize / 选择 / 模拟器写入）都串行在主线程，
@@ -197,26 +205,34 @@ class TerminalController(
     private val outputQueue = Channel<ByteArray>(capacity = OUTPUT_QUEUE_CAPACITY)
     internal var lastCols = 80
     internal var lastRows = 24
+
     /** 会话唯一标识（同主机多会话区分；Compose key() 重组用）。 */
     val sessionId: String = "${host.id}:${Random.nextLong()}"
     internal var reconnectAttempts = 0
     private var keepAliveActive = false
+
     /** 自动重连的延迟任务：close() 时取消，防止关闭后仍被延迟协程拉起。 */
     internal var reconnectJob: Job? = null
+
     /** Mosh 主题注入：非空表示本会话开启（见 SessionConnector.prepareThemeSync）。 */
     internal var moshThemePayload: ByteArray? = null
     internal var moshThemeInjected = false
+
     /** 单调钟：网络免疫期/防抖用单调毫秒，避免墙钟被用户改时间/NTP 校正干扰。 */
     private val mono = TimeSource.Monotonic.markNow()
+
     internal fun nowMs(): Long = mono.elapsedNow().inWholeMilliseconds
+
     /**
      * 最近一次终端输出落地时刻（单调钟；消费循环更新）。
      * herdr 注入等待用：输出静默 = 登录 MOTD 打完，可安全清屏启动 herdr。
      */
     @Volatile
     internal var lastOutputAtMs = 0L
+
     /** 连接成功后的网络事件免疫截止（单调毫秒）：期内不触发主动重连（防刚连上即断）。 */
     internal var networkImmuneUntilMs = 0L
+
     /** 最近一次主动重连时刻（单调毫秒）：15 秒防抖，避免网络抖动引发连续重连。 */
     internal var lastNetworkReconnectAtMs = 0L
 
@@ -232,14 +248,15 @@ class TerminalController(
      * 当前无 agent 列表 UI（onEvents/onAgents 空回调）：轮询只为后台 blocked
      * 通知；将来做 agent 面板时这两个回调即数据源。
      */
-    private val herdrMonitor = HerdrMonitor(
-        hostName = host.name,
-        hostId = host.id,
-        runCommand = { cmd -> session?.runCommand(cmd, 10_000) },
-        scope = scope,
-        onEvents = {},
-        onAgents = {},
-    )
+    private val herdrMonitor =
+        HerdrMonitor(
+            hostName = host.name,
+            hostId = host.id,
+            runCommand = { cmd -> session?.runCommand(cmd, 10_000) },
+            scope = scope,
+            onEvents = {},
+            onAgents = {},
+        )
 
     /** 连接就绪后启动 agent 监控（幂等；仅 launchHerdr 且 CONNECTED 时生效）。 */
     internal fun startHerdrMonitor() {
@@ -257,8 +274,9 @@ class TerminalController(
         // 必须在创建时按当前主题设置，不能等 TerminalScreen 组合——后台自动重连、
         // 会话恢复等路径不经过界面，否则会拿深色初始值告诉远端"手机是深色主题"，
         // 导致白主题下 pane 渲染成黑色/深色蒙层。
-        val terminalTheme = TerminalThemes.ALL
-            .getOrElse(repository.loadSettings().terminalThemeIndex) { TerminalThemes.ALL[0] }
+        val terminalTheme =
+            TerminalThemes.ALL
+                .getOrElse(repository.loadSettings().terminalThemeIndex) { TerminalThemes.ALL[0] }
         buffer.defaultFgRgb = argbToRgb(terminalTheme.foreground)
         buffer.defaultBgRgb = argbToRgb(terminalTheme.background)
         buffer.defaultCursorRgb = argbToRgb(terminalTheme.cursor)
@@ -278,7 +296,9 @@ class TerminalController(
                 // mosh 已接管显示：丢弃引导通道迟到字节（含已在队列中的），
                 // 防止写在 mosh 状态之上永久残留
                 if (moshDisplayTakeover) {
-                    frame++; yield(); continue
+                    frame++
+                    yield()
+                    continue
                 }
                 // 单批字节解析异常（模拟器残留索引 bug 等）不能杀死消费循环——
                 // 否则终端静默冻屏且无任何诊断。记日志丢弃本批续跑：跳过一段输出
@@ -301,7 +321,10 @@ class TerminalController(
         }
     }
 
-    fun connect(columns: Int, rows: Int) = connector.connect(columns, rows)
+    fun connect(
+        columns: Int,
+        rows: Int,
+    ) = connector.connect(columns, rows)
 
     /** 按最近一次窗口尺寸重连（保留屏幕缓冲）；用于退到后台后回前台恢复会话。 */
     fun reconnect() = connector.reconnect()
@@ -325,74 +348,77 @@ class TerminalController(
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect
 
-    internal fun callbacks(trace: TermTrace.Span? = null) = object : SshCallbacks {
-        override fun onTraceStep(step: String) {
-            trace?.step(step)
-        }
-        override suspend fun onOutput(data: ByteArray) {
-            enqueueOutput(data)
-        }
+    internal fun callbacks(trace: TermTrace.Span? = null) =
+        object : SshCallbacks {
+            override fun onTraceStep(step: String) {
+                trace?.step(step)
+            }
 
-        override suspend fun onStderr(data: ByteArray) {
-            enqueueOutput(data)
-        }
+            override suspend fun onOutput(data: ByteArray) {
+                enqueueOutput(data)
+            }
 
-        override fun onExitStatus(status: Int) {
-            exitStatus = status
-        }
+            override suspend fun onStderr(data: ByteArray) {
+                enqueueOutput(data)
+            }
 
-        override fun onClosed(reason: String?) {
-            if (swallowClosed) return // Mosh 成功路径主动关闭引导通道
-            if (status == ConnStatus.CLOSED) return // 用户主动断开
-            connector.onUnexpectedClose(reason)
-        }
+            override fun onExitStatus(status: Int) {
+                exitStatus = status
+            }
 
-        override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-            val req = AuthPromptRequest(prompt)
-            authPrompt = req
-            // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
-            val r = withTimeoutOrNull(PROMPT_TIMEOUT_MS) { req.deferred.await() }
-            if (authPrompt === req && r == null) authPrompt = null
-            return r
-        }
+            override fun onClosed(reason: String?) {
+                if (swallowClosed) return // Mosh 成功路径主动关闭引导通道
+                if (status == ConnStatus.CLOSED) return // 用户主动断开
+                connector.onUnexpectedClose(reason)
+            }
 
-        override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-            // 优先读仓库里最新保存的指纹：连接成功后 touchConnected 只写了仓库，
-            // 内存中的 Host（AppRoot hosts 状态/本控制器）不会刷新，直接读 host 的
-            // 话同一进程内首次连接后每次重连都会看到 null 而重复弹信任窗。
-            val known = repository.getHost(host.id)?.knownHostFingerprint
-                ?: host.knownHostFingerprint
-            if (known != null) {
-                if (known == hostKey.fingerprintSha256) {
-                    TermLog.d("ssh") { "hostkey ok ${host.name} ${hostKey.algorithm}" }
+            override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+                val req = AuthPromptRequest(prompt)
+                authPrompt = req
+                // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
+                val r = withTimeoutOrNull(PROMPT_TIMEOUT_MS) { req.deferred.await() }
+                if (authPrompt === req && r == null) authPrompt = null
+                return r
+            }
+
+            override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+                // 优先读仓库里最新保存的指纹：连接成功后 touchConnected 只写了仓库，
+                // 内存中的 Host（AppRoot hosts 状态/本控制器）不会刷新，直接读 host 的
+                // 话同一进程内首次连接后每次重连都会看到 null 而重复弹信任窗。
+                val known =
+                    repository.getHost(host.id)?.knownHostFingerprint
+                        ?: host.knownHostFingerprint
+                if (known != null) {
+                    if (known == hostKey.fingerprintSha256) {
+                        TermLog.d("ssh") { "hostkey ok ${host.name} ${hostKey.algorithm}" }
+                        return true
+                    }
+                    // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
+                    // 改为弹窗让用户核对新旧指纹后决定。
+                    TermLog.w("ssh") { "hostkey CHANGED ${host.name}: $known -> ${hostKey.fingerprintSha256}" }
+                    val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                    hostKeyPrompt = req
+                    val ok = awaitHostKeyAnswer(req)
+                    // 接受即采纳新指纹：即使后续认证失败也不重复弹窗（TOFU 信任的是主机密钥）
+                    if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
+                    return ok
+                }
+                // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
+                if (!repository.loadSettings().verifyHostKeyOnFirstUse) {
+                    TermLog.d("ssh") { "hostkey trust-on-first-use skipped (setting off) ${host.name}" }
                     return true
                 }
-                // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
-                // 改为弹窗让用户核对新旧指纹后决定。
-                TermLog.w("ssh") { "hostkey CHANGED ${host.name}: $known -> ${hostKey.fingerprintSha256}" }
-                val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
+                // TOFU：首次连接由用户确认
+                TermLog.d("ssh") { "hostkey TOFU prompt ${host.name} ${hostKey.fingerprintSha256}" }
+                val req = HostKeyRequest(hostKey)
                 hostKeyPrompt = req
                 val ok = awaitHostKeyAnswer(req)
-                // 接受即采纳新指纹：即使后续认证失败也不重复弹窗（TOFU 信任的是主机密钥）
+                // 点信任即记录指纹，与认证成败解耦：否则认证失败（如密码错）时
+                // 每次连接都重复弹授信窗
                 if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
                 return ok
             }
-            // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
-            if (!repository.loadSettings().verifyHostKeyOnFirstUse) {
-                TermLog.d("ssh") { "hostkey trust-on-first-use skipped (setting off) ${host.name}" }
-                return true
-            }
-            // TOFU：首次连接由用户确认
-            TermLog.d("ssh") { "hostkey TOFU prompt ${host.name} ${hostKey.fingerprintSha256}" }
-            val req = HostKeyRequest(hostKey)
-            hostKeyPrompt = req
-            val ok = awaitHostKeyAnswer(req)
-            // 点信任即记录指纹，与认证成败解耦：否则认证失败（如密码错）时
-            // 每次连接都重复弹授信窗
-            if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
-            return ok
         }
-    }
 
     /** 等待主机密钥确认并兜底清弹窗状态（正常应答已被 respondToHostKey 清过，超时按拒绝）。 */
     private fun awaitHostKeyAnswer(req: HostKeyRequest): Boolean {
@@ -440,7 +466,12 @@ class TerminalController(
         moshSession?.sendData(bytes) ?: session?.sendData(bytes)
     }
 
-    fun resize(columns: Int, rows: Int, widthPx: Int, heightPx: Int) {
+    fun resize(
+        columns: Int,
+        rows: Int,
+        widthPx: Int,
+        heightPx: Int,
+    ) {
         if (columns <= 0 || rows <= 0) return
         lastCols = columns
         lastRows = rows
@@ -484,8 +515,14 @@ class TerminalController(
         reconnectJob?.cancel()
         reconnectJob = null
         // 完成挂起的认证/主机密钥弹窗，释放阻塞在 await 上的 SSH 线程
-        authPrompt?.let { authPrompt = null; it.deferred.complete(null) }
-        hostKeyPrompt?.let { hostKeyPrompt = null; it.deferred.complete(false) }
+        authPrompt?.let {
+            authPrompt = null
+            it.deferred.complete(null)
+        }
+        hostKeyPrompt?.let {
+            hostKeyPrompt = null
+            it.deferred.complete(false)
+        }
         stopKeepAlive()
         moshSession?.close()
         moshSession = null

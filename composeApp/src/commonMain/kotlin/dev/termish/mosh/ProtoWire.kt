@@ -7,7 +7,10 @@ package dev.termish.mosh
 internal class ProtoWriter {
     private val out = ArrayList<Byte>()
 
-    fun varint(field: Int, value: ULong) {
+    fun varint(
+        field: Int,
+        value: ULong,
+    ) {
         tag(field, 0)
         var v = value
         while (v >= 0x80uL) {
@@ -17,17 +20,26 @@ internal class ProtoWriter {
         out.add(v.toByte())
     }
 
-    fun bytes(field: Int, data: ByteArray) {
+    fun bytes(
+        field: Int,
+        data: ByteArray,
+    ) {
         tag(field, 2)
         varint0(data.size.toULong())
         data.forEach { out.add(it) }
     }
 
-    fun message(field: Int, body: ProtoWriter) {
+    fun message(
+        field: Int,
+        body: ProtoWriter,
+    ) {
         bytes(field, body.toByteArray())
     }
 
-    private fun tag(field: Int, wire: Int) = varint0(((field shl 3) or wire).toULong())
+    private fun tag(
+        field: Int,
+        wire: Int,
+    ) = varint0(((field shl 3) or wire).toULong())
 
     private fun varint0(v0: ULong) {
         var v = v0
@@ -41,7 +53,9 @@ internal class ProtoWriter {
     fun toByteArray(): ByteArray = out.toByteArray()
 }
 
-internal class ProtoReader(data: ByteArray) {
+internal class ProtoReader(
+    data: ByteArray,
+) {
     private val buf = data
     private var pos = 0
 

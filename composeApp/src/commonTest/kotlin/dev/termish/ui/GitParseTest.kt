@@ -8,10 +8,10 @@ import kotlin.test.assertTrue
 
 /** Git 面板解析器（git status --porcelain / git diff）单元测试。 */
 class GitParseTest {
-
     @Test
     fun statusMixedStates() {
-        val out = """
+        val out =
+            """
             ## main...origin/main [ahead 1, behind 2]
              M app/src/main.kt
             M  app/src/main.kt
@@ -22,7 +22,7 @@ class GitParseTest {
             ?? untracked.txt
             ?? notes/
             UU conflict.txt
-        """.trimIndent()
+            """.trimIndent()
         val res = parseGitStatus(out)
         assertEquals("main", res.branch)
         assertEquals(1, res.ahead)
@@ -93,13 +93,14 @@ class GitParseTest {
 
     @Test
     fun statusQuotedPathAndNoise() {
-        val out = """
+        val out =
+            """
             user@host:~$ git -c color.ui=false status --porcelain=v1 --branch
             ## main
              M "a b.txt"
             ?? "weird\"name.txt"
             some random shell output
-        """.trimIndent()
+            """.trimIndent()
         val res = parseGitStatus(out)
         assertEquals(2, res.entries.size)
         assertEquals("a b.txt", res.entries[0].path)
@@ -123,7 +124,8 @@ class GitParseTest {
 
     @Test
     fun diffStandard() {
-        val out = """
+        val out =
+            """
             diff --git a/app/src/main.kt b/app/src/main.kt
             index 1234567..89abcde 100644
             --- a/app/src/main.kt
@@ -133,7 +135,7 @@ class GitParseTest {
             +added line
             -removed line
             \ No newline at end of file
-        """.trimIndent()
+            """.trimIndent()
         val lines = parseGitDiff(out)
         assertEquals(9, lines.size)
         assertEquals(GitDiffKind.HEADER, lines[0].kind)
@@ -149,12 +151,14 @@ class GitParseTest {
 
     @Test
     fun diffBinaryAndNewFile() {
-        val bin = parseGitDiff("diff --git a/x.bin b/x.bin\nindex 111..222 100644\nBinary files a/x.bin and b/x.bin differ")
+        val bin =
+            parseGitDiff("diff --git a/x.bin b/x.bin\nindex 111..222 100644\nBinary files a/x.bin and b/x.bin differ")
         assertEquals(3, bin.size)
         assertTrue(bin.all { it.kind == GitDiffKind.HEADER })
 
         // --no-index 新文件 diff
-        val raw = """
+        val raw =
+            """
             diff --git a//dev/null b/new.kt
             new file mode 100644
             index 0000000..abc1234
@@ -163,7 +167,7 @@ class GitParseTest {
             @@ -0,0 +1,2 @@
             +fun main() {}
             +println("hi")
-        """.trimIndent()
+            """.trimIndent()
         val newFile = parseGitDiff(raw)
         assertEquals(GitDiffKind.ADD, newFile.last().kind)
         assertTrue(newFile.size == 8, "got ${newFile.map { it.kind.name + "|" + it.text }}")
@@ -171,13 +175,14 @@ class GitParseTest {
 
     @Test
     fun diffIgnoresShellNoise() {
-        val out = """
+        val out =
+            """
             user@host:~/proj$ git diff --no-color -- app/src/main.kt
             diff --git a/app/src/main.kt b/app/src/main.kt
             @@ -1 +1 @@
             -old
             +new
-        """.trimIndent()
+            """.trimIndent()
         val lines = parseGitDiff(out)
         // 回显行被跳过
         assertEquals(4, lines.size)

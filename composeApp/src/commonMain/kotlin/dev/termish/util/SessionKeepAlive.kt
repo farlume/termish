@@ -7,6 +7,7 @@ package dev.termish.util
  */
 expect object SessionKeepAlive {
     fun onSessionStart()
+
     fun onSessionEnd()
 
     /**

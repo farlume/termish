@@ -63,7 +63,11 @@ internal class PredictionLayer(
     /**
      * 用户输入到达时调用（在发给 SSP 之前）。返回是否产生了可显示的预测。
      */
-    fun onUserInput(bytes: ByteArray, sendIntervalMs: Long, lastSentNum: ULong): Boolean {
+    fun onUserInput(
+        bytes: ByteArray,
+        sendIntervalMs: Long,
+        lastSentNum: ULong,
+    ): Boolean {
         // 触发迟滞（预测触发迟滞）
         if (sendIntervalMs > srttTriggerHigh) {
             srttTrigger = true
@@ -88,13 +92,14 @@ internal class PredictionLayer(
             predicted = null
             return false
         }
-        if (altScreen && pending.any {
+        if (altScreen &&
+            pending.any {
                 val v = it.toInt() and 0xff
                 v < 0x20 || v == 0x7f
             }
         ) {
             // alt 屏只预测可打印字符段：控制字节在全屏程序里语义各异
-            //（vim 普通模式 x 是删字符不是退格），等回显；pending 保留待收编
+            // （vim 普通模式 x 是删字符不是退格），等回显；pending 保留待收编
             predicted = null
             return false
         }

@@ -11,13 +11,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.border
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -59,10 +59,11 @@ enum class VoiceUiState { IDLE, LISTENING, RECOGNIZING }
 private const val WAVE_BARS = 13
 
 /** 各条静态权重（中间高、两边低，弧形轮廓）。 */
-private val WAVE_WEIGHTS = FloatArray(WAVE_BARS) { i ->
-    val x = (i - (WAVE_BARS - 1) / 2f) / ((WAVE_BARS - 1) / 2f)
-    (0.35f + 0.65f * (1f - x * x)).toFloat() // 二次曲线：中间 1.0，两端 0.35
-}
+private val WAVE_WEIGHTS =
+    FloatArray(WAVE_BARS) { i ->
+        val x = (i - (WAVE_BARS - 1) / 2f) / ((WAVE_BARS - 1) / 2f)
+        (0.35f + 0.65f * (1f - x * x)).toFloat() // 二次曲线：中间 1.0，两端 0.35
+    }
 
 /** 每根条独立的流动相位（错开 → 波浪横向流动感）。 */
 private val WAVE_PHASES = FloatArray(WAVE_BARS) { i -> i * 0.55f }
@@ -145,8 +146,15 @@ fun BigVoiceStopButton(
             .size(72.dp)
             .shadow(8.dp, CircleShape)
             .clip(CircleShape)
-            .background(if (recognizing) MaterialTheme.colorScheme.error.copy(alpha = 0.55f) else MaterialTheme.colorScheme.error)
-            .clickable(onClick = onClick),
+            .background(
+                if (recognizing) {
+                    MaterialTheme.colorScheme.error.copy(
+                        alpha = 0.55f,
+                    )
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            ).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         if (recognizing) {
@@ -246,7 +254,11 @@ private fun VoiceRecordingOverlay(
  * 单一 infinite transition 驱动（不每根条各开一个动画）。
  */
 @Composable
-private fun FlowingWave(level: Float, accent: Color, modifier: Modifier = Modifier) {
+private fun FlowingWave(
+    level: Float,
+    accent: Color,
+    modifier: Modifier = Modifier,
+) {
     val transition = rememberInfiniteTransition(label = "wave")
     val time by transition.animateFloat(
         initialValue = 0f,
