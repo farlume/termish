@@ -214,8 +214,8 @@ fun TerminalScreen(
     var pipFullscreen by remember { mutableStateOf(false) }
     // 切 tab 退出全屏（全屏状态提升后不再随 TerminalBody 销毁自动重置）
     LaunchedEffect(current) { pipFullscreen = false }
-    // 全屏沉浸式隐藏状态栏后 inset 归零：记录非全屏时的状态栏高度，
-    // 全屏画面顶部元素用固定留白——按钮不随状态栏隐藏上跳（用户反馈）
+    // 沉浸式隐藏状态栏后 inset 归零：记录非全屏时的状态栏高度，
+    // 全屏 header 内容下移与终端页 tab 栏对齐（用户反馈：按钮更靠上）
     val screenDensity = LocalDensity.current
     var lastStatusBarTop by remember { mutableIntStateOf(0) }
     if (!pipFullscreen) {
@@ -514,8 +514,8 @@ private fun TerminalBody(
             session.onFinalText = { text ->
                 scope.launch {
                     resetVoice()
+                    // 正常发送：终端已有输入回显，不弹 toast（只有错误/超时/误触提示）
                     controller.sendText(text)
-                    snackbar.showSnackbar(s.voice.sent(text))
                 }
             }
             session.onPartial = { text ->
@@ -527,9 +527,10 @@ private fun TerminalBody(
                 recorder.start(
                     onData = { pcm ->
                         session.sendPcm(pcm)
-                        // 音量波浪：RMS 每 200ms 更新一次，动画层插值平滑
-                        val lv = pcmLevel(pcm)
-                        scope.launch { voiceLevel = lv }
+                        // 音量波浪：RMS 每 200ms 更新一次，动画层插值平滑。
+                        // 录音线程直接写（snapshot 写线程安全）：launch 到主线程
+                        // 会有调度延迟，主线程忙时静音检测读到旧音量误判静音发送
+                        voiceLevel = pcmLevel(pcm)
                     },
                     onError = { msg -> scope.launch { onVoiceError(msg) } },
                 )
@@ -561,9 +562,10 @@ private fun TerminalBody(
         }
     }
 
-    // 对讲机模式：静音自动结束（免持）。连续静音 ~2.0s 且已录 >800ms 时
+    // 对讲机模式：静音自动结束（免持）。连续静音 ~3.0s 且已录 >800ms 时
     // 自动结束发送——边说边看屏幕不用再点结束；阈值放宽容忍轻声说话
-    // （RMS ~650 对应音量 0.02，正常说话 0.05-0.3）与句中 1-2s 停顿。
+    // （RMS ~650 对应音量 0.02，正常说话 0.05-0.3）与句中 1-3s 停顿
+    // （2s 会把思考停顿误发送，用户反馈「说到一半就断了」）。
     LaunchedEffect(voiceState) {
         if (voiceState == VoiceUiState.LISTENING) {
             var silentTicks = 0
@@ -573,7 +575,7 @@ private fun TerminalBody(
                 if (elapsed > 800L) {
                     if (voiceLevel < 0.02f) {
                         silentTicks++
-                        if (silentTicks >= 10) {
+                        if (silentTicks >= 15) {
                             endVoice()
                             break
                         }
@@ -1695,6 +1697,15 @@ private fun MoshInstallGuide(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                 )
+                // 具体引导失败原因（非「未安装」场景：locale/依赖/端口占用等）
+                controller.moshInstallReason?.let { reason ->
+                    Text(
+                        reason,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                    )
+                }
                 if (controller.moshInstalling) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

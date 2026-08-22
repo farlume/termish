@@ -22,6 +22,28 @@ class HerdrProbeTest {
     private val versionOutput = "herdr 0.8.0"
 
     @Test
+    fun snapPackagedHerdrIsSkipped() {
+        // Ubuntu snap 版（PATH 命中 /snap/bin/herdr）：沙箱受限，跳过该候选，
+        // 继续探测 $HOME/.local/bin 的官方脚本版
+        val commands = mutableListOf<String>()
+        val result =
+            HerdrProbe.probe { cmd ->
+                commands += cmd
+                when (cmd) {
+                    "command -v herdr" -> "/snap/bin/herdr"
+                    "\$HOME/.local/bin/herdr --version" -> versionOutput
+                    "echo \$HOME" -> "/home/user"
+                    else -> null
+                }
+            }!!
+        assertEquals("/home/user/.local/bin/herdr", result.bin)
+        assertEquals(
+            listOf("command -v herdr", "\$HOME/.local/bin/herdr --version", "echo \$HOME"),
+            commands,
+        )
+    }
+
+    @Test
     fun homeCandidateResolvedToAbsolutePath() {
         // exec PATH 缺 ~/.local/bin（裸 herdr 失败）→ $HOME 候选命中 → 解析成绝对路径
         val commands = mutableListOf<String>()
@@ -29,6 +51,7 @@ class HerdrProbeTest {
             HerdrProbe.probe { cmd ->
                 commands += cmd
                 when (cmd) {
+                    "command -v herdr" -> null
                     "herdr --version" -> null
                     "\$HOME/.local/bin/herdr --version" -> versionOutput
                     "echo \$HOME" -> "/root"
@@ -36,9 +59,15 @@ class HerdrProbeTest {
                 }
             }!!
         assertEquals("/root/.local/bin/herdr", result.bin)
-        // 解析发生在命中之后、且只多一次 echo（候选顺序不变）
+        // 解析发生在命中之后、且只多一次 echo（候选顺序不变）；PATH 候选
+        // 先经 command -v 判 snap（返回 null = 无 PATH 命中或非 snap）
         assertEquals(
-            listOf("herdr --version", "\$HOME/.local/bin/herdr --version", "echo \$HOME"),
+            listOf(
+                "command -v herdr",
+                "herdr --version",
+                "\$HOME/.local/bin/herdr --version",
+                "echo \$HOME",
+            ),
             commands,
         )
     }
@@ -54,7 +83,11 @@ class HerdrProbeTest {
                 if (cmd == "/opt/homebrew/bin/herdr --version") versionOutput else null
             }!!
         assertEquals("/opt/homebrew/bin/herdr", result.bin)
-        assertEquals(HerdrApi.BIN_CANDIDATES.map { "$it --version" }, commands)
+        // PATH 候选前多一次 command -v（snap 判定）
+        assertEquals(
+            listOf("command -v herdr") + HerdrApi.BIN_CANDIDATES.map { "$it --version" },
+            commands,
+        )
     }
 
     @Test
@@ -64,10 +97,14 @@ class HerdrProbeTest {
         val result =
             HerdrProbe.probe { cmd ->
                 commands += cmd
-                if (cmd == "herdr --version") versionOutput else null
+                when (cmd) {
+                    "command -v herdr" -> "/usr/local/bin/herdr"
+                    "herdr --version" -> versionOutput
+                    else -> null
+                }
             }!!
         assertEquals("herdr", result.bin)
-        assertEquals(listOf("herdr --version"), commands)
+        assertEquals(listOf("command -v herdr", "herdr --version"), commands)
     }
 
     @Test
@@ -78,6 +115,7 @@ class HerdrProbeTest {
         val result =
             HerdrProbe.probe { cmd ->
                 when (cmd) {
+                    "command -v herdr" -> "/usr/local/bin/herdr"
                     "herdr --version" -> versionOutput
                     else -> snapshotServerError
                 }

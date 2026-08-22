@@ -158,7 +158,7 @@ private class OkHttpVoiceWebSocket : VoiceWebSocket {
     private val client =
         OkHttpClient
             .Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .pingInterval(20, TimeUnit.SECONDS)
             .build()
@@ -198,7 +198,17 @@ private class OkHttpVoiceWebSocket : VoiceWebSocket {
                         t: Throwable,
                         response: Response?,
                     ) {
-                        onError(t.message ?: t.javaClass.simpleName)
+                        // 连接失败消息常含完整 URL/IP/端口（如 Failed to connect to
+                        // openspeech.bytedance.com/1.2.3.4:443）——用户侧只给友好
+                        // 文案，原始错误进日志供诊断（用户反馈：错误把端口打印出来）
+                        TermLog.w("voice") { "ws failure: $t" }
+                        val friendly =
+                            when (t) {
+                                is java.net.ConnectException -> "无法连接语音识别服务，请检查网络"
+                                is java.net.SocketTimeoutException -> "连接语音识别服务超时，请检查网络"
+                                else -> "语音识别服务连接失败"
+                            }
+                        onError(friendly)
                     }
 
                     override fun onClosed(

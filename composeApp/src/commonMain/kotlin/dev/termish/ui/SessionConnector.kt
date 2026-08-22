@@ -303,27 +303,23 @@ internal class SessionConnector(
                         missing -> strings().moshServerMissing
                         else -> strings().moshBootstrapFailed(rawTrimmed)
                     }
-                // 远端未装 mosh-server → 引导安装（SSH 显示通道保留，卡片可选
-                // 「安装」或「降级 SSH」）；herdr 工作台开关同样引导——装上 mosh
-                // 才有漫游能力，静默降级用户永远不知道少了什么
-                if (missing) {
-                    TermLog.w("mosh") { "mosh-server missing ${c.host.name}: 引导安装（可降级 SSH）" }
-                    // 先置引导态再置 CONNECTED（消除状态中间帧：awaitStatus 后
-                    // 立即断言 moshNeedsInstall 的测试不会看到中间帧）
-                    c.moshNeedsInstall = true
-                    finishConnected(s, sendStartup = false)
-                    return
-                }
-                TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——降级" }
-                finishConnected(s)
-                showDegradeNotice(reason)
-                TermLog.i("mosh") { "mosh degraded ${c.host.name} in ${c.nowMs() - t0}ms" }
+                // 引导失败一律进安装卡片（卡片可选「安装」或「降级 SSH」）：
+                // 缺失必然要装；已装但引导失败（locale/依赖等）也提供修复入口，
+                // 不再静默降级只剩一条失败通知（用户反馈：没装 mosh-server 却
+                // 只看到「引导失败」，没有安装选项）
+                TermLog.w("mosh") { "mosh bootstrap failed ${c.host.name}: $reason——引导安装（可降级）" }
+                // 先置引导态再置 CONNECTED（消除状态中间帧：awaitStatus 后
+                // 立即断言 moshNeedsInstall 的测试不会看到中间帧）
+                c.moshNeedsInstall = true
+                c.moshInstallReason = if (missing) null else reason
+                finishConnected(s, sendStartup = false)
                 return
             }
             val (moshPort, moshKey) = parsed
             TermLog.i("mosh") { "mosh-server up port=$moshPort ${c.host.hostname}" }
             // 引导成功：待安装状态立即清除（残留可能来自上一次会话）
             c.moshNeedsInstall = false
+            c.moshInstallReason = null
 
             // 3b. 引导成功：建 mosh client，等 UDP 首包确认（连接成功判定）
             withContext(Dispatchers.Main) { prepareThemeSync() }

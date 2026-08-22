@@ -96,6 +96,9 @@ private fun SftpHostRow(
 ) {
     val s = LocalAppStrings.current
     val sys = host.system.ifBlank { host.hostname }
+    // 第一行：主机名（alias）优先，空则回退地址——与首页主机卡片一致
+    // （用户反馈：选择器显示 IP 而非主机名）
+    val title = host.name.ifBlank { host.hostname }
     val address = if (host.port != 22) "${host.hostname}:${host.port}" else host.hostname
     val detail =
         buildString {
@@ -106,6 +109,9 @@ private fun SftpHostRow(
                 append(", ")
                 append(host.system)
             }
+            // 地址并入详情行：同名主机可区分、确认连的是哪台
+            append(", ")
+            append(address)
         }
     Card(
         modifier =
@@ -131,7 +137,7 @@ private fun SftpHostRow(
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    address,
+                    title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,

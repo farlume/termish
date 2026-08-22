@@ -33,12 +33,34 @@ object HerdrProbe {
      */
     fun probe(runCommand: (String) -> String?): Result? {
         for (bin in HerdrApi.BIN_CANDIDATES) {
+            // Ubuntu snap 版 herdr（/snap/bin）：沙箱受限（home/权限），与
+            // Termish 工作台不兼容（herdr 官方提示「you are using a snap
+            // version」）——探测跳过，引导用官方脚本版（~/.local/bin）
+            if (isSnapHerdr(bin, runCommand)) {
+                TermLog.w("herdr") { "skip snap-packaged herdr (bin=$bin)" }
+                continue
+            }
             val raw = runCommand("$bin --version") ?: continue
             if (!isVersionOutput(raw)) continue
             TermLog.d("herdr") { "probe hit bin=$bin" }
             return Result(resolveHome(bin, runCommand))
         }
         return null
+    }
+
+    /**
+     * 判定 PATH 候选是否解析到 snap 版（/snap/ 前缀）。
+     * snap 安装的命令在 /snap/bin（Ubuntu 默认 PATH 含该目录），沙箱限制
+     * 使其无法读写用户 home 之外、daemon 工作台行为受限——探测命中它
+     * 会在后续启动阶段失败（用户反馈：连接 Ubuntu 提示 snap version）。
+     */
+    private fun isSnapHerdr(
+        bin: String,
+        runCommand: (String) -> String?,
+    ): Boolean {
+        if (bin != "herdr") return false
+        val resolved = runCommand("command -v herdr") ?: return false
+        return resolved.startsWith("/snap/")
     }
 
     /**

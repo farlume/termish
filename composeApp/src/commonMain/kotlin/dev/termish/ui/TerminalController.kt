@@ -141,6 +141,9 @@ class TerminalController(
 
     /** Mosh 安装命令的实时输出（引导卡片里展示；挂住时可见无新进展）。 */
     var moshInstallLog by mutableStateOf("")
+
+    /** mosh 引导失败原因（安装卡片提示；null = 未检测到 mosh-server）。 */
+    var moshInstallReason by mutableStateOf<String?>(null)
         internal set
 
     /** Mosh 安装需要 sudo 密码（卡片显示密码输入框；仅当远端非 root 且 sudo 非免密）。 */

@@ -123,7 +123,7 @@ class ScreenSession(
                                 running = false
                                 break
                             }
-                            // 非 macOS 主机：屏幕推流不支持（不引导安装，装了也无法推流）
+                            // 非 macOS/Linux 主机：屏幕推流不支持（不引导安装）
                             if (sb.contains("SCREEN_UNSUPPORTED_OS")) {
                                 val os =
                                     sb
@@ -132,7 +132,17 @@ class ScreenSession(
                                         .lineSequence()
                                         .first()
                                         .trim()
-                                uiState.error = "屏幕推流仅支持 macOS 主机（当前远端为 $os）"
+                                uiState.error = "屏幕推流仅支持 macOS / Linux 桌面主机（当前远端为 $os）"
+                                running = false
+                                break
+                            }
+                            // Linux Wayland 桌面：x11grab 仅覆盖 X11 应用窗口
+                            if (sb.contains("SCREEN_WAYLAND_ONLY")) {
+                                uiState.screenHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口（建议改用 Xorg 会话）"
+                            }
+                            // Linux 无图形会话（服务器/容器，无 X11 显示）
+                            if (sb.contains("SCREEN_NO_DISPLAY")) {
+                                uiState.error = "屏幕推流需要图形会话（当前远端未检测到 X11 桌面显示）"
                                 running = false
                                 break
                             }
@@ -281,17 +291,40 @@ class ScreenSession(
         val READ_STREAM_SCRIPT =
             """
             PORT=$SCREEN_PORT
-            # 屏幕推流仅支持 macOS（avfoundation 抓屏）：其他系统（Linux 等）直接
-            # 提示不支持，不引导安装——装了也无法推流（v1.6.0 用户反馈：连 Ubuntu
-            # 却提示「Mac 上未安装服务」）
-            if [ "${'$'}(uname)" != "Darwin" ]; then
-              echo "SCREEN_UNSUPPORTED_OS:${'$'}(uname)" >&2
-              exit 1
-            fi
+            OS=${'$'}(uname)
+            case "${'$'}OS" in
+              Darwin)
+                # macOS：avfoundation 抓屏（LaunchAgent 服务）
+                :
+                ;;
+              Linux)
+                # Linux 桌面（X11）：ffmpeg x11grab 抓屏。需要图形会话——
+                # SSH 无显示环境（服务器/容器）时直接提示，不引导安装。
+                # 检测：X socket + X server 进程。Xwayland 也计（Wayland 桌面
+                # 的 X11 兼容层，Ubuntu 22.04+ 默认 GNOME 即 Wayland 会话）；
+                # 纯 Wayland 只能抓 X11 应用窗口，标记提示不阻断（用户反馈：
+                # 远端有桌面却报未检测到 X11）
+                if ! ls /tmp/.X11-unix/X* >/dev/null 2>&1; then
+                  echo "SCREEN_NO_DISPLAY" >&2
+                  exit 1
+                fi
+                if ! pgrep -x Xorg >/dev/null 2>&1 && ! pgrep -x X >/dev/null 2>&1 && ! pgrep -x Xwayland >/dev/null 2>&1; then
+                  echo "SCREEN_NO_DISPLAY" >&2
+                  exit 1
+                fi
+                if ! pgrep -x Xorg >/dev/null 2>&1 && pgrep -x Xwayland >/dev/null 2>&1; then
+                  echo "SCREEN_WAYLAND_ONLY" >&2
+                fi
+                ;;
+              *)
+                echo "SCREEN_UNSUPPORTED_OS:${'$'}OS" >&2
+                exit 1
+                ;;
+            esac
             # ffmpeg 查找：SSH 非交互会话 PATH 受限（无 brew 目录），command -v 常漏掉
             # brew 安装的 ffmpeg → 误报 FFMPEG_MISSING（v1.5.0 用户反馈：装过还提示安装）
             FF=""
-            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg /usr/bin/ffmpeg; do
               if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
             done
             if [ -z "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
@@ -300,6 +333,7 @@ class ScreenSession(
             fi
             # 屏幕状态探测（仅提示，不阻断推流）：息屏时 avfoundation 无帧、
             # 锁屏时画面为锁屏界面——客户端据此给出明确提示而非「连接不上」
+            if [ "${'$'}OS" = "Darwin" ]; then
             /usr/bin/python3 -c '
             import ctypes
             cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
@@ -318,6 +352,7 @@ class ScreenSession(
             if d and cg.CFDictionaryGetValue(d, key):
                 print("SCREEN_LOCKED")
             ' 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
+            fi
             nc 127.0.0.1 ${'$'}PORT < /dev/null
             """.trimIndent()
 
@@ -334,14 +369,17 @@ class ScreenSession(
             """
             set -e
             PORT=$SCREEN_PORT
+            OS=${'$'}(uname)
             PLIST="${'$'}HOME/Library/LaunchAgents/dev.termish.screen.plist"
-            # ---- ffmpeg：缺失时 brew 或静态包安装（查找路径与读流脚本一致，
-            # 避免装完仍被非交互 PATH 误报缺失）----
+            # ---- ffmpeg：缺失时安装（查找路径与读流脚本一致，避免装完仍被非交互
+            # PATH 误报缺失）。macOS 走 brew/静态包；Linux 需 apt（sudo）——
+            # 检测不到且无 apt 权限时给出明确提示（日志可见）----
             FF=""
-            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg /usr/bin/ffmpeg; do
               if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
             done
             if [ -z "${'$'}FF" ]; then
+              if [ "${'$'}OS" = "Darwin" ]; then
               if command -v brew >/dev/null 2>&1; then
                 echo "==> 正在通过 Homebrew 安装 ffmpeg（约几分钟）"
                 brew install ffmpeg
@@ -359,6 +397,20 @@ class ScreenSession(
                 chmod +x "${'$'}HOME/bin/ffmpeg"
                 FF="${'$'}HOME/bin/ffmpeg"
               fi
+              else
+                # Linux：免密 sudo 时自动 apt 安装 ffmpeg；需密码时提示手动
+                #（用户反馈：Ubuntu 引导安装失败——ffmpeg 缺失且只提示手动装）
+                if sudo -n true 2>/dev/null; then
+                  echo "==> 正在通过 apt 安装 ffmpeg（sudo 免密）"
+                  sudo apt-get update -qq
+                  sudo apt-get install -y -qq ffmpeg
+                  FF="${'$'}(command -v ffmpeg 2>/dev/null)"
+                  [ -n "${'$'}FF" ] || FF="/usr/bin/ffmpeg"
+                else
+                  echo "==> Linux 需要 ffmpeg：请先在服务器执行 sudo apt install ffmpeg（或配置免密 sudo 后重试）" >&2
+                  exit 1
+                fi
+              fi
             fi
             FF_REAL=${'$'}(readlink -f "${'$'}FF" 2>/dev/null || echo "${'$'}FF")
             echo "==> ffmpeg: ${'$'}FF_REAL"
@@ -368,20 +420,35 @@ class ScreenSession(
             mkdir -p "${'$'}APP_DIR"
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
-            import socket, subprocess, time, select, os, signal, threading
+            import socket, subprocess, time, select, os, signal, sys, threading
             PORT = ${'$'}PORT
             FF = "${'$'}FF_REAL"
-            ERRLOG = os.path.expanduser("~/Library/Logs/termish-screen.err")
-            ARGS = ["-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", "30",
-                    "-capture_cursor", "1", "-pixel_format", "uyvy422", "-i", "1:none",
-                    # fps=30 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
-                    # -framerate 30 无效——120fps 会把手机解码器灌爆（每秒 480 NAL）
-                    "-vf", "fps=30,scale=1280:-2", "-c:v", "libx264", "-preset", "ultrafast",
-                    # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
-                    "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
-                    "-pix_fmt", "yuv420p", "-g", "60",
-                    "-threads", "1",
-                    "-f", "mpegts", "-flush_packets", "1", "-"]
+            # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
+            # 目录不存在时 open() 抛异常 → ffmpeg 不会被拉起（用户反馈：
+            # Ubuntu 端口监听但推流 0 字节）
+            ERRLOG = os.path.expanduser("~/Library/Logs/termish-screen.err" if sys.platform == "darwin" else "~/.termish-screen.err")
+            IS_MAC = sys.platform == "darwin"
+            if IS_MAC:
+                # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
+                ARGS = ["-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", "30",
+                        "-capture_cursor", "1", "-pixel_format", "uyvy422", "-i", "1:none",
+                        # fps=30 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
+                        # -framerate 30 无效——120fps 会把手机解码器灌爆（每秒 480 NAL）
+                        "-vf", "fps=30,scale=1280:-2", "-c:v", "libx264", "-preset", "ultrafast",
+                        # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
+                        "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
+                        "-pix_fmt", "yuv420p", "-g", "60",
+                        "-threads", "1",
+                        "-f", "mpegts", "-flush_packets", "1", "-"]
+            else:
+                # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
+                ARGS = ["-hide_banner", "-loglevel", "error", "-f", "x11grab", "-framerate", "30",
+                        "-i", os.environ.get("DISPLAY", ":0") + ".0",
+                        "-vf", "fps=30,scale=1280:-2", "-c:v", "libx264", "-preset", "ultrafast",
+                        "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
+                        "-pix_fmt", "yuv420p", "-g", "60",
+                        "-threads", "1",
+                        "-f", "mpegts", "-flush_packets", "1", "-"]
             lock = threading.Lock()
             active = [None]  # 当前活跃连接（新连接优先：重连时踢掉旧会话残留）
             active_ff = [None]  # 当前活跃 ffmpeg（kick 时直接 SIGKILL，不等旧线程收尾）
@@ -550,7 +617,9 @@ class ScreenSession(
                 conn, _ = srv.accept()
                 threading.Thread(target=handle, args=(conn,), daemon=True).start()
             TERMISH_EOF
-            # ---- LaunchAgent（GUI 域：拥有屏幕录制权限）----
+            # ---- 服务启动：macOS 用 LaunchAgent（GUI 域录屏权限）；
+            # Linux 用 nohup 后台 + DISPLAY=:0（X11 抓屏，SSH 断开不受影响）----
+            if [ "${'$'}OS" = "Darwin" ]; then
             mkdir -p "${'$'}HOME/Library/LaunchAgents"
             RELAY="${'$'}RELAY" cat > "${'$'}PLIST" <<TERMISH_EOF
             <?xml version="1.0" encoding="UTF-8"?>
@@ -585,6 +654,36 @@ class ScreenSession(
             else
               echo "==> 服务未启动（检查 ~/Library/Logs/termish-screen.err）" >&2
               exit 1
+            fi
+            else
+            # Linux：重启 relay（nohup，脱离 SSH 会话存活），DISPLAY 指向图形会话。
+            # ⚠️ 不用 pkill -f screen-relay.py：安装脚本自身（sh -c）命令行含
+            # 脚本文本，-f 全匹配会把自己杀掉（macOS 分支同款坑，用户反馈：
+            # Ubuntu 引导安装失败）——用 PID 文件精确清理
+            RELAY_PID="${'$'}HOME/.termish-screen.pid"
+            if [ -f "${'$'}RELAY_PID" ]; then
+              kill "${'$'}(cat "${'$'}RELAY_PID")" 2>/dev/null || true
+              rm -f "${'$'}RELAY_PID"
+            fi
+            sleep 0.5
+            # 探测 X display：Xwayland 的 display 号从进程参数取（Wayland 会话
+            # 可能是 :1024 等非 0 号，写死 :0 会连不上）
+            XDISP=":0"
+            if pgrep -x Xwayland >/dev/null 2>&1; then
+              XDISP="${'$'}(pgrep -x Xwayland -a 2>/dev/null | head -1 | grep -oE ':[0-9]+' | head -1)"
+              [ -n "${'$'}XDISP" ] || XDISP=":0"
+            fi
+            LOG="${'$'}HOME/.termish-screen.log"
+            DISPLAY="${'$'}XDISP" nohup /usr/bin/python3 "${'$'}RELAY" >> "${'$'}LOG" 2>&1 &
+            echo ${'$'}! > "${'$'}RELAY_PID"
+            sleep 1.5
+            # 验证端口监听（lsof 或 ss）；不碰连接
+            if lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":${'$'}PORT "; then
+              echo "==> TERMISH_SCREEN_OK"
+            else
+              echo "==> 服务未启动（检查 ${'$'}LOG）" >&2
+              exit 1
+            fi
             fi
             """.trimIndent()
 

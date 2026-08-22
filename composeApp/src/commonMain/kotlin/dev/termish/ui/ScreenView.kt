@@ -25,6 +25,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -76,7 +77,8 @@ fun ScreenContent(
     onInstallService: () -> Unit = {},
     /** 就地全屏模式：左上角返回按钮显示「收起」（不跳 tab）；否则显示「返回」。 */
     onClose: (() -> Unit)? = null,
-    /** 状态栏高度（px，沉浸式隐藏前的值）：顶部元素固定留白，不随状态栏隐藏跳动。 */
+    /** 状态栏高度（px，沉浸式隐藏前记录）：header 内容下移，返回按钮与终端页
+     * tab 栏对齐（用户反馈：全屏返回按钮比终端页更靠上）。 */
     statusBarInsetTop: Int = 0,
     modifier: Modifier = Modifier,
 ) {
@@ -86,37 +88,6 @@ fun ScreenContent(
         // 画面帧（播放器渲染面，Fit 缩放）
         state.player?.let { p ->
             ScreenVideoSurface(p, Modifier.fillMaxSize())
-        }
-
-        // 帧率 / 分辨率角标（右上角小字）：顶部固定留白（状态栏高度 + 间距），
-        // 不随沉浸式隐藏状态栏上跳
-        if (state.connected && (state.fps > 0 || state.frameSize.isNotBlank())) {
-            Row(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = with(density) { (statusBarInsetTop + 8).dp }, end = 8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                if (state.frameSize.isNotBlank()) {
-                    Text(
-                        state.frameSize,
-                        color = Color.White.copy(alpha = 0.8f),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
-                if (state.fps > 0) {
-                    Text(
-                        "${state.fps} fps",
-                        color = Color.White.copy(alpha = 0.8f),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                }
-            }
         }
 
         // 连接中：居中指示器（含已连通但首帧未到的等待态；全屏模式 session 为 null 也显示）
@@ -195,34 +166,61 @@ fun ScreenContent(
             )
         }
 
-        // 全屏顶部返回按钮：标准播放器风格——圆形半透明底 + 返回箭头（无文字，
-        // 文案只作无障碍描述）。⚠️ 必须最后声明（最顶层）：视频面/错误态都是
-        // fillMaxSize 覆盖层，先声明会被盖住（v1.4.0 回归：看不到也点不到）。
-        Box(
+        // 全屏头部栏：与终端页 tab 栏同款（半透明黑底 + 返回 IconButton + 主机名 +
+        // 帧率角标），返回按钮不再裸露贴顶（用户反馈：应与终端页返回按钮同高度，
+        // 全屏应有头部）。⚠️ 最后声明（最顶层）：视频面/错误态都是 fillMaxSize
+        // 覆盖层，先声明会被盖住（v1.4.0 回归：看不到也点不到）。
+        Row(
             Modifier
                 .align(Alignment.TopStart)
-                // 顶部固定留白（状态栏高度 + 间距）：沉浸式隐藏状态栏后 inset 归零，
-                // statusBarsPadding 会让按钮上跳；用进入全屏前记录的高度保持位置稳定
-                .padding(
-                    top = with(density) { (statusBarInsetTop + 10).dp },
-                    start = 10.dp,
-                    end = 10.dp,
-                    bottom = 10.dp,
-                ).zIndex(100f)
-                .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.Black.copy(alpha = 0.55f))
-                .clickable(onClick = { (onClose ?: onBack)() }),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .zIndex(100f)
+                .background(Color.Black.copy(alpha = 0.45f))
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                // 内容下移到状态栏高度（背景铺满顶部）：返回按钮与终端页 tab 栏同高度
+                .padding(top = with(density) { statusBarInsetTop.toDp() }),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                // 与全应用统一：标准返回箭头 KeyboardArrowLeft
-                // （终端 tab 栏 / 设置二级页同款）
-                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = if (onClose != null) s.screen.collapse else s.screen.back,
-                tint = Color.White.copy(alpha = 0.9f),
-                modifier = Modifier.size(22.dp),
+            IconButton(onClick = { (onClose ?: onBack)() }) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                    contentDescription = if (onClose != null) s.screen.collapse else s.screen.back,
+                    tint = Color.White.copy(alpha = 0.9f),
+                )
+            }
+            // 主机名（tab 栏同款标题位置）
+            Text(
+                host.name.ifBlank { host.hostname },
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
+            // 帧率 / 分辨率角标（原悬浮角标移入头部栏右侧）
+            if (state.connected && (state.fps > 0 || state.frameSize.isNotBlank())) {
+                Row(
+                    Modifier.padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (state.frameSize.isNotBlank()) {
+                        Text(
+                            state.frameSize,
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                    if (state.fps > 0) {
+                        Text(
+                            "${'$'}{state.fps} fps",
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
         }
     }
 }
