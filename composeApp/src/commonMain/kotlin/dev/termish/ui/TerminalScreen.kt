@@ -787,12 +787,15 @@ private fun TerminalBody(
                 )
             }
 
-            // 语音输入：屏幕正中常驻按钮。待机 = 品牌绿大按钮（点一下开始，
-            // 免去菜单两步）；录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），
-            // 整组可拖动（拖到画布任意位置）。两态同位，点击后原地切换不跳动。
+            // 语音输入：屏幕**水平正中**常驻按钮（垂直在底部工具栏上方，
+            // 不遮挡终端中部输出）。待机 = 品牌绿大按钮（点一下开始）；
+            // 录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），整组可拖动
+            //（向上拖到顶、不进入工具栏）。两态同位，点击后原地切换不跳动。
             if (voiceState == VoiceUiState.IDLE) {
                 Box(
-                    Modifier.align(Alignment.Center),
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp }),
                     contentAlignment = Alignment.Center,
                 ) {
                     VoiceStartButton(
@@ -804,7 +807,8 @@ private fun TerminalBody(
                 val density = LocalDensity.current
                 Box(
                     Modifier
-                        .align(Alignment.Center)
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp })
                         .offset { IntOffset(recordDrag.x.roundToInt(), recordDrag.y.roundToInt()) }
                         .onSizeChanged { recordGroupSize = it }
                         .pointerInput(canvasSize, recordGroupSize) {
@@ -819,10 +823,10 @@ private fun TerminalBody(
                                         -(canvasSize.width - w) / 2f + margin,
                                         (canvasSize.width - w) / 2f - margin,
                                     ),
-                                    // 初始在正中：上下对称拖（不超出画布）
+                                    // 初始在底部（水平居中）：允许向上拖到顶，不允许拖进工具栏
                                     (recordDrag.y + drag.y).coerceIn(
-                                        -(canvasSize.height - h) / 2f + margin,
-                                        (canvasSize.height - h) / 2f - margin,
+                                        -(canvasSize.height - h - with(density) { 24.dp.toPx() }),
+                                        0f,
                                     ),
                                 )
                             }
