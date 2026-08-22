@@ -18,8 +18,8 @@
   <img src="docs/screenshots/theme-en.png" width="230" alt="Terminal theme" />
 </p>
 <p>
-  <img src="docs/screenshots/terminal-ssh-en.png" width="230" alt="SSH terminal" />
   <img src="docs/screenshots/terminal-herdr-en.png" width="230" alt="herdr TUI agent" />
+  <img src="docs/screenshots/terminal-menu-en.png" width="230" alt="Terminal tools menu" />
   <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
 <p>
