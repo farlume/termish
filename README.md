@@ -23,9 +23,6 @@
   <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
 <p>
-  <img src="docs/screenshots/terminal-voice-zh.png" width="230" alt="Voice input (on-device)" />
-</p>
-<p>
   <img src="docs/screenshots/mosh-install-en.png" width="230" alt="mosh guided install" />
   <img src="docs/screenshots/herdr-install-en.png" width="230" alt="herdr guided install" />
 </p>

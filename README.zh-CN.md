@@ -23,9 +23,6 @@
   <img src="docs/screenshots/sftp-zh.png" width="230" alt="SFTP" />
 </p>
 <p>
-  <img src="docs/screenshots/terminal-voice-zh.png" width="230" alt="语音输入（真机实拍）" />
-</p>
-<p>
   <img src="docs/screenshots/mosh-install-zh.png" width="230" alt="mosh 引导安装" />
   <img src="docs/screenshots/herdr-install-zh.png" width="230" alt="herdr 引导安装" />
 </p>
