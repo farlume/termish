@@ -67,7 +67,33 @@ private val WAVE_PHASES = FloatArray(WAVE_BARS) { i -> i * 0.55f }
 private val WAVE_FREQS = FloatArray(WAVE_BARS) { i -> 2.2f + (i % 3) * 0.45f }
 
 /**
- * 录音态中间大按钮（水平居中、大于菜单 FAB）：
+ * 屏幕正中的语音开始按钮：大号品牌绿圆钮 + 麦克风（点一下直接开始，
+ * 免去右下角菜单两步）。点击后原地切换为录音态组件（红按钮 + 浮层）。
+ */
+@Composable
+fun VoiceStartButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .size(64.dp)
+            .shadow(10.dp, CircleShape)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.primary)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            Icons.Filled.Mic,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(30.dp),
+        )
+    }
+}
+
+/** 录音态中间大按钮（水平居中、大于菜单 FAB）：
  * - LISTENING：72dp 红色圆钮 + 白色麦克风（点击 = 结束并发送）
  * - RECOGNIZING：转圈
  * 与浮层（转写 + 声波）同列居中排布在工具栏上方。

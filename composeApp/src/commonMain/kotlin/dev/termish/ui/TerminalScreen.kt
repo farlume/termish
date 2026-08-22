@@ -729,22 +729,13 @@ private fun TerminalBody(
                 modifier = Modifier.align(Alignment.Center).fillMaxSize(),
             )
 
-            // 右下角功能菜单：+ 展开（语音 / Git，可扩展）。仅待机态显示
-            // （录音态由中间可拖动大按钮接管）。
+            // 右下角功能菜单：+ 展开（上传 / 文件管理 / Git，可扩展）。
+            // 语音已移至屏幕正中常驻按钮，不进菜单。
             if (voiceState == VoiceUiState.IDLE) {
                 CanvasToolMenu(
                     menuOpen = toolMenuOpen,
                     onMenuOpenChange = { toolMenuOpen = it },
                     items = listOf(
-                        CanvasMenuAction(
-                            id = "voice",
-                            label = s.voice.menuLabel,
-                            icon = Icons.Filled.Mic,
-                            onClick = {
-                                toolMenuOpen = false
-                                beginVoice()
-                            },
-                        ),
                         CanvasMenuAction(
                             id = "git",
                             label = s.git.menuLabel,
@@ -796,15 +787,24 @@ private fun TerminalBody(
                 )
             }
 
-            // 录音态：中间大按钮（水平居中、可拖动）+ 浮层（转写 + 声波），
-            // 整组跟随拖动（拖到画布任意位置，不超出画布/不进入工具栏）。
-            if (voiceState == VoiceUiState.LISTENING || voiceState == VoiceUiState.RECOGNIZING) {
+            // 语音输入：屏幕正中常驻按钮。待机 = 品牌绿大按钮（点一下开始，
+            // 免去菜单两步）；录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），
+            // 整组可拖动（拖到画布任意位置）。两态同位，点击后原地切换不跳动。
+            if (voiceState == VoiceUiState.IDLE) {
+                Box(
+                    Modifier.align(Alignment.Center),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    VoiceStartButton(
+                        onClick = { beginVoice() },
+                    )
+                }
+            } else if (voiceState == VoiceUiState.LISTENING || voiceState == VoiceUiState.RECOGNIZING) {
                 var recordGroupSize by remember { mutableStateOf(IntSize.Zero) }
                 val density = LocalDensity.current
                 Box(
                     Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = with(density) { (toolbarBaseHeightPx + navBarsBottomPx).toDp() + 20.dp })
+                        .align(Alignment.Center)
                         .offset { IntOffset(recordDrag.x.roundToInt(), recordDrag.y.roundToInt()) }
                         .onSizeChanged { recordGroupSize = it }
                         .pointerInput(canvasSize, recordGroupSize) {
@@ -819,10 +819,10 @@ private fun TerminalBody(
                                         -(canvasSize.width - w) / 2f + margin,
                                         (canvasSize.width - w) / 2f - margin,
                                     ),
-                                    // 初始在底部：允许向上拖到顶，不允许拖进工具栏
+                                    // 初始在正中：上下对称拖（不超出画布）
                                     (recordDrag.y + drag.y).coerceIn(
-                                        -(canvasSize.height - h - with(density) { 24.dp.toPx() }),
-                                        0f,
+                                        -(canvasSize.height - h) / 2f + margin,
+                                        (canvasSize.height - h) / 2f - margin,
                                     ),
                                 )
                             }
