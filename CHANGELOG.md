@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-08-22
+
+### 新增
+
+- **语音按钮移至屏幕正中**：待机常驻 64dp 品牌绿麦克风按钮，点一下即开始录音
+  （免去右下角菜单两步）；录音/识别中原位切换红按钮 + 转写浮层，整组可拖动
+
 ## [1.2.1] - 2026-08-22
 
 ### 修复
@@ -338,7 +345,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/ttermish/termish/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/ttermish/termish/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/ttermish/termish/compare/v1.1.14...v1.2.0
 [1.1.14]: https://github.com/ttermish/termish/compare/v1.1.13...v1.1.14
