@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-08-23
+
+### 修复
+
+- **Linux 桌面推流（x11grab）全链路**：安装脚本 pkill 自杀（命令行含自身文本被全匹配误杀）改 PID 文件清理；DISPLAY 从 Xwayland 进程参数探测（Wayland 会话 display 号非 0）；X 检测兼容任意 X socket（Xwayland）；relay 错误日志路径平台化（Linux 无 ~/Library/Logs，open() 异常导致 ffmpeg 不被拉起——端口监听但 0 字节）；ffmpeg 缺失时免密 sudo 自动 apt 安装
+- 语音输入：音量由录音线程直写消除主线程调度延迟（停顿 <2s 被误判静音自动发送）；静音自动发送阈值 2s→3s；正常发送不再弹 toast（仅错误/超时/误触提示）；连接失败提示清洗（不再透出 URL/端口）、超时 10s→5s
+- 全屏 header 返回按钮与终端页 tab 栏对齐（状态栏高度留白，不再贴顶）
+- mosh 引导失败一律进安装卡片（显示具体原因），不再静默降级无安装入口
+- herdr 探测跳过 snap 版（沙箱受限与工作台不兼容）
+- SFTP 选主机列表显示主机名（IP 并入详情行）
+
 ## [1.6.0] - 2026-08-22
 
 ### 新增
@@ -443,7 +454,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/ttermish/termish/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/ttermish/termish/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/ttermish/termish/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/ttermish/termish/compare/v1.4.0...v1.5.0
