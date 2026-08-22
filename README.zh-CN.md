@@ -19,7 +19,7 @@
 </p>
 <p>
   <img src="docs/screenshots/terminal-menu-zh.png" width="230" alt="终端工具菜单" />
-  <img src="docs/screenshots/terminal-menu-en.png" width="230" alt="终端工具菜单" />
+  <img src="docs/screenshots/terminal-voice-zh.png" width="230" alt="语音输入" />
   <img src="docs/screenshots/sftp-zh.png" width="230" alt="SFTP" />
 </p>
 <p>

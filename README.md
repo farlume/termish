@@ -19,7 +19,7 @@
 </p>
 <p>
   <img src="docs/screenshots/terminal-menu-en.png" width="230" alt="Terminal tools menu" />
-  <img src="docs/screenshots/terminal-menu-zh.png" width="230" alt="Terminal tools menu" />
+  <img src="docs/screenshots/terminal-voice-en.png" width="230" alt="Voice input" />
   <img src="docs/screenshots/sftp-en.png" width="230" alt="SFTP" />
 </p>
 <p>
