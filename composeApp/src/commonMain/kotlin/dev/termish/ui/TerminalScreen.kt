@@ -438,9 +438,9 @@ private fun TerminalBody(
         }
     }
 
-    // 对讲机模式：静音自动结束（免持）。连续静音 ~1.6s 且已录 >800ms 时
-    // 自动结束发送——边说边看屏幕不用再点结束；说话中途停顿不会被误切
-    // （1.6s 阈值长于正常停顿）。
+    // 对讲机模式：静音自动结束（免持）。连续静音 ~2.4s 且已录 >800ms 时
+    // 自动结束发送——边说边看屏幕不用再点结束；阈值放宽容忍轻声说话
+    //（RMS ~650 对应音量 0.02，正常说话 0.05-0.3）与句中 1-2s 停顿。
     LaunchedEffect(voiceState) {
         if (voiceState == VoiceUiState.LISTENING) {
             var silentTicks = 0
@@ -448,9 +448,9 @@ private fun TerminalBody(
                 delay(200)
                 val elapsed = Clock.System.now().toEpochMilliseconds() - voiceStartMs
                 if (elapsed > 800L) {
-                    if (voiceLevel < 0.05f) {
+                    if (voiceLevel < 0.02f) {
                         silentTicks++
-                        if (silentTicks >= 8) {
+                        if (silentTicks >= 12) {
                             endVoice()
                             break
                         }
