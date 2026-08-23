@@ -24,6 +24,9 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -80,6 +83,10 @@ fun ScreenContent(
     /** 状态栏高度（px，沉浸式隐藏前记录）：header 内容下移，返回按钮与终端页
      * tab 栏对齐（用户反馈：全屏返回按钮比终端页更靠上）。 */
     statusBarInsetTop: Int = 0,
+    /** 推流参数切换（帧率/画质）：写远端配置后重建会话生效。 */
+    onStreamConfigChange: (fps: Int, scale: String) -> Unit = { _, _ -> },
+    /** 帧率档位本地更新（异步重建前 UI 先反馈）。 */
+    onFpsIndex: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
@@ -197,29 +204,90 @@ fun ScreenContent(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = 4.dp),
             )
-            // 帧率 / 分辨率角标（原悬浮角标移入头部栏右侧）
-            if (state.connected && (state.fps > 0 || state.frameSize.isNotBlank())) {
-                Row(
-                    Modifier.padding(horizontal = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (state.frameSize.isNotBlank()) {
+            // 帧率/画质切换按钮（右上角）：点击弹菜单选档位，
+            // 生效方式 = 写远端 relay 配置 + 重建推流会话
+            StreamQualitySwitcher(
+                fps = state.streamFps,
+                quality = state.streamQuality,
+                onSelect = onStreamConfigChange,
+                onFpsIndex = { state.streamFps = it },
+                onQualityIndex = { state.streamQuality = it },
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+    }
+}
+
+/** 帧率（30/60/120）与画质（3 档）档位切换：全屏 header 右上角。 */
+@Composable
+private fun StreamQualitySwitcher(
+    fps: Int,
+    quality: Int,
+    onSelect: (Int, String) -> Unit,
+    /** 帧率本地立即更新（异步重建前 UI 先反馈——用户反馈：帧率菜单点了不生效）。 */
+    onFpsIndex: (Int) -> Unit,
+    onQualityIndex: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val s = LocalAppStrings.current
+    val qualities = listOf("960:-2" to s.screen.qualityLow, "1280:-2" to s.screen.qualityMid, "1920:-2" to s.screen.qualityHigh)
+    val fpsOptions = listOf(30, 60, 120)
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Box(modifier) {
+        // 当前档位胶囊（点击展开菜单）
+        Text(
+            "$fps fps · ${qualities.getOrElse(quality) { qualities[1] }.second}",
+            color = Color.White.copy(alpha = 0.9f),
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            modifier =
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(horizontal = 8.dp, vertical = 5.dp)
+                    .clickable { menuOpen = true },
+        )
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            // 帧率组
+            fpsOptions.forEach { f ->
+                DropdownMenuItem(
+                    text = {
                         Text(
-                            state.frameSize,
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
+                            "$f fps",
+                            fontWeight = if (f == fps) FontWeight.Bold else null,
+                            color = if (f == fps) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         )
-                    }
-                    if (state.fps > 0) {
+                    },
+                    onClick = {
+                        menuOpen = false
+                        // 本地立即更新 + 远端写配置重建（与画质菜单对称）
+                        onFpsIndex(f)
+                        onSelect(f, qualities[quality].first)
+                    },
+                )
+            }
+            HorizontalDivider()
+            // 画质组（3 档）
+            qualities.forEachIndexed { i, (scale, label) ->
+                DropdownMenuItem(
+                    text = {
                         Text(
-                            "${'$'}{state.fps} fps",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
+                            label,
+                            fontWeight = if (i == quality) FontWeight.Bold else null,
+                            color = if (i == quality) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         )
-                    }
-                }
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onQualityIndex(i)
+                        onSelect(fps, scale)
+                    },
+                )
             }
         }
     }
@@ -233,6 +301,8 @@ internal fun ScreenServiceGuide(
     installLog: String,
     /** 缺失原因：true = 远端缺 ffmpeg；false = 服务未运行（端口无监听）。 */
     ffmpegMissing: Boolean,
+    /** relay 版本过旧（引导升级而非首次安装）。 */
+    needsUpgrade: Boolean = false,
     onInstall: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -277,7 +347,11 @@ internal fun ScreenServiceGuide(
                 )
                 // 具体原因 + 动作说明（替代通用长文案，信息更准）
                 Text(
-                    if (ffmpegMissing) s.screen.serviceHintFfmpeg else s.screen.serviceHintNotRunning,
+                    when {
+                        needsUpgrade -> s.screen.serviceUpgradeHint
+                        ffmpegMissing -> s.screen.serviceHintFfmpeg
+                        else -> s.screen.serviceHintNotRunning
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -425,14 +499,45 @@ fun ScreenPiP(
                         }
                         if (pressed.size >= 2) {
                             multiTouch = true
-                            // 双指：捏合/张开缩放（以尺寸左上角为锚点，不移动小窗）
+                            // 双指：捏合/张开缩放。以两指质心为锚（质心绝对位置不动，
+                            // 窗口朝手指方向展开——用户反馈中心锚定「展开方向奇怪」）
                             val p1 = pressed[0].position
                             val p2 = pressed[1].position
                             val dist = (p2 - p1).getDistance()
                             if (prevDist > 0f && dist > 0f) {
                                 val zoom = dist / prevDist
-                                pipW.value = (pipW.value * zoom).coerceIn(PIP_MIN_W, PIP_MAX_W)
-                                pipH.value = (pipH.value * zoom).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                val oldW = pipW.value
+                                val oldH = pipH.value
+                                val oldWpx = oldW * density
+                                val oldHpx = oldH * density
+                                // 质心在小窗内的相对位置（缩放前后保持 → 质心处内容不动）
+                                val centroid = (p1 + p2) / 2f
+                                val rx = (centroid.x / oldWpx).coerceIn(0f, 1f)
+                                val ry = (centroid.y / oldHpx).coerceIn(0f, 1f)
+                                pipW.value = (oldW * zoom).coerceIn(PIP_MIN_W, PIP_MAX_W)
+                                pipH.value = (oldH * zoom).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                val newWpx = pipW.value * density
+                                val newHpx = pipH.value * density
+                                // 质心锚定：左上角 = 质心绝对位置 - 相对位置×新尺寸
+                                drag.value =
+                                    Offset(
+                                        drag.value.x + centroid.x - rx * newWpx,
+                                        drag.value.y + centroid.y - ry * newHpx,
+                                    )
+                                // 缩放后钳制在画布内（防拖出屏幕）。
+                                // ⚠️ 保护条件须留 margin 余量：maxDown ∈ (0, 4) 时
+                                // coerceIn(0, maxDown-4) 会 min>max 抛异常崩溃（用户反馈）
+                                if (canvasSize.width > 0) {
+                                    val maxLeft = (canvasSize.width - newWpx).toFloat()
+                                    val maxDown = (canvasSize.height - newHpx).toFloat()
+                                    if (maxLeft > 4f && maxDown > 4f) {
+                                        drag.value =
+                                            Offset(
+                                                drag.value.x.coerceIn(-maxLeft + 4f, 0f),
+                                                drag.value.y.coerceIn(0f, maxDown - 4f),
+                                            )
+                                    }
+                                }
                                 event.changes.forEach { it.consume() }
                             }
                             prevDist = dist
@@ -444,8 +549,16 @@ fun ScreenPiP(
                             if (moved) {
                                 if (resizing) {
                                     // 单指把手：delta 是 px、pip 尺寸是 dp，除以 density 换算
-                                    pipW.value = (pipW.value + delta.x / density).coerceIn(PIP_MIN_W, PIP_MAX_W)
-                                    pipH.value = (pipH.value + delta.y / density).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                    val oldW = pipW.value
+                                    val oldH = pipH.value
+                                    pipW.value = (oldW + delta.x / density).coerceIn(PIP_MIN_W, PIP_MAX_W)
+                                    pipH.value = (oldH + delta.y / density).coerceIn(PIP_MIN_H, PIP_MAX_H)
+                                    // 中心锚定：与双指缩放一致（中心不动）
+                                    drag.value =
+                                        Offset(
+                                            drag.value.x - (pipW.value - oldW) / 2f * density,
+                                            drag.value.y - (pipH.value - oldH) / 2f * density,
+                                        )
                                 } else {
                                     // 移动：钳制在画布内（初始右上角，可全画布移动）
                                     val sz = ownSizeState.value
@@ -455,7 +568,7 @@ fun ScreenPiP(
                                         // 向左最多到左边缘、向下最多到画布底；向右/向上不可（已贴边）
                                         val maxLeft = (canvasSize.width - sz.width).toFloat()
                                         val maxDown = (canvasSize.height - sz.height).toFloat()
-                                        if (maxLeft > 0f && maxDown > 0f) {
+                                        if (maxLeft > margin && maxDown > margin) {
                                             drag.value =
                                                 Offset(
                                                     (drag.value.x + delta.x).coerceIn(-maxLeft + margin, 0f),

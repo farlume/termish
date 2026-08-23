@@ -10,10 +10,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -193,7 +195,7 @@ fun KeyToolbar(
         if (expanded) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp).padding(top = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
             ) {
                 KeyButton("PST", false, theme) { onPaste() }
                 KeyButton("⇧⇥", false, theme) { onKey(SpecialKey.SHIFT_TAB) }
@@ -206,7 +208,7 @@ fun KeyToolbar(
             }
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
             ) {
                 KeyButton("F1", false, theme) { onKey(SpecialKey.F1) }
                 KeyButton("F2", false, theme) { onKey(SpecialKey.F2) }
@@ -229,7 +231,7 @@ fun KeyToolbar(
         ) {
             // 行 1：ESC 左上（实体键盘位置直觉）；TAB 常驻（shell 补全高频，长按 = ⇧⇥）；
             // {} 片段 / ⌨ / ▾ 展开靠右（拇指区）
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
                 RepeatKeyButton(
                     "ESC",
                     theme,
@@ -267,7 +269,7 @@ fun KeyToolbar(
                 ) { onExpandedChange(!expanded) }
             }
             // 行 2：CTRL/ALT 左下（同实体键盘底行）；↑/↓ 第 6 列上下对齐；ENT 右下
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally)) {
                 KeyButton("CTRL", ctrlActive, theme) { onToggleCtrl() }
                 KeyButton("ALT", altActive, theme) { onToggleAlt() }
                 RepeatKeyButton(
@@ -326,12 +328,14 @@ private fun RowScope.KeyButton(
 
     Box(
         Modifier
-            .weight(1f)
-            // 固定键高 48dp（Android 触控目标上限）。⚠️ 不能用 weight + aspectRatio(1f)：
-            // 宽屏下键宽被 weight 均分放大，aspectRatio 在固定宽下无视高度约束返回
-            // 宽×宽（heightIn 只钳布局高度），内容按超高键居中溢出被裁——
-            // 横屏工具栏文字截断错位（v1.5.1 用户反馈）
-            .height(48.dp)
+            .weight(1f, fill = false)
+            // 正方形键：高随宽，但宽度上限 48dp（Android 触控目标上限）——
+            // 宽屏/横屏时键保持正方形居中排列，不撑满成扁块（用户反馈：
+            // 工具栏按钮不是正方形了）。⚠️ 不能 weight(fill=true) + aspectRatio：
+            // 宽屏下键宽被强制均分放大，aspectRatio 无视高度约束返回宽×宽，
+            // 内容按超高键居中溢出被裁（v1.5.1 横屏错位根因）
+            .widthIn(max = 48.dp)
+            .aspectRatio(1f)
             .clip(MaterialTheme.shapes.small)
             .background(bg)
             .border(1.dp, fg.copy(alpha = 0.45f), MaterialTheme.shapes.small)

@@ -332,7 +332,38 @@ fun AppRoot(repository: HostRepository) {
                 keepAliveSeconds = 0,
             )
         val uiState = ScreenUiState()
-        val session = ScreenSession(conn, callbacks, scope, uiState)
+        val session =
+            ScreenSession(
+                conn,
+                callbacks,
+                scope,
+                uiState,
+                // 断流自动重连（带退避）：relay 重启/会话切换导致的「画面流已断开」
+                // 自动恢复，用户无需手动重连（用户反馈）。重试 2 次后停止（保留错误提示）
+                onStreamLost = {
+                    scope.launch {
+                        delay(3_000)
+                        // 若期间条目已被手动重建/关闭（uiState 变了）则跳过
+                        val current = screenSessions.firstOrNull { it.host.id == host.id }
+                        if (current?.uiState !== uiState) return@launch
+                        val owner = current.ownerSessionId
+                        TermLog.i("screen") { "auto-reconnect ${host.name}" }
+                        try {
+                            establishScreen(host) { newSession, newUi ->
+                                screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
+                                screenSessions.removeAll { it.host.id == host.id }
+                                newUi.streamFps = uiState.streamFps
+                                newUi.streamQuality = uiState.streamQuality
+                                screenSessions.add(
+                                    ScreenSessionEntry(host, owner, newSession, newUi),
+                                )
+                            }
+                        } catch (e: Exception) {
+                            TermLog.w("screen") { "auto-reconnect failed ${host.name}: $e" }
+                        }
+                    }
+                },
+            )
         withContext(ioDispatcher()) { session.start() }
         onEstablished(session, uiState)
     }
@@ -969,6 +1000,40 @@ fun AppRoot(repository: HostRepository) {
                                 onInstallScreenService = installScreenService,
                                 // 屏幕重连（就地全屏）：按主机重建会话
                                 onReconnectScreenForHost = reconnectScreenForHost,
+                                // 全屏帧率/画质切换：SSH 写远端 relay 配置 → 重建会话生效。
+                                // ⚠️ 档位必须设置在【重建后的新 uiState】上：重建（establishScreen）
+                                // 会创建新 ScreenUiState（默认档位），设在旧对象上会被替换掉，
+                                // 右上角数字永远不变（用户反馈）
+                                onStreamConfigChange = { host, fps, scale ->
+                                    scope.launch {
+                                        val entry = screenSessions.firstOrNull { it.host.id == host.id }
+                                        // 旧条目 uiState 也同步档位：断流自动重连（onStreamLost）
+                                        // 用旧 uiState 重建时会保留新档位，不被 30 覆盖（用户反馈：
+                                        // 切帧率后右上角仍显示 30——自动重连与重建竞态）
+                                        entry?.uiState?.streamFps = fps
+                                        entry?.uiState?.streamQuality =
+                                            when (scale) {
+                                                "960:-2" -> 0
+                                                "1920:-2" -> 2
+                                                else -> 1
+                                            }
+                                        entry?.session?.setStreamConfig(fps, scale)
+                                        establishScreen(host) { session, uiState ->
+                                            screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
+                                            screenSessions.removeAll { it.host.id == host.id }
+                                            uiState.streamFps = fps
+                                            uiState.streamQuality =
+                                                when (scale) {
+                                                    "960:-2" -> 0
+                                                    "1920:-2" -> 2
+                                                    else -> 1
+                                                }
+                                            screenSessions.add(
+                                                ScreenSessionEntry(host, entry?.ownerSessionId ?: "", session, uiState),
+                                            )
+                                        }
+                                    }
+                                },
                                 // 屏幕断线重连：重建会话替换 tab
                                 onReconnectScreen = { tab ->
                                     scope.launch {

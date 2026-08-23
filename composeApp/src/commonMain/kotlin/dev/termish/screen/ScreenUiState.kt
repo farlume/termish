@@ -29,11 +29,20 @@ class ScreenUiState {
     /** 屏幕状态提示（非错误，可恢复）：Mac 息屏/锁屏等，画面到达自动清除。 */
     var screenHint by mutableStateOf<String?>(null)
 
+    /** 当前推流帧率（全屏右上角档位显示）。 */
+    var streamFps by mutableStateOf(30)
+
+    /** 当前画质档位（全屏右上角档位显示）。 */
+    var streamQuality by mutableStateOf(1)
+
     /** 远端缺 ffmpeg（引导安装信号）。 */
     var ffmpegMissing by mutableStateOf(false)
 
     /** 远端推流服务未运行（引导一键安装信号）。 */
     var serviceMissing by mutableStateOf(false)
+
+    /** 远端 relay 版本过旧（引导升级而非首次安装）。 */
+    var relayNeedsUpgrade by mutableStateOf(false)
 
     /** 服务安装中。 */
     var installing by mutableStateOf(false)

@@ -31,6 +31,9 @@ class ScreenSession(
     private val callbacks: SshCallbacks,
     private val scope: CoroutineScope,
     private val uiState: ScreenUiState,
+    /** 非主动关闭的断流回调（EOF/异常）：AppRoot 借此自动重连（用户反馈：
+     * relay 重启/会话切换导致「画面流已断开」需手动重连）。 */
+    private val onStreamLost: (() -> Unit)? = null,
 ) {
     private var ssh: SshSession? = null
     private var player: ScreenPlayer? = null
@@ -136,6 +139,14 @@ class ScreenSession(
                                 running = false
                                 break
                             }
+                            // relay 版本过旧：引导重新安装（升级）
+                            if (sb.contains("SCREEN_RELAY_OLD")) {
+                                uiState.serviceMissing = true
+                                uiState.relayNeedsUpgrade = true
+                                uiState.error = "推流服务需要升级（远端 relay 版本过旧），点安装更新"
+                                running = false
+                                break
+                            }
                             // Linux Wayland 桌面：x11grab 仅覆盖 X11 应用窗口
                             if (sb.contains("SCREEN_WAYLAND_ONLY")) {
                                 uiState.screenHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口（建议改用 Xorg 会话）"
@@ -191,12 +202,14 @@ class ScreenSession(
                     uiState.error =
                         if (detail.isNotEmpty()) "画面流已断开：$detail" else "画面流已断开"
                     running = false
+                    onStreamLost?.invoke()
                 }
             } catch (e: Exception) {
                 TermLog.w("screen") { "screen session error: $e" }
                 if (running) {
                     uiState.error = e.message ?: "连接失败"
                     running = false
+                    onStreamLost?.invoke()
                 }
             }
         }
@@ -258,6 +271,20 @@ class ScreenSession(
         }
     }
 
+    /**
+     * 设置远端推流参数（帧率/分辨率）：SSH 写 relay 配置（~/.termish-screen.conf），
+     * 下次重建会话（relay 每连接读取）生效。
+     */
+    suspend fun setStreamConfig(
+        fps: Int,
+        scale: String,
+    ): Boolean {
+        val s = ssh ?: return false
+        // scale 为受控常量（如 1280:-2，无引号字符），安全直接拼接
+        val cmd = "printf 'fps=%d\\nscale=%s\\n' $fps '$scale' > ~/.termish-screen.conf"
+        return withContext(ioDispatcher()) { s.runCommand(cmd, 5_000) != null }
+    }
+
     fun close() {
         running = false
         try {
@@ -280,6 +307,14 @@ class ScreenSession(
         const val SCREEN_PORT = 17321
 
         /**
+         * relay 协议版本：客户端内置安装脚本部署的 relay 与远端已运行 relay
+         * 的匹配标识。更新 relay 行为（推流参数/自愈逻辑）时 +1——
+         * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
+         * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
+         */
+        const val RELAY_VERSION = 3
+
+        /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
          * （UI 转引导安装）；在则 nc 读流到 stdout。
          *
@@ -292,6 +327,13 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
+            # relay 版本匹配：客户端 RELAY_VERSION=3，远端版本文件缺失/不一致
+            # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
+            # 应与远端脚本版本匹配）
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "3" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=3" >&2
+              exit 1
+            fi
             case "${'$'}OS" in
               Darwin)
                 # macOS：avfoundation 抓屏（LaunchAgent 服务）
@@ -421,6 +463,7 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading
+            RELAY_VERSION = 3
             PORT = ${'$'}PORT
             FF = "${'$'}FF_REAL"
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
@@ -428,27 +471,40 @@ class ScreenSession(
             # Ubuntu 端口监听但推流 0 字节）
             ERRLOG = os.path.expanduser("~/Library/Logs/termish-screen.err" if sys.platform == "darwin" else "~/.termish-screen.err")
             IS_MAC = sys.platform == "darwin"
-            if IS_MAC:
-                # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
-                ARGS = ["-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", "30",
-                        "-capture_cursor", "1", "-pixel_format", "uyvy422", "-i", "1:none",
-                        # fps=30 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
-                        # -framerate 30 无效——120fps 会把手机解码器灌爆（每秒 480 NAL）
-                        "-vf", "fps=30,scale=1280:-2", "-c:v", "libx264", "-preset", "ultrafast",
-                        # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
-                        "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
-                        "-pix_fmt", "yuv420p", "-g", "60",
-                        "-threads", "1",
-                        "-f", "mpegts", "-flush_packets", "1", "-"]
-            else:
+
+            def read_stream_cfg():
+                # 推流参数：~/.termish-screen.conf（手机端全屏切换写入，格式 fps=/scale=）
+                # 缺省 30fps / 1280x720（scale 保持宽高比）
+                cfg = {"fps": "30", "scale": "1280:-2"}
+                try:
+                    for line in open(os.path.expanduser("~/.termish-screen.conf")):
+                        line = line.strip()
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            if k in cfg and v.strip():
+                                cfg[k] = v.strip()
+                except Exception:
+                    pass
+                return cfg
+
+            def make_args(cfg):
+                # fps 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
+                # -framerate 无效——fps 滤镜才是实际限帧（120fps 会把解码器灌爆）
+                vf = "fps=" + cfg["fps"] + ",scale=" + cfg["scale"]
+                common = ["-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
+                          "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
+                          # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
+                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
+                          "-pix_fmt", "yuv420p", "-g", "60",
+                          "-threads", "1",
+                          "-f", "mpegts", "-flush_packets", "1", "-"]
+                if IS_MAC:
+                    # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
+                    return ["-f", "avfoundation", "-capture_cursor", "1",
+                            "-pixel_format", "uyvy422", "-i", "1:none"] + common
                 # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
-                ARGS = ["-hide_banner", "-loglevel", "error", "-f", "x11grab", "-framerate", "30",
-                        "-i", os.environ.get("DISPLAY", ":0") + ".0",
-                        "-vf", "fps=30,scale=1280:-2", "-c:v", "libx264", "-preset", "ultrafast",
-                        "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
-                        "-pix_fmt", "yuv420p", "-g", "60",
-                        "-threads", "1",
-                        "-f", "mpegts", "-flush_packets", "1", "-"]
+                return ["-f", "x11grab", "-i", os.environ.get("DISPLAY", ":0") + ".0"] + common
+
             lock = threading.Lock()
             active = [None]  # 当前活跃连接（新连接优先：重连时踢掉旧会话残留）
             active_ff = [None]  # 当前活跃 ffmpeg（kick 时直接 SIGKILL，不等旧线程收尾）
@@ -479,7 +535,7 @@ class ScreenSession(
                         time.sleep(3.0)
                     conn.setblocking(False)
                     errf = open(ERRLOG, "a")
-                    ff = subprocess.Popen([FF] + ARGS, stdout=subprocess.PIPE, stderr=errf)
+                    ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=errf)
                     with lock:
                         active_ff[0] = ff
                     started = time.time()
@@ -685,6 +741,8 @@ class ScreenSession(
               exit 1
             fi
             fi
+            # 版本文件：客户端读流脚本检测 relay 版本匹配
+            echo 3 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**

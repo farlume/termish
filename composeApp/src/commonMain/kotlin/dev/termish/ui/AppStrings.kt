@@ -403,6 +403,14 @@ data class ScreenStrings(
     val installFailed: String,
     /** 小窗服务缺失提示（点击进全屏看安装引导）。 */
     val pipNeedInstall: String,
+    /** relay 版本过旧时的升级提示。 */
+    val serviceUpgradeHint: String,
+    /** 画质档位：流畅。 */
+    val qualityLow: String,
+    /** 画质档位：标清。 */
+    val qualityMid: String,
+    /** 画质档位：高清。 */
+    val qualityHigh: String,
     /** 全屏返回按钮：就地全屏（小窗展开）时收起回终端。 */
     val collapse: String,
     /** 全屏返回按钮：屏幕 tab 模式返回上一 tab。 */
@@ -788,6 +796,10 @@ private val EnStrings =
                 installingService = "Installing…",
                 installFailed = "Installation failed — check the log below and retry.",
                 pipNeedInstall = "Service not installed",
+                serviceUpgradeHint = "The streaming service is outdated — tap install to upgrade it (your settings are kept).",
+                qualityLow = "Smooth",
+                qualityMid = "Standard",
+                qualityHigh = "HD",
                 collapse = "Collapse",
                 back = "Back",
             ),
@@ -1143,6 +1155,10 @@ private val ZhStrings =
                 installingService = "正在安装…",
                 installFailed = "安装失败——查看下方日志后重试。",
                 pipNeedInstall = "服务未安装",
+                serviceUpgradeHint = "推流服务版本过旧——点安装升级到最新（已有配置保留）。",
+                qualityLow = "流畅",
+                qualityMid = "标清",
+                qualityHigh = "高清",
                 collapse = "收起",
                 back = "返回",
             ),

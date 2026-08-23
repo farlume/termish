@@ -198,6 +198,8 @@ fun TerminalScreen(
     onReconnectScreenForHost: (Host) -> Unit = {},
     /** 屏幕推流服务安装（引导卡片按钮；按主机定位会话）。 */
     onInstallScreenService: (Host) -> Unit = {},
+    /** 全屏推流参数切换（帧率/画质）：写远端配置后重建会话生效。 */
+    onStreamConfigChange: (Host, Int, String) -> Unit = { _, _, _ -> },
     /** 终端页小窗：当前主机活跃屏幕会话的 uiState（null = 不显示）；点击 = 就地全屏。 */
     screenPip: ScreenUiState? = null,
     /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
@@ -256,6 +258,9 @@ fun TerminalScreen(
                         onCloseScreenPip = onCloseScreenPip,
                         onInstallScreenService = onInstallScreenService,
                         onReconnectScreenForHost = onReconnectScreenForHost,
+                        onStreamConfigChange = { host, fps, scale ->
+                            onStreamConfigChange(host, fps, scale)
+                        },
                     )
                 is SessionTab.Sftp ->
                     SftpContent(
@@ -321,6 +326,11 @@ fun TerminalScreen(
                     onInstallService = { onInstallScreenService(pipHost) },
                     onClose = { pipFullscreen = false },
                     statusBarInsetTop = lastStatusBarTop,
+                    // ⚠️ 之前漏传（默认空实现）——全屏切档位回调从未到达 AppRoot
+                    onStreamConfigChange = { fps, scale ->
+                        onStreamConfigChange(pipHost, fps, scale)
+                    },
+                    onFpsIndex = { fps -> screenPip?.streamFps = fps },
                     modifier = Modifier.fillMaxSize().zIndex(100f),
                 )
             }
@@ -358,6 +368,8 @@ private fun TerminalBody(
     onInstallScreenService: (Host) -> Unit = {},
     /** 屏幕重连（就地全屏用，按主机定位会话）。 */
     onReconnectScreenForHost: (Host) -> Unit = {},
+    /** 全屏推流参数切换（帧率/画质）：写远端配置后重建会话生效。 */
+    onStreamConfigChange: (Host, Int, String) -> Unit = { _, _, _ -> },
 ) {
     val s = LocalAppStrings.current
     val clipboard = LocalClipboardManager.current
@@ -800,6 +812,7 @@ private fun TerminalBody(
                             installing = screenPip.installing,
                             installLog = screenPip.installLog,
                             ffmpegMissing = screenPip.ffmpegMissing,
+                            needsUpgrade = screenPip.relayNeedsUpgrade,
                             onInstall = { onInstallScreenService(controller.host) },
                             modifier =
                                 Modifier.padding(

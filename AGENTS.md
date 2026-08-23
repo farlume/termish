@@ -51,7 +51,7 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
   literals in new UI code
 - User-facing strings go through `AppStrings` (Chinese + English), never hardcoded
 - **Code style**: Kotlin official style, `import` 短名（禁止全限定名调用）、
-  import 按字母序（`.editorconfig` 已设基线；仓库公开前接入 ktlint 统一格式化）
+  import 按字母序（`.editorconfig` 基线 + ktlint 已接入，`make lint-kt` 检查/`ktlintFormat` 自动修）
 - Screenshots in `docs/screenshots/` follow `<topic>-{en,zh}.png` naming
   (topic = hosts/settings/theme/sftp/terminal-ssh/terminal-herdr/…;
   en = English UI, zh = Chinese UI, every topic has a matching pair);
@@ -106,6 +106,14 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
   全出在批量替换；批量改完逐处确认替换点语义
 - **破坏性环境操作先说明影响**：`pm clear`（清模拟器数据）、停 demo 服务器
   等操作会丢状态，执行前告知用户
+- **ktlint 工作流（防反复失败）**：改完代码先 `./gradlew ktlintFormat`
+  （自动修复 import 排序/缩进/换行/unused import），再 `./gradlew ktlintCheck`
+  确认——**禁止直接 check**（可自动修复的格式问题会导致反复失败，历史教训：
+  import 未排序、unused import 残留、Kotlin 字符串里 `${'$'}` 字面转义写错
+  显示变量名）。提交前 `make lint-kt` 必过（CI 同款）
+- **Kotlin 字符串插值**：python 批量脚本写入 Kotlin 源码时，模板串里的 `$var`/
+  `${expr}` 直接写（python 无 `$` 语义），**不要用 `${'$'}` 转义**——那会让
+  用户看到字面变量名（历史教训：帧率档位显示 `$fps`）
 
 ## E2E 场景测试（AI 执行）
 
