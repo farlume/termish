@@ -37,7 +37,11 @@ class ScreenStreamUdpSessionTest {
                 assertTrue(first != null && first.contentEquals(SCREEN_RELOAD_MAGIC), "首包应为 reload magic")
                 // 后续包为普通心跳
                 val second = receivePacket(relay)
-                assertTrue(second != null && second.contentEquals(SCREEN_HEARTBEAT_MAGIC), "后续包应为心跳 magic")
+                // 后续包为带丢帧反馈的心跳（THB\x01 + 1 字节丢帧率，初始 0%）
+                assertTrue(
+                    second != null && second!!.size == 5 && second!!.contentEquals(heartbeatWithLoss(0)),
+                    "后续包应为带反馈的心跳",
+                )
             } finally {
                 session.close()
                 relay.close()

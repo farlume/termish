@@ -319,7 +319,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 8
+        const val RELAY_VERSION = 9
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -334,11 +334,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=8，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=9，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "8" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=8" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "9" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=9" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -474,12 +474,13 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
-            RELAY_VERSION = 8
+            RELAY_VERSION = 9
             TCP_PORT = ${'$'}PORT
             UDP_PORT = ${'$'}PORT + 1
             FF = "${'$'}FF_REAL"
             HEARTBEAT_MAGIC = b"THB\x01"
             RELOAD_MAGIC = b"THB\x02"
+            AUD_TYPE = 9  # AUD NAL 类型（帧对齐切分标记；模块级：class 作用域不进方法）
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
             # 目录不存在时 open() 抛异常 → ffmpeg 不会被拉起（用户反馈：
             # Ubuntu 端口监听但推流 0 字节）
@@ -509,17 +510,18 @@ class ScreenSession(
                           "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
                           # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
                           # keyint=30：1s 关键帧间隔（30fps）——解码器任何重同步最多等 1s
-                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=30",
+                          # aud=1：每帧前发 AUD NAL，relay 按它切帧对齐块
+                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=30:aud=1",
                           "-pix_fmt", "yuv420p", "-g", "30",
                           # 显式无 B 帧（ultrafast 默认即 0，写死保险：B 帧需等参考帧，
                           # 会引入编码端重排延迟）
                           "-bf", "0",
                           "-threads", "1",
-                          "-f", "mpegts",
-                          # muxdelay/muxpreload 0：去掉 mpegts muxer 默认 0.7s 初始解码延迟，
-                          # 与 flush_packets 叠加，包到达即写出（低延迟实时画面）
-                          "-muxdelay", "0", "-muxpreload", "0",
-                          "-flush_packets", "1", "-"]
+                          # 裸 Annex-B（无 TS 容器）+ AUD 分帧：每个帧前有 AUD NAL，
+                          # relay 按 AUD 切块 → 一个 UDP 重组块 = 一个完整帧
+                          # （客户端 MediaCodec 直解，无 ExoPlayer/HTTP/容器层）
+                          "-bsf:v", "dump_extra=freq=keyframe",
+                          "-f", "h264", "-"]
                 if IS_MAC:
                     # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
                     return ["-f", "avfoundation", "-capture_cursor", "1",
@@ -549,12 +551,18 @@ class ScreenSession(
             LAST_HB = [0.0]
 
             class UdpStream:
-                # ffmpeg 抓屏 + 分片 UDP 发送。漫游（地址变化）只更新 addr 不重启
+                # ffmpeg 抓屏 + 帧对齐分片 UDP 发送。漫游（地址变化）只更新 addr 不重启
                 # ffmpeg，画面连续；心跳超时才停（释放抓屏设备）。
+                # 帧对齐：缓冲按 AUD NAL（x264 aud=1，每帧前发）切块，一个 UDP 重组块
+                # = 一个完整视频帧——丢一片只丢一帧（下一个 IDR 恢复），不是 TS 流打洞。
                 def __init__(self, udp, addr):
                     self.udp = udp
                     self.addr = addr
                     self.stopped = False
+                    # 发送速率上限（字节/秒，AIMD 自适应：心跳丢帧率反馈驱动，
+                    # 初始 12MB/s 满速；丢帧>15% ×0.7、<5% ×1.15）
+                    self.rate = 12_000_000
+                    self.last_rate_adj = 0.0
                     self.errf = open(ERRLOG, "a")
                     self.ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=self.errf)
                     self.frag_id = 0
@@ -565,10 +573,47 @@ class ScreenSession(
                 def start(self):
                     threading.Thread(target=self.pump, daemon=True).start()
 
+                def send_frame(self, frame):
+                    # 一个完整帧 → 一组分片（同一 frag_id）。发送节奏按【速率】控制
+                    # （非每 8 片硬歇 1ms）：静止帧只有 1-2 片不歇，运动大帧按字节速率
+                    # 限到 ~12MB/s——每 8 片歇 1ms 会把 600 片的 IDR 帧拖 75ms，
+                    # 单线程 pump 读-切-发串行，帧延迟雪崩（真机反馈：滑动黑块 + 卡顿）
+                    import time as _t
+                    _start = _t.monotonic()
+                    _budget = 8 * 1200 / float(self.rate)  # 8 片 ≈ 9.6KB 的最大耗时
+                    for i, f in enumerate(make_fragments(frame, 1200, self.frag_id)):
+                        self.frag_id += 1
+                        self.udp.sendto(f, self.addr)
+                        if i % 8 == 7:
+                            _spent = _t.monotonic() - _start
+                            _target = (i // 8) * _budget
+                            if _spent < _target:
+                                time.sleep(_target - _spent)
+                    self.sent += len(frame)
+                    self.last_data = time.time()
+
+                def find_aud_starts(self, buf):
+                    # 扫描 AUD NAL（start code 后首字节 & 0x1F == 9）的偏移
+                    starts = []
+                    i = 0
+                    n = len(buf)
+                    while i + 4 < n:
+                        if buf[i] == 0 and buf[i+1] == 0 and buf[i+2] == 1 and (buf[i+3] & 0x1F) == AUD_TYPE:
+                            starts.append(i)
+                            i += 4
+                        else:
+                            i += 1
+                    return starts
+
                 def pump(self):
+                    buf = b""
+                    # ⚠️ 用 os.read（原始管道读：有多少读多少）——python file.read(65536)
+                    # 是凑满语义，静止画面低码率时要攢 ~20s 才返回一次（64KB/25B每帧），
+                    # 表现为画面冻结 + 突发倾泻（真机反馈：滑动黑块 + 卡顿）
+                    self.ff_stdout_fd = self.ff.stdout.fileno()
                     try:
                         while not self.stopped:
-                            r, _, _ = select.select([self.ff.stdout], [], [], 1.0)
+                            r, _, _ = select.select([self.ff_stdout_fd], [], [], 1.0)
                             if not r:
                                 # 自愈看门狗：ffmpeg 卡死无输出（首帧 45s / 中途 20s）
                                 now = time.time()
@@ -577,19 +622,24 @@ class ScreenSession(
                                         continue
                                     break
                                 continue
-                            data = self.ff.stdout.read(65536)
+                            data = os.read(self.ff_stdout_fd, 262144)
                             if not data:
                                 break
-                            for i, f in enumerate(make_fragments(data, 1200, self.frag_id)):
-                                self.frag_id += 1
-                                self.udp.sendto(f, self.addr)
-                                # 发送节奏：每 8 片歇 1ms，避免 55 片突发打满
-                                # 对端接收缓冲导致内核丢包（WiFi 实测丢 ~60%，
-                                # 整块丢弃后 TS 流全是洞，播放器永卡 BUFFERING）
-                                if i % 8 == 7:
-                                    time.sleep(0.001)
-                            self.sent += len(data)
-                            self.last_data = time.time()
+                            buf += data
+                            # 按 AUD 边界切帧：从第 2 个 AUD 起每个 AUD 开新帧
+                            # （第 1 个 AUD 之前的字节属于“开流半帧”，丢弃）
+                            starts = self.find_aud_starts(buf)
+                            if len(starts) >= 2:
+                                for j in range(len(starts) - 1):
+                                    self.send_frame(buf[starts[j]:starts[j+1]])
+                                buf = buf[starts[-1]:]
+                            elif len(buf) > 4 * 1024 * 1024:
+                                # 安全阀：长时间无 AUD（非 x264 源）直接整段发
+                                self.send_frame(buf)
+                                buf = b""
+                            elif starts:
+                                # 只有一个 AUD 且在缓冲中后段：丢弃 AUD 之前的半帧字节
+                                buf = buf[starts[0]:]
                     except Exception:
                         pass
                     finally:
@@ -657,17 +707,28 @@ class ScreenSession(
                     if data.startswith(RELOAD_MAGIC):
                         # 重载（新会话首包）：重启 ffmpeg 重读推流参数——画质/帧率
                         # 切换的生效路径。漫游语义下旧 ffmpeg 永不重启，conf 写了
-                        # 也读不到（UDP 版每次连接不再自动换新 ffmpeg）
+                        # 也读不到（UDP 版每次连接不再自动新 ffmpeg）。
+                        # ⚠️ 不在 LOCK 内做阻塞 stop：stop() 里 ff.wait(5) 会与
+                        # pump 线程 finally 的 LOCK 清理互等（实测卡 5-10s、
+                        # reload 后拉不起流）——先锁内取旧流引用，锁外停
                         with LOCK:
-                            if STREAM[0] is not None:
-                                STREAM[0].stop()
-                                STREAM[0] = None
+                            old = STREAM[0]
+                            STREAM[0] = None
                             CLIENT[0] = addr
-                            s = UdpStream(udp, addr)
-                            s.start()
-                            STREAM[0] = s
+                        if old is not None:
+                            old.stop()
+                        s = UdpStream(udp, addr)
+                        s.start()
+                        with LOCK:
+                            if STREAM[0] is None:
+                                STREAM[0] = s
                             LAST_HB[0] = now
                     elif data.startswith(HEARTBEAT_MAGIC):
+                        # 丢帧反馈（可选第 5 字节）：丢帧率%驱动 AIMD 速率自适应——
+                        # >15% 降速一档（×0.7）、<5% 且未满速则升一档，每秒至多一步。
+                        # 打破「高码率洪流打满 WiFi 接收缓冲→持续丢帧」恶性循环
+                        #（实测 120fps@1920 运动时丢 30-47%/秒）
+                        loss_pct = data[4] if len(data) > 4 else 0
                         with LOCK:
                             if STREAM[0] is None:
                                 CLIENT[0] = addr
@@ -678,6 +739,15 @@ class ScreenSession(
                                 # 漫游：地址变化，更新目标地址（ffmpeg 不重启，画面连续）
                                 CLIENT[0] = addr
                                 STREAM[0].addr = addr
+                            if STREAM[0] is not None:
+                                now2 = time.time()
+                                if now2 - getattr(STREAM[0], 'last_rate_adj', 0) >= 1.0:
+                                    STREAM[0].last_rate_adj = now2
+                                    if loss_pct > 15:
+                                        STREAM[0].rate = max(2_000_000, int(STREAM[0].rate * 0.7))
+                                        STREAM[0].errf.write("[RATE] loss=%d%% -> %d B/s\n" % (loss_pct, STREAM[0].rate))
+                                    elif loss_pct < 5 and STREAM[0].rate < 12_000_000:
+                                        STREAM[0].rate = min(12_000_000, int(STREAM[0].rate * 1.15))
                             LAST_HB[0] = now
                 # 心跳超时（60s）→ 停 stream 释放抓屏设备；断网恢复后心跳重新拉 ffmpeg
                 with LOCK:
@@ -755,7 +825,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 8 > "${'$'}HOME/.termish-screen.version"
+            echo 9 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**

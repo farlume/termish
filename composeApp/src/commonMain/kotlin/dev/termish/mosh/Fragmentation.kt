@@ -44,14 +44,20 @@ internal class FragmentAssembly {
     private var arrived = 0
     private var total = -1
 
+    /** 新 id 顶掉未完成包时置位（丢包拖垮标志，供上层丢帧统计；完成时清）。 */
+    var lastAbandoned = false
+        private set
+
     fun addFragment(frag: Fragment): Boolean {
         if (currentId != frag.id) {
+            lastAbandoned = currentId != null && (total == -1 || arrived < total)
             fragments = arrayOfNulls(frag.num + 1)
             fragments[frag.num] = frag
             arrived = 1
             total = -1
             currentId = frag.id
         } else {
+            lastAbandoned = false
             if (fragments.size > frag.num && fragments[frag.num] != null) {
                 // 重复分片忽略
             } else {

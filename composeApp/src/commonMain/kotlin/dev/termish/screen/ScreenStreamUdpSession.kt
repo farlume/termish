@@ -20,6 +20,13 @@ val SCREEN_HEARTBEAT_MAGIC = byteArrayOf(0x54, 0x48, 0x42, 0x01) // "THB\x01"
 val SCREEN_RELOAD_MAGIC = byteArrayOf(0x54, 0x48, 0x42, 0x02) // "THB\x02"
 
 /**
+ * 带丢帧反馈的心跳：THB\x01 + 1 字节丢帧率（percent，0-100）。
+ * relay 据此自适应发送速率（高丢帧→降速→接收缓冲不打满→丢帧率回落），
+ * 打破「高码率洪流持续打满 WiFi 缓冲→持续丢帧」的恶性循环。
+ */
+fun heartbeatWithLoss(lossPercent: Int): ByteArray = byteArrayOf(0x54, 0x48, 0x42, 0x01, lossPercent.coerceIn(0, 100).toByte())
+
+/**
  * 屏幕推流的 UDP 漫游会话（方案 A）：视频流从 SSH/TCP 搬到 UDP，
  * 获得 mosh 式的漫游能力——断网不显示断开、网络恢复后续传。
  *
@@ -71,6 +78,19 @@ class ScreenStreamUdpSession(
     private var lastHopAt = 0L
     private var lastReportedLostSecs = 0
 
+    // 重组完整/丢弃计数（喂心跳丢帧反馈；不打印——高频路径）
+    @Volatile private var fragOk = 0
+
+    @Volatile private var fragDrop = 0
+
+    /** 最近一次统计窗口的丢帧率（percent，喂心跳反馈）。 */
+    private fun recentLossPercent(): Int {
+        val ok = fragOk
+        val drop = fragDrop
+        val total = ok + drop
+        return if (total == 0) 0 else drop * 100 / total
+    }
+
     /** 首包发 reload（重启远端 ffmpeg 重读推流参数；发送成功后清位）。 */
     @Volatile private var reloadPending = true
 
@@ -92,16 +112,39 @@ class ScreenStreamUdpSession(
             closeSocketLocked()
             val s = MoshUdpSocket(ip, port)
             socket = s
+            // 接收/处理双阶段：socket 线程只做 receive + 入队（每秒上千包的热路径，
+            // 重组/解压/zlib 移到独立协程——单线程串行会在消费慢时打满 socket
+            // 缓冲，内核 RcvbufErrors 实测每秒 +80 丢包）
+            val inbound = java.util.concurrent.LinkedBlockingQueue<ByteArray>(2048)
+            scope.launch(ioDispatcher()) {
+                try {
+                    while (active && coroutineContext.isActive) {
+                        val dg = s.receive(1000) ?: continue
+                        lastHeard = nowMs()
+                        // 丢旧保新：处理跟不上时丢旧分片（半可靠语义，丢片=丢一帧）
+                        while (!inbound.offer(dg.data)) {
+                            if (inbound.poll() == null) break
+                        }
+                    }
+                } catch (_: Exception) {
+                    // socket 关闭或错误：心跳协程会按需重建
+                }
+            }
             receiveJob =
                 scope.launch(ioDispatcher()) {
                     try {
                         while (active && coroutineContext.isActive) {
-                            val dg = s.receive(1000) ?: continue
-                            lastHeard = nowMs()
-                            receiver.onDatagram(dg.data)?.let(onVideoPacket)
+                            val data = inbound.poll(1, java.util.concurrent.TimeUnit.SECONDS) ?: continue
+                            val pkt = receiver.onDatagram(data)
+                            if (pkt != null) {
+                                fragOk++
+                                onVideoPacket(pkt)
+                            } else if (receiver.lastAbandoned) {
+                                fragDrop++
+                                receiver.lastAbandoned = false
+                            }
                         }
                     } catch (_: Exception) {
-                        // socket 关闭或错误：心跳协程会按需重建
                     }
                 }
         }
@@ -120,7 +163,7 @@ class ScreenStreamUdpSession(
                             if (reloadPending) {
                                 SCREEN_RELOAD_MAGIC
                             } else {
-                                SCREEN_HEARTBEAT_MAGIC
+                                heartbeatWithLoss(recentLossPercent())
                             }
                         runCatching { s.send(pkt) }
                         reloadPending = false

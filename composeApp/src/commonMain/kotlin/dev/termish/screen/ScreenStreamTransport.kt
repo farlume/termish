@@ -41,6 +41,9 @@ class ScreenStreamSender(
 class ScreenStreamReceiver {
     private val assembly = FragmentAssembly()
 
+    /** 调试：最近一次喂入是否顶掉了未完成块（丢包拖垮；上层消费后清位）。 */
+    var lastAbandoned = false
+
     /**
      * 喂入一个数据报。
      *
@@ -54,7 +57,11 @@ class ScreenStreamReceiver {
             } catch (_: Exception) {
                 return null
             }
-        if (!assembly.addFragment(frag)) return null
+        if (!assembly.addFragment(frag)) {
+            lastAbandoned = assembly.lastAbandoned
+            return null
+        }
+        lastAbandoned = false
         return assembly.assembleBytes()
     }
 }
