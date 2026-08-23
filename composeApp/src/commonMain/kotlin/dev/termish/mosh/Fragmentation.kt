@@ -69,12 +69,15 @@ internal class FragmentAssembly {
         return total != -1 && arrived == total
     }
 
-    fun assembly(): TransportInstruction {
+    fun assembly(): TransportInstruction = TransportInstruction.parse(assembleBytes())
+
+    /** 通用：返回重组后解压的原始字节（视频流等非 SSP 负载用，由调用方自行解析）。 */
+    fun assembleBytes(): ByteArray {
         val encoded = fragments.joinToByteArray()
         fragments = arrayOfNulls(0)
         arrived = 0
         total = -1
-        return TransportInstruction.parse(zlibDecompress(encoded))
+        return zlibDecompress(encoded)
     }
 
     private fun Array<Fragment?>.joinToByteArray(): ByteArray {
@@ -89,12 +92,13 @@ internal class FragmentAssembly {
     }
 }
 
-/** 发端分片：header 变化才递增 instruction id；内容按 MTU 切片。 */
+/** 发端分片：SSP 用同 header 复用 instruction id；通用负载每次新 id。内容按 MTU 切片。 */
 internal class Fragmenter {
     private var nextInstructionId = 0uL
     private var lastInstruction: TransportInstruction? = null
     private var lastMtu = -1
 
+    /** SSP 专用：TransportInstruction 分片（同 header 复用 instruction id，重发去重）。 */
     fun makeFragments(
         inst: TransportInstruction,
         mtu: Int,
@@ -110,15 +114,33 @@ internal class Fragmenter {
         }
         lastInstruction = inst
         lastMtu = usable
+        return sliceToFragments(inst.serialize(), mtu, nextInstructionId)
+    }
 
-        val payload = zlibCompress(inst.serialize())
+    /** 通用：任意 payload 分片（每个包分配新 instruction id，无 SSP 复用语义）。 */
+    fun makeFragments(
+        payload: ByteArray,
+        mtu: Int,
+    ): List<Fragment> {
+        nextInstructionId++
+        return sliceToFragments(payload, mtu, nextInstructionId)
+    }
+
+    /** 压缩 + 按 MTU 切片（公共逻辑）。 */
+    private fun sliceToFragments(
+        payload: ByteArray,
+        mtu: Int,
+        id: ULong,
+    ): List<Fragment> {
+        val usable = mtu - Fragment.HEADER_LEN
+        val compressed = zlibCompress(payload)
         val out = ArrayList<Fragment>()
         var num = 0
         var off = 0
-        while (off < payload.size) {
+        while (off < compressed.size) {
             check(num < 0x8000) { "分片数超限（fragment_num 高位是 final 标志位）" }
-            val end = minOf(off + usable, payload.size)
-            out.add(Fragment(nextInstructionId, num++, end == payload.size, payload.copyOfRange(off, end)))
+            val end = minOf(off + usable, compressed.size)
+            out.add(Fragment(id, num++, end == compressed.size, compressed.copyOfRange(off, end)))
             off = end
         }
         return out
