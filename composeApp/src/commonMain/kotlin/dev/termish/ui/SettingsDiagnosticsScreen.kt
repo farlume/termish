@@ -42,7 +42,17 @@ fun SettingsDiagnosticsScreen(
     onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current
-    var logPath by remember { mutableStateOf(TermLog.logFilePath) }
+    // TermLog.diagnosticsEnabled 是普通属性（非 Compose state），赋值不触发重组：
+    // 必须用本地 state 承接，点击开关才能即时刷新（历史教训：点击后视觉不变，
+    // 退出重进页面才更新）。
+    var logEnabled by remember { mutableStateOf(enabled) }
+
+    fun setEnabled(value: Boolean) {
+        logEnabled = value
+        onChangeEnabled(value)
+    }
+    // 不 remember：每次重组读最新（开关开启后日志路径才出现）
+    val logPath = TermLog.logFilePath
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
@@ -62,7 +72,7 @@ fun SettingsDiagnosticsScreen(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable { onChangeEnabled(!enabled) }
+                    .clickable { setEnabled(!logEnabled) }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -72,7 +82,7 @@ fun SettingsDiagnosticsScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
                     modifier = Modifier.weight(1f),
                 )
-                Switch(checked = enabled, onCheckedChange = { onChangeEnabled(it) })
+                Switch(checked = logEnabled, onCheckedChange = { setEnabled(it) })
             }
             Text(
                 s.settingsDiagnosticsHint,
@@ -87,7 +97,7 @@ fun SettingsDiagnosticsScreen(
                 onClick = {
                     shareDiagnosticLogs()
                 },
-                enabled = enabled && TermLog.logFilePath != null,
+                enabled = logEnabled && logPath != null,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
                 Text(s.settingsDiagnosticsExport)
