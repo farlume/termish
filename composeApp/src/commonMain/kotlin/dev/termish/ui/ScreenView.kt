@@ -63,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
@@ -135,6 +134,10 @@ fun ScreenContent(
     onStreamConfigChange: (fps: Int, scale: String) -> Unit = { _, _ -> },
     /** 帧率档位本地更新（异步重建前 UI 先反馈）。 */
     onFpsIndex: (Int) -> Unit = {},
+    /** 视频面是否上真 SurfaceView（展开动画期间 false，黑底占位——动画把整个
+     * 容器从小窗尺寸 graphicsLayer 缩放到全屏，部分设备视频表面不跟随缩放，
+     * 画面卡成小窗尺寸的「亮点」/黑屏；动画结束后再建面，surface 永远全尺寸） */
+    videoEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
@@ -177,6 +180,10 @@ fun ScreenContent(
     var videoViewportSize by remember { mutableStateOf(IntSize.Zero) }
     var virtualMouseOpen by remember { mutableStateOf(false) }
     var rightControlAreaPx by remember { mutableFloatStateOf(0f) }
+    // 未被右缘钳制的累积 anchor X（NaN=未初始化，首次拖拽从当前 anchor 同步）：
+    // 拖过右缘的过冲量必须持久化，否则 overlap 每帧只剩当次 delta，视频推不开
+    // （用户反馈：拖到右缘卡住，光标点不到视频最右列——对齐 ToDesk 整体左移效果）
+    var virtualMouseRawX by remember { mutableFloatStateOf(Float.NaN) }
     var virtualMouseAnchorPosition by remember { mutableStateOf<Offset?>(null) }
 
     val mousePanelWidthPx = with(density) { ScreenControlDimens.MousePanelWidth.toPx() }
@@ -196,6 +203,7 @@ fun ScreenContent(
         if (!virtualMouseOpen) return
         virtualMouseOpen = false
         rightControlAreaPx = 0f
+        virtualMouseRawX = Float.NaN
         virtualMouseAnchorPosition = null
         TermLog.i("screen") { "virtual mouse closed" }
     }
@@ -288,12 +296,15 @@ fun ScreenContent(
                 viewportHeight = viewportSize.height.toFloat(),
                 controlHeight = mouseControlHeightPx,
                 topInset = mousePanelTopInsetPx,
-                // 与 onMovePanel 一致：面板右边缘贴视口右缘（完整可见），
-                // 避免 effect 重启时 anchor 跳变导致面板闪动
+                // 与 onMovePanel 一致：面板右边缘贴视口右缘（完整可见，放大态
+                // 同样如此），避免 effect 重启时 anchor 跳变导致面板闪动
                 viewportWidth =
                     (viewportSize.width.toFloat() - mouseControlWidthPx).coerceAtLeast(0f),
             )
         virtualMouseAnchorPosition = Offset(clamped.x, clamped.y)
+        // 重钳制后回同步 rawX：保持不变式 overlap = rawX - maxAnchorX，
+        // 否则 effect 重启（旋转/首帧尺寸上报）后第一次拖拽 rawX 漂移、视频跳变
+        virtualMouseRawX = clamped.x + rightControlAreaPx
     }
     Column(
         Modifier
@@ -308,14 +319,17 @@ fun ScreenContent(
         ) {
             // 右侧停靠时只把原尺寸画面整体左移并裁掉左侧，播放器容器宽度不变，
             // 因而不会重新 Fit 缩小；腾出的右侧黑区专门放虚拟鼠标。
+            // ⚠️ 容器保持全宽且不加 clipToBounds：左移后越界的部分由屏幕边界自然
+            // 裁剪。「被祖先 clip 的 SurfaceView」在部分设备上表面内容会被缩放而
+            // 不是裁剪（用户反馈：推右时画面跟着缩小）——屏幕边界裁 SurfaceView
+            // 是所有设备上最成熟的路径。
             val fullVideoWidthPx = viewportSize.width.coerceAtLeast(1).toFloat()
             val visibleVideoWidthPx = (fullVideoWidthPx - rightControlAreaPx).coerceAtLeast(1f)
             Box(
                 Modifier
                     .align(Alignment.TopStart)
                     .fillMaxHeight()
-                    .width(with(density) { visibleVideoWidthPx.toDp() })
-                    .clipToBounds(),
+                    .width(with(density) { fullVideoWidthPx.toDp() }),
             ) {
                 Box(
                     Modifier
@@ -324,23 +338,25 @@ fun ScreenContent(
                         .width(with(density) { fullVideoWidthPx.toDp() })
                         .onSizeChanged { videoViewportSize = it },
                 ) {
-                    state.player?.let { p ->
-                        ScreenVideoSurface(
-                            p,
-                            Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    // 以左上角为缩放原点：translation 即画面左上角偏移，钳制边界与 panOffset 语义一致
-                                    transformOrigin = TransformOrigin(0f, 0f)
-                                    scaleX = zoomScale
-                                    scaleY = zoomScale
-                                    translationX = panOffset.x
-                                    translationY = panOffset.y
-                                },
-                            // 键盘完全到位后视频才贴底（与 Spacer 同步，避免弹出动画
-                            // 期间先下拉再顶起——用户反馈）
-                            alignBottom = keyboardOpen && imeHeightFixed > 0,
-                        )
+                    if (videoEnabled) {
+                        state.player?.let { p ->
+                            ScreenVideoSurface(
+                                p,
+                                Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        // 以左上角为缩放原点：translation 即画面左上角偏移，钳制边界与 panOffset 语义一致
+                                        transformOrigin = TransformOrigin(0f, 0f)
+                                        scaleX = zoomScale
+                                        scaleY = zoomScale
+                                        translationX = panOffset.x
+                                        translationY = panOffset.y
+                                    },
+                                // 键盘完全到位后视频才贴底（与 Spacer 同步，避免弹出动画
+                                // 期间先下拉再顶起——用户反馈）
+                                alignBottom = keyboardOpen && imeHeightFixed > 0,
+                            )
+                        }
                     }
                 }
             }
@@ -699,32 +715,43 @@ fun ScreenContent(
                         },
                         onMovePanel = { delta ->
                             val current = virtualMouseAnchorPosition ?: return@VirtualMousePanel
-                            val candidate = ScreenPoint(current.x + delta.x, current.y + delta.y)
-                            // 右侧渐进挤开：面板右边缘超出视口多少，视频就左移多少
-                            val panelRight = candidate.x + mouseControlWidthPx
                             val viewportRight = viewportSize.width.toFloat()
-                            val overlap =
-                                (panelRight - viewportRight).coerceAtLeast(0f).coerceAtMost(
+                            val maxAnchorX =
+                                (viewportRight - mouseControlWidthPx).coerceAtLeast(0f)
+                            val unpushedFrame = screenFrame(state, 0f)
+                            // rawX 全程累加 delta（不被右缘 clamp 吃掉）：超过 maxAnchorX
+                            // 的部分 = 视频左移量。推量上限 = 把画面右缘推到面板左缘所需
+                            // 的平移量：未放大时恰为面板宽；放大后画面右缘在视口外、上限
+                            // 自动变大——鼠标贴近右边时画面持续平移过来，鼠标永不滑出屏幕
+                            val rawX =
+                                (if (virtualMouseRawX.isNaN()) current.x else virtualMouseRawX) +
+                                    delta.x
+                            val push =
+                                computeVirtualMousePush(
+                                    rawX,
+                                    viewportRight,
                                     mouseControlWidthPx,
+                                    unpushedFrame.right,
                                 )
-                            rightControlAreaPx = overlap
-                            val targetFrame = screenFrame(state, overlap)
+                            virtualMouseRawX =
+                                rawX.coerceIn(
+                                    unpushedFrame.left,
+                                    maxAnchorX + (unpushedFrame.right - maxAnchorX).coerceAtLeast(0f),
+                                )
+                            rightControlAreaPx = push.overlapPx
+                            val targetFrame = screenFrame(state, push.overlapPx)
                             val clamped =
                                 clampVirtualMouseAnchor(
-                                    proposed = candidate,
+                                    proposed = ScreenPoint(push.anchorX, current.y + delta.y),
                                     frame = targetFrame,
                                     viewportHeight = viewportSize.height.toFloat(),
                                     controlHeight = mouseControlHeightPx,
                                     topInset = mousePanelTopInsetPx,
                                     // 面板完整可见：anchor（箭头热点）上界 = 视口宽 - 控制区总宽，
-                                    // 即面板右边缘最多贴视口右边缘——渐进推走时面板不滑出屏幕。
-                                    // 注意：与 LaunchedEffect 的 clamp 保持一致（否则 effect 重启时
-                                    // anchor 跳变、面板闪动）。
-                                    viewportWidth =
-                                        (
-                                            viewportSize.width.toFloat() -
-                                                mouseControlWidthPx
-                                        ).coerceAtLeast(0f),
+                                    // 即面板右边缘最多贴视口右边缘——推开的过冲由视频左移承接，
+                                    // 面板不滑出屏幕。与 LaunchedEffect 的 clamp 保持一致
+                                    // （否则 effect 重启时 anchor 跳变、面板闪动）。
+                                    viewportWidth = maxAnchorX,
                                 )
                             virtualMouseAnchorPosition = Offset(clamped.x, clamped.y)
                         },

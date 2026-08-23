@@ -2,6 +2,7 @@ package dev.termish.screen
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -82,6 +83,30 @@ class H264StreamTest {
     fun `type names`() {
         assertEquals("SPS", H264Stream.typeName(7))
         assertEquals("IDR", H264Stream.typeName(5))
+    }
+
+    @Test
+    fun `containsIdr finds idr with 3 and 4 byte start codes`() {
+        val sps = sc3(0x67, 0x42, 0x00, 0x1e)
+        val pps = sc3(0x68, 0xce, 0x3c)
+        val idr = sc3(0x65, 0x88, 0x84, 0x02)
+        val p = sc3(0x41, 0x9a, 0x02)
+
+        // 3 字节 start code
+        val withIdr = sps + pps + idr + p
+        assertTrue(H264Stream.containsIdr(withIdr))
+
+        // 4 字节 start code（00 00 00 01 65）
+        val fourByte = byteArrayOf(0, 0, 0, 1, 0x65.toByte(), 0x88.toByte()) + p
+        assertTrue(H264Stream.containsIdr(fourByte))
+
+        // 纯 P 帧：不含 IDR（换面重建后起播前应丢弃）
+        val pOnly = p + sc3(0x01, 0x02, 0x03) + sc3(0x41, 0x9a)
+        assertFalse(H264Stream.containsIdr(pOnly))
+
+        // AUD + SPS + PPS 但无 IDR（部分远端不重复参数集时的典型关键帧块）
+        val audSpsPps = sc3(0x09, 0xf0) + sps + pps
+        assertFalse(H264Stream.containsIdr(audSpsPps))
     }
 
     @Test

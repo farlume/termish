@@ -79,4 +79,68 @@ class VirtualMouseGeometryTest {
         val anchor = clampVirtualMouseAnchor(ScreenPoint(9999f, 100f), pushedFrame, 800f, 200f, 80f, 380f)
         assertEquals(380f, anchor.x)
     }
+
+    @Test
+    fun pushAccumulatesOvershootInsteadOfDiscarding() {
+        // 视口 1080 / 控制区 700 → maxAnchorX=380。rawX 未过右缘：不推、anchor 跟随
+        val before = computeVirtualMousePush(300f, 1080f, 700f)
+        assertEquals(0f, before.overlapPx, 0.01f)
+        assertEquals(300f, before.anchorX, 0.01f)
+
+        // 过冲 200：anchor 钉在 380，视频左移 200（过冲累积而不是每帧丢弃——
+        // 否则拖到右缘卡住、光标永远够不到视频最右列）
+        val partial = computeVirtualMousePush(580f, 1080f, 700f)
+        assertEquals(200f, partial.overlapPx, 0.01f)
+        assertEquals(380f, partial.anchorX, 0.01f)
+
+        // 过冲超过控制区宽：满推（overlap=700），视频右缘 = 1080-700 = 380 =
+        // anchor ——光标恰好点到视频最右列（ToDesk 效果）；更多过冲不再累积
+        val full = computeVirtualMousePush(9999f, 1080f, 700f)
+        assertEquals(700f, full.overlapPx, 0.01f)
+        assertEquals(380f, full.anchorX, 0.01f)
+    }
+
+    @Test
+    fun pushSpringsBackBeforePanelMovesLeft() {
+        // 满推态左拖：rawX 回落先回弹视频（overlap → 0），面板钉着不动；
+        // 回完（rawX ≤ maxAnchorX）面板才跟随左移——与右推天然互逆
+        val springBack = computeVirtualMousePush(780f, 1080f, 700f)
+        assertEquals(400f, springBack.overlapPx, 0.01f)
+        assertEquals(380f, springBack.anchorX, 0.01f)
+
+        val reattached = computeVirtualMousePush(200f, 1080f, 700f)
+        assertEquals(0f, reattached.overlapPx, 0.01f)
+        assertEquals(200f, reattached.anchorX, 0.01f)
+    }
+
+    @Test
+    fun pushHandlesNarrowViewport() {
+        // 视口比控制区还窄（极端小窗/分屏）：maxAnchorX 钳到 0，不崩不出负值
+        val push = computeVirtualMousePush(100f, 500f, 700f)
+        assertEquals(100f, push.overlapPx, 0.01f)
+        assertEquals(0f, push.anchorX, 0.01f)
+    }
+
+    @Test
+    fun zoomedPushCapExtendsToBringRightEdgeToCursor() {
+        // 放大后画面右缘在视口外（2× 宽）：推量上限变大，鼠标钉在右缘、
+        // 画面持续平移过来——鼠标永不滑出屏幕（用户反馈）
+        val partial = computeVirtualMousePush(1500f, 1080f, 700f, 2160f)
+        assertEquals(1120f, partial.overlapPx, 0.01f)
+        assertEquals(380f, partial.anchorX, 0.01f)
+
+        // 满推：右缘 2160 - 1780 = 380 = anchor——光标恰能点到画面最右列
+        val full = computeVirtualMousePush(9999f, 1080f, 700f, 2160f)
+        assertEquals(1780f, full.overlapPx, 0.01f)
+        assertEquals(380f, full.anchorX, 0.01f)
+    }
+
+    @Test
+    fun zoomedPushCapWhenRightEdgeAlreadyVisible() {
+        // 放大但右缘已在视口内（500 < 1080）：只需推 120 就把右缘送到光标处，
+        // 不再多推（避免把内容无意义地推走）
+        val push = computeVirtualMousePush(9999f, 1080f, 700f, 500f)
+        assertEquals(120f, push.overlapPx, 0.01f)
+        assertEquals(380f, push.anchorX, 0.01f)
+    }
 }

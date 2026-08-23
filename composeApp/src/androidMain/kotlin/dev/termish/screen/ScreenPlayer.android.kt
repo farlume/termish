@@ -151,6 +151,14 @@ class ScreenDecoder(
         var lastDims: Pair<Int, Int>? = null
         // 当前 codec 绑定的输出 surface（引用比较：小窗↔全屏切换时变化）
         var boundSurface: Surface? = null
+        // 最近一次参数集缓存：换面重建时用缓存 CSD 立即 configure，不依赖远端
+        // 在关键帧重复 SPS/PPS（部分远端不重复 → 重建后永久黑屏，切档位重启流
+        // 才恢复——用户反馈）。SPS 变化时以新参数集覆盖
+        var cachedSps: ByteArray? = null
+        var cachedPps: ByteArray? = null
+        var cachedDims: Pair<Int, Int>? = null
+        // 用缓存参数集重建后只喂 IDR：P 帧依赖前置参考帧，喂给新解码器不产画面
+        var needIdr = false
         var pts = 0L
         var fed = 0
         var dropEvery = 1 // 抽帧：1 = 不抽；n = 每 n 帧丢 1（解码器满时自适应升高）
@@ -174,40 +182,63 @@ class ScreenDecoder(
             boundSurface = null
         }
 
+        fun configureCodec(
+            surface: Surface,
+            sps: ByteArray?,
+            pps: ByteArray?,
+            dims: Pair<Int, Int>?,
+        ): Boolean {
+            val fmt =
+                MediaFormat.createVideoFormat(MIME, dims?.first ?: 1920, dims?.second ?: 1080).apply {
+                    if (sps != null) setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(sps))
+                    if (pps != null) setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(pps))
+                    // 低延迟模式（Android 12+，多数厂商解码器支持）：减少内部
+                    // 缓冲积压——解码输出更快到达 surface（实时性）。不支持时
+                    // 解码器忽略该键，无副作用
+                    if (Build.VERSION.SDK_INT >= 30) {
+                        runCatching { setInteger(MediaFormat.KEY_LOW_LATENCY, 1) }
+                    }
+                    // 消费速率提示（API 26+）：解码器按此调度缓冲，避免按
+                    // 默认（可能更高）帧率预设缓冲
+                    val cap = probeDecoderMaxFps(dims?.first ?: 1920, dims?.second ?: 1080)
+                    if (cap > 0) {
+                        runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, cap) }
+                    }
+                }
+            return runCatching {
+                codec =
+                    MediaCodec.createDecoderByType(MIME).also {
+                        it.configure(fmt, surface, null, 0)
+                        it.start()
+                    }
+                lastDims = dims
+                fed = 0
+                TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
+                true
+            }.onFailure { e ->
+                TermLog.w("screen") { "decoder configure failed: $e" }
+                onError(ScreenPlayerFailure.Initialization(e.message))
+                running = false
+            }.getOrDefault(false)
+        }
+
         try {
             while (running) {
-                // surface 生命周期：
-                // - 全部销毁（列表空）→ 立即释放 codec（SurfaceView 回调只移除自己的
-                //   surface，codec 操作收口在本线程避免并发崩溃）。不做宽限期：codec
-                //   绑着已销毁 surface 时 setOutputSurface 换绑在部分设备上无输出，
-                //   且换绑后 boundSurface 已更新、再无重建机会 → 黑屏到切档位才恢复
-                //   （用户反馈：缩小再进全屏黑屏）。立即释放 + 下一个关键帧重建
-                //   （keyint ≈ 0.5s）即恢复。
-                // - 变化（小窗↔全屏是两个独立 SurfaceView，切换时新 surface 到达而
-                //   codec 还绑旧 surface）→ 仅当旧 surface 仍存活（双 surface 并存，
-                //   如展开/收起动画期间）才 setOutputSurface 无缝换绑（无需重建/等
-                //   关键帧）；旧 surface 已销毁 → 重建（同上，换绑不可靠）。
+                // surface 生命周期（2026-08 修订：一律重建，不再无缝换绑）：
+                // setOutputSurface 换绑在真机上不可靠——成功返回但无输出，且
+                // boundSurface 已更新、再无重建机会 → 二次进全屏永久黑屏，切帧率/
+                // 画质触发 SPS 重配才恢复（用户反馈）。重建代价 ≤ 一个关键帧间隔
+                // （keyint≈0.5s），黑窗短暂但确定恢复——正确性优先于无缝。
+                // - 全部销毁（列表空）→ 释放 codec
+                // - 切换（s ≠ boundSurface）→ 释放，下一关键帧以 currentSurface 重建
+                //   （SurfaceView 回调只移除自己的 surface，codec 操作收口在本线程）
                 // 局部快照：codec 在 releaseCodec 闭包中被置空，需在判空前取 val
                 val sc = codec
                 if (sc != null) {
                     val s = currentSurface()
-                    when {
-                        s == null -> releaseCodec()
-                        s !== boundSurface -> {
-                            // 旧 surface 已被销毁（不在列表中）→ 换绑不可靠，重建
-                            if (boundSurface == null || !surfaces.contains(boundSurface)) {
-                                releaseCodec()
-                            } else {
-                                val ok = runCatching { sc.setOutputSurface(s) }.isSuccess
-                                if (ok) {
-                                    boundSurface = s
-                                    TermLog.i("screen") { "surface 切换，setOutputSurface 无缝换绑" }
-                                } else {
-                                    TermLog.w("screen") { "setOutputSurface 失败，重建解码器" }
-                                    releaseCodec()
-                                }
-                            }
-                        }
+                    if (s !== boundSurface) {
+                        TermLog.i("screen") { "surface 变化（$boundSurface → $s），释放解码器待重建" }
+                        releaseCodec()
                     }
                 }
 
@@ -216,7 +247,10 @@ class ScreenDecoder(
                 val dims = ps.sps?.let { H264Stream.parseSpsDimensions(it) }
 
                 if (ps.sps != null && ps.pps != null) {
-                    // 带完整参数集的关键帧：首次 configure / 分辨率变化重配
+                    // 带完整参数集的关键帧：缓存 + 首次 configure / 分辨率变化重配
+                    cachedSps = ps.sps
+                    cachedPps = ps.pps
+                    cachedDims = dims
                     if (codec != null && dims != null && dims != lastDims) {
                         TermLog.i("screen") { "SPS 变化 $lastDims → $dims，重配解码器" }
                         releaseCodec()
@@ -224,44 +258,28 @@ class ScreenDecoder(
                     if (codec == null) {
                         val surface = currentSurface() ?: continue // 等 UI surface
                         boundSurface = surface
-                        val fmt =
-                            MediaFormat.createVideoFormat(MIME, dims?.first ?: 1920, dims?.second ?: 1080).apply {
-                                setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(ps.sps))
-                                setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(ps.pps))
-                                // 低延迟模式（Android 12+，多数厂商解码器支持）：减少内部
-                                // 缓冲积压——解码输出更快到达 surface（实时性）。不支持时
-                                // 解码器忽略该键，无副作用
-                                if (Build.VERSION.SDK_INT >= 30) {
-                                    runCatching { setInteger(MediaFormat.KEY_LOW_LATENCY, 1) }
-                                }
-                                // 消费速率提示（API 26+）：解码器按此调度缓冲，避免按
-                                // 默认（可能更高）帧率预设缓冲
-                                val cap = probeDecoderMaxFps(dims?.first ?: 1920, dims?.second ?: 1080)
-                                if (cap > 0) {
-                                    runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, cap) }
-                                }
-                            }
-                        runCatching {
-                            codec =
-                                MediaCodec.createDecoderByType(MIME).also {
-                                    it.configure(fmt, surface, null, 0)
-                                    it.start()
-                                }
-                            lastDims = dims
-                            fed = 0
-                            TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
-                        }.onFailure { e ->
-                            TermLog.w("screen") { "decoder configure failed: $e" }
-                            onError(ScreenPlayerFailure.Initialization(e.message))
-                            running = false
-                            return
-                        }
+                        if (!configureCodec(surface, ps.sps, ps.pps, dims)) return
+                        needIdr = false // 当前帧即 IDR，直接可喂
                     }
-                } else if (codec == null) {
-                    continue // 起播前：丢弃不含参数集的帧（等关键帧）
+                } else {
+                    if (codec == null && cachedSps != null && cachedPps != null) {
+                        // 换面重建（缓存路径）：不依赖远端在关键帧重复 SPS/PPS，
+                        // 用缓存参数集立即 configure，等下一个 IDR（≤0.5s）出画面
+                        val surface = currentSurface() ?: continue // 等 UI surface
+                        boundSurface = surface
+                        TermLog.i("screen") { "surface 变化后用缓存参数集重建解码器" }
+                        if (!configureCodec(surface, cachedSps, cachedPps, cachedDims)) return
+                        needIdr = true
+                    }
                 }
 
-                val c = codec ?: continue
+                val c = codec ?: continue // 无解码器（无参数集且无缓存）：等关键帧
+                if (needIdr && !H264Stream.containsIdr(frame)) {
+                    // 起播前丢弃非 IDR：P 帧不能作为新解码器的起播帧
+                    renderOutputs(c)
+                    continue
+                }
+                needIdr = false
                 fed++
                 // 自适应抽帧：输入超解码极限时按比例抽帧（保持节奏均匀）。
                 // 队列丢帧是「丢旧保新」节奏抖动（实测 60fps 流 MTK 解 35fps →

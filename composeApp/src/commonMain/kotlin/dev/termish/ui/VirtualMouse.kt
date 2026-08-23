@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -297,7 +298,11 @@ private fun MousePanelGrip(
     }
 }
 
-/** 画面内的本地箭头；热点可抵达边缘，图形原点会向内收，保证箭头完整可见。 */
+/**
+ * 画面内的本地箭头。尖端必须精确落在热点（点击位置）上——热点可到画面四边，
+ * 靠近边缘时箭头尾巴超出画布的部分由 clip 裁掉（用户反馈：之前图形整体内收，
+ * 尖端到不了边缘，点不到最边上一列像素）。
+ */
 @Composable
 internal fun VirtualMouseCursor(
     frame: ScreenRect,
@@ -309,29 +314,25 @@ internal fun VirtualMouseCursor(
         val cursorWidth = ScreenControlDimens.MouseCursorWidth.toPx()
         val cursorHeight = ScreenControlDimens.MouseCursorHeight.toPx()
         val hotspot = cursorHotspot(cursor, frame)
-        val origin = cursorVisualOrigin(hotspot, frame, cursorWidth, cursorHeight)
-        // 确保箭头不超出画布边界（frame 左侧可能因右侧控制区挤开而为负）
-        val clampedOrigin =
-            ScreenPoint(
-                x = origin.x.coerceIn(0f, (size.width - cursorWidth).coerceAtLeast(0f)),
-                y = origin.y.coerceIn(0f, (size.height - cursorHeight).coerceAtLeast(0f)),
+        // 尖端 = 热点，不做图形内收；尾巴超出画布（边缘/被推开的画面外侧）裁掉
+        clipRect(0f, 0f, size.width, size.height) {
+            val path =
+                Path().apply {
+                    moveTo(hotspot.x, hotspot.y)
+                    lineTo(hotspot.x, hotspot.y + cursorHeight * 0.78f)
+                    lineTo(hotspot.x + cursorWidth * 0.25f, hotspot.y + cursorHeight * 0.59f)
+                    lineTo(hotspot.x + cursorWidth * 0.47f, hotspot.y + cursorHeight)
+                    lineTo(hotspot.x + cursorWidth * 0.66f, hotspot.y + cursorHeight * 0.90f)
+                    lineTo(hotspot.x + cursorWidth * 0.44f, hotspot.y + cursorHeight * 0.53f)
+                    lineTo(hotspot.x + cursorWidth * 0.82f, hotspot.y + cursorHeight * 0.53f)
+                    close()
+                }
+            drawPath(path, color = ScreenControlTokens.CursorFill)
+            drawPath(
+                path,
+                color = ScreenControlTokens.CursorOutline,
+                style = Stroke(width = ScreenControlDimens.MouseStroke.toPx()),
             )
-        val path =
-            Path().apply {
-                moveTo(clampedOrigin.x, clampedOrigin.y)
-                lineTo(clampedOrigin.x, clampedOrigin.y + cursorHeight * 0.78f)
-                lineTo(clampedOrigin.x + cursorWidth * 0.25f, clampedOrigin.y + cursorHeight * 0.59f)
-                lineTo(clampedOrigin.x + cursorWidth * 0.47f, clampedOrigin.y + cursorHeight)
-                lineTo(clampedOrigin.x + cursorWidth * 0.66f, clampedOrigin.y + cursorHeight * 0.90f)
-                lineTo(clampedOrigin.x + cursorWidth * 0.44f, clampedOrigin.y + cursorHeight * 0.53f)
-                lineTo(clampedOrigin.x + cursorWidth * 0.82f, clampedOrigin.y + cursorHeight * 0.53f)
-                close()
-            }
-        drawPath(path, color = ScreenControlTokens.CursorFill)
-        drawPath(
-            path,
-            color = ScreenControlTokens.CursorOutline,
-            style = Stroke(width = ScreenControlDimens.MouseStroke.toPx()),
-        )
+        }
     }
 }
