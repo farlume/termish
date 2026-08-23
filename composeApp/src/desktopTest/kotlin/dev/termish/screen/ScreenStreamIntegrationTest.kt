@@ -113,6 +113,7 @@ class ScreenStreamIntegrationTest {
             var nalCount = 0
             var sawSps = false
             var sawIdr = false
+            var sawAud = false
             var eofEarly = false
             val deadline = System.currentTimeMillis() + 5_000
             while (System.currentTimeMillis() < deadline) {
@@ -126,6 +127,8 @@ class ScreenStreamIntegrationTest {
                     nalCount++
                     if (nal.type == 7) sawSps = true
                     if (nal.type == 5) sawIdr = true
+                    // AUD（type 9）：帧对齐标记——relay 按 AUD 切帧，丢一片只丢一帧
+                    if (nal.type == 9) sawAud = true
                     nal = parser.drain()
                 }
             }
@@ -133,13 +136,14 @@ class ScreenStreamIntegrationTest {
 
             val errText = stderrBuf.toString()
             println(
-                "--- screen stream: nals=$nalCount sps=$sawSps idr=$sawIdr eofEarly=$eofEarly stderr=${errText.take(
+                "--- screen stream: nals=$nalCount sps=$sawSps idr=$sawIdr aud=$sawAud eofEarly=$eofEarly stderr=${errText.take(
                     300,
                 )}",
             )
             assertFalse(eofEarly, "5 秒内通道不应 EOF（远端 ffmpeg 正常推流），stderr: $errText")
             assertTrue(nalCount > 10, "5 秒内应收到大量 NAL，实际 $nalCount（疑似 stdout 被 stderr 阻塞读卡死）")
             assertTrue(sawSps && sawIdr, "应收到 SPS + IDR 关键帧（sps=$sawSps idr=$sawIdr）")
+            assertTrue(sawAud, "流应含 AUD（帧对齐语义；LAVFI_SCRIPT 已加 aud=1）")
             assertFalse(errText.contains("FFMPEG_MISSING"), "远端不应报 ffmpeg 缺失")
         } finally {
             session.close()
@@ -200,7 +204,8 @@ class ScreenStreamIntegrationTest {
             // relay 预热 + 首次连接需要几秒，等 2 秒再读流
             Thread.sleep(2_000)
 
-            // 2. 读流脚本（手机端实际链路）：relay 输出 MPEG-TS，持续收字节即可
+            // 2. 读流脚本（手机端实际链路）：relay 出 H.264 Annex-B（AUD 帧对齐），
+            // 持续收字节即可（UDP 直连链路由 ScreenStreamUdpSessionTest 覆盖）
             val streamCh = session.startExecRaw(ScreenSession.READ_STREAM_SCRIPT)
             assertNotNull(streamCh, "读流通道应建立")
             var bytes = 0
@@ -220,15 +225,62 @@ class ScreenStreamIntegrationTest {
                     10_000,
                 )
             }
-            session.close()
         }
+    }
+
+    fun `relay python script is syntactically valid`() {
+        val py3 =
+            runCatching {
+                val p = ProcessBuilder("sh", "-c", "command -v python3").redirectErrorStream(true).start()
+                val out =
+                    p.inputStream
+                        .readBytes()
+                        .decodeToString()
+                        .trim()
+                p.waitFor()
+                out
+            }.getOrDefault("")
+        if (py3.isEmpty()) {
+            println("SKIP: 无 python3（relay 语法检查需要）")
+            return
+        }
+        // INSTALL_SCRIPT 的 heredoc 内容（bash 变量 $PORT/$FF_REAL 安装时注入）
+        val script = ScreenSession.INSTALL_SCRIPT
+        val start = script.indexOf("#!/usr/bin/env python3")
+        assertTrue(start >= 0, "INSTALL_SCRIPT 应含 python relay")
+        var py = script.substring(start, script.indexOf("TERMISH_EOF", start))
+        // Kotlin 模板转义还原 + dedent + bash 注入变量
+        py =
+            py
+                .replace("${'$'}{'\$'}", "$")
+                .replace("\$PORT", "17321")
+                .replace("\$FF_REAL", "/usr/bin/ffmpeg")
+        // 逐行去公共缩进（heredoc 内嵌 Kotlin 字符串的 12 空格缩进）
+        val lines = py.lines()
+        val minIndent = lines.filter { it.isNotBlank() }.minOf { it.takeWhile { c -> c == ' ' }.length }
+        py = lines.joinToString("\n") { if (it.length >= minIndent) it.substring(minIndent) else it }
+
+        val tmp = File.createTempFile("relay", ".py")
+        tmp.writeText(py)
+        try {
+            val p =
+                ProcessBuilder(py3, "-m", "py_compile", tmp.absolutePath)
+                    .redirectErrorStream(true)
+                    .start()
+            val err = p.inputStream.readBytes().decodeToString()
+            val code = p.waitFor()
+            assertTrue(code == 0, "relay python 语法错误:\n$err")
+        } finally {
+            tmp.delete()
+        }
+        // 关键语义断言：双栈 + 硬编 + GOP（与 ScreenSession 改动同源，防漂移）
+        assertTrue(py.contains("AF_INET6") && py.contains("IPV6_V6ONLY"), "relay 应为 IPv6 双栈")
+        assertTrue(py.contains("h264_videotoolbox"), "macOS 分支应硬编")
+        assertTrue(py.contains("\"-g\", \"15\""), "GOP 应为 0.5s（-g 15）")
+        assertTrue(py.contains("RELAY_VERSION = ${ScreenSession.RELAY_VERSION}"), "relay 版本应与客户端一致")
     }
 }
 
-/**
- * 决定性实验：sshj 客户端连【系统 sshd（22 端口）】跑读流脚本。
- * 手机真机路径 = sshj + 系统 sshd；此前集成测试只覆盖了测试 sshd（22222）。
- */
 class SystemSshdStreamTest {
     @Test
     fun `sshj reads stream via system sshd port 22`() {
