@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-08-24
+
+### 修复
+
+- **小窗↔全屏切换黑屏**：surface 变化一律释放解码器、用客户端缓存的 SPS/PPS 立即重建（不依赖远端在关键帧重复参数集），重建后只喂 IDR 起播；展开/收起动画期间不上真实视频面（黑底占位，动画结束才建面）——SurfaceView 表面不跟随 graphicsLayer 缩放，画面不再卡成小窗尺寸亮点或黑屏
+- **虚拟鼠标拖到右缘卡住/画面缩小**：拖过右缘的过冲量持久累积为视频整体左移（推量上限 = 把画面右缘推到面板左缘所需的平移量，放大后自动变大——鼠标贴近右缘时画面持续平移，永不滑出屏幕）；视频容器去祖先裁剪（部分设备上被祖先 clip 的 SurfaceView 表面会被缩放而非裁剪）
+- **虚拟鼠标箭头到不了画面边缘**：箭头尖端精确落在热点（点击位置），尾巴超出画布由裁剪收起——此前图形整体内收，点不到画面最右列
+
 ## [1.6.3] - 2026-08-23
 
 ### 修复
@@ -478,7 +486,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.3...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.4...HEAD
+[1.6.4]: https://github.com/ttermish/termish/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/ttermish/termish/compare/v1.6.0...v1.6.1
