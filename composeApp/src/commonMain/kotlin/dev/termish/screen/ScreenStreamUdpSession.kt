@@ -13,6 +13,13 @@ import kotlinx.coroutines.launch
 val SCREEN_HEARTBEAT_MAGIC = byteArrayOf(0x54, 0x48, 0x42, 0x01) // "THB\x01"
 
 /**
+ * 重载包 magic（新会话首包）：relay 收到后重启 ffmpeg（重读推流参数）。
+ * 画质/帧率切换的生效路径——否则漫游语义下旧 ffmpeg 永不重启，
+ * conf 写了也自读不到（UDP 版每次连接不再自动换新 ffmpeg，区别于旧 TCP 版）。
+ */
+val SCREEN_RELOAD_MAGIC = byteArrayOf(0x54, 0x48, 0x42, 0x02) // "THB\x02"
+
+/**
  * 屏幕推流的 UDP 漫游会话（方案 A）：视频流从 SSH/TCP 搬到 UDP，
  * 获得 mosh 式的漫游能力——断网不显示断开、网络恢复后续传。
  *
@@ -64,6 +71,9 @@ class ScreenStreamUdpSession(
     private var lastHopAt = 0L
     private var lastReportedLostSecs = 0
 
+    /** 首包发 reload（重启远端 ffmpeg 重读推流参数；发送成功后清位）。 */
+    @Volatile private var reloadPending = true
+
     private val sockLock = Any()
 
     fun start() {
@@ -102,9 +112,18 @@ class ScreenStreamUdpSession(
             scope.launch(ioDispatcher()) {
                 while (active && coroutineContext.isActive) {
                     val now = nowMs()
-                    // 心跳：每秒发 magic 包保活 + 地址更新
-                    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
-                        runCatching { socket?.send(SCREEN_HEARTBEAT_MAGIC) }
+                    // 心跳：每秒发 magic 包保活 + 地址更新；首包是 reload
+                    // （重启远端 ffmpeg 重读 conf，见 [SCREEN_RELOAD_MAGIC]）
+                    val s = socket
+                    if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS && s != null) {
+                        val pkt =
+                            if (reloadPending) {
+                                SCREEN_RELOAD_MAGIC
+                            } else {
+                                SCREEN_HEARTBEAT_MAGIC
+                            }
+                        runCatching { s.send(pkt) }
+                        reloadPending = false
                         lastHeartbeat = now
                     }
                     // 端口轮换：10s 收不到视频包 → 换源端口重新打洞（漫游核心）

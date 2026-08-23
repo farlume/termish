@@ -20,6 +20,31 @@ class ScreenStreamUdpSessionTest {
     private val mtu = 400
 
     @Test
+    fun firstPacketIsReloadThenHeartbeats() =
+        runBlocking {
+            val relay = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
+            val session =
+                ScreenStreamUdpSession(
+                    ip = "127.0.0.1",
+                    port = relay.localPort,
+                    scope = this,
+                    onVideoPacket = {},
+                )
+            session.start()
+            try {
+                // 首包应为 reload（重启远端 ffmpeg 重读推流参数）
+                val first = receivePacket(relay)
+                assertTrue(first != null && first.contentEquals(SCREEN_RELOAD_MAGIC), "首包应为 reload magic")
+                // 后续包为普通心跳
+                val second = receivePacket(relay)
+                assertTrue(second != null && second.contentEquals(SCREEN_HEARTBEAT_MAGIC), "后续包应为心跳 magic")
+            } finally {
+                session.close()
+                relay.close()
+            }
+        }
+
+    @Test
     fun heartbeatAndVideoRoundTrip() =
         runBlocking {
             val relay = DatagramSocket(0, InetAddress.getByName("127.0.0.1"))
@@ -104,6 +129,19 @@ class ScreenStreamUdpSessionTest {
             relay.receive(pkt)
             assertTrue(pkt.length >= 4, "心跳包应至少 4 字节")
             pkt.socketAddress
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** 收一个包返回其内容（区分 reload / 心跳 magic）。 */
+    private fun receivePacket(relay: DatagramSocket): ByteArray? {
+        val buf = ByteArray(64)
+        relay.soTimeout = 5000
+        val pkt = DatagramPacket(buf, buf.size)
+        return try {
+            relay.receive(pkt)
+            pkt.data.copyOf(pkt.length)
         } catch (_: Exception) {
             null
         }

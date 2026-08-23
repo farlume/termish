@@ -319,7 +319,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 7
+        const val RELAY_VERSION = 8
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -334,11 +334,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=7，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=8，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "7" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=7" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "8" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=8" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -474,11 +474,12 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
-            RELAY_VERSION = 7
+            RELAY_VERSION = 8
             TCP_PORT = ${'$'}PORT
             UDP_PORT = ${'$'}PORT + 1
             FF = "${'$'}FF_REAL"
             HEARTBEAT_MAGIC = b"THB\x01"
+            RELOAD_MAGIC = b"THB\x02"
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
             # 目录不存在时 open() 抛异常 → ffmpeg 不会被拉起（用户反馈：
             # Ubuntu 端口监听但推流 0 字节）
@@ -653,7 +654,20 @@ class ScreenSession(
                         data, addr = udp.recvfrom(64)
                     except Exception:
                         continue
-                    if data.startswith(HEARTBEAT_MAGIC):
+                    if data.startswith(RELOAD_MAGIC):
+                        # 重载（新会话首包）：重启 ffmpeg 重读推流参数——画质/帧率
+                        # 切换的生效路径。漫游语义下旧 ffmpeg 永不重启，conf 写了
+                        # 也读不到（UDP 版每次连接不再自动换新 ffmpeg）
+                        with LOCK:
+                            if STREAM[0] is not None:
+                                STREAM[0].stop()
+                                STREAM[0] = None
+                            CLIENT[0] = addr
+                            s = UdpStream(udp, addr)
+                            s.start()
+                            STREAM[0] = s
+                            LAST_HB[0] = now
+                    elif data.startswith(HEARTBEAT_MAGIC):
                         with LOCK:
                             if STREAM[0] is None:
                                 CLIENT[0] = addr
@@ -741,7 +755,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 7 > "${'$'}HOME/.termish-screen.version"
+            echo 8 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**
