@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-08-23
+
+### 修复
+
+- **设置页诊断开关即时刷新**：开关点击后立即生效（此前 TermLog 属性非 Compose state，点击后视觉不变，退出重进才更新）
+- **git 面板 herdr workdir 打点**：herdr snapshot 空会话/解析失败路径补日志，便于定位
+
 ## [1.6.2] - 2026-08-23
 
 ### 新增
@@ -471,7 +478,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/ttermish/termish/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/ttermish/termish/compare/v1.5.1...v1.6.0
