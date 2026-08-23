@@ -1,5 +1,11 @@
 package dev.termish.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -313,10 +319,17 @@ fun TerminalScreen(
         }
 
         // 全屏画面覆盖层：根层（TabBar 之上），真全屏铺满；
-        // 沉浸式（状态栏隐藏）由 PlatformImmersiveMode(pipFullscreen) 处理
-        if (pipFullscreen && screenPip != null) {
+        // 沉浸式（状态栏隐藏）由 PlatformImmersiveMode(pipFullscreen) 处理。
+        // 小窗↔全屏切换动画：scale+fade（0.2→1 展开 / 1→0.2 收起）——
+        // 用户反馈：切换无动画生硬。动画期间新旧 SurfaceView 共存，
+        // 解码器由 ScreenDecoder 的 setOutputSurface 无缝换绑（无需重建）
+        AnimatedVisibility(
+            visible = pipFullscreen && screenPip != null,
+            enter = scaleIn(initialScale = 0.2f, animationSpec = tween(220)) + fadeIn(animationSpec = tween(150)),
+            exit = scaleOut(targetScale = 0.2f, animationSpec = tween(180)) + fadeOut(animationSpec = tween(120)),
+        ) {
             val pipHost = (current as? SessionTab.Terminal)?.controller?.host
-            if (pipHost != null) {
+            if (pipHost != null && screenPip != null) {
                 ScreenContent(
                     host = pipHost,
                     session = null,

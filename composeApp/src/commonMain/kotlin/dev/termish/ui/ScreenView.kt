@@ -294,6 +294,7 @@ fun ScreenContent(
             StreamQualitySwitcher(
                 fps = state.streamFps,
                 quality = state.streamQuality,
+                maxFps = state.decoderMaxFps,
                 onSelect = onStreamConfigChange,
                 onFpsIndex = { state.streamFps = it },
                 onQualityIndex = { state.streamQuality = it },
@@ -308,6 +309,8 @@ fun ScreenContent(
 private fun StreamQualitySwitcher(
     fps: Int,
     quality: Int,
+    /** 解码能力帧率上限（0 = 未知，全部显示）；隐藏解码器跑不满的档位。 */
+    maxFps: Int,
     onSelect: (Int, String) -> Unit,
     /** 帧率本地立即更新（异步重建前 UI 先反馈——用户反馈：帧率菜单点了不生效）。 */
     onFpsIndex: (Int) -> Unit,
@@ -316,7 +319,7 @@ private fun StreamQualitySwitcher(
 ) {
     val s = LocalAppStrings.current
     val qualities = listOf("960:-2" to s.screen.qualityLow, "1280:-2" to s.screen.qualityMid, "1920:-2" to s.screen.qualityHigh)
-    val fpsOptions = listOf(30, 60, 120)
+    val fpsOptions = listOf(30, 60, 120).filter { maxFps <= 0 || it <= maxFps }
     var menuOpen by remember { mutableStateOf(false) }
 
     Box(modifier) {
@@ -676,25 +679,26 @@ fun ScreenPiP(
             // 无 clickable：点击=全屏由父手势统一判定（clickable 先于手势收到事件，
             // 双指捏合位移小时会误判点击全屏——v1.4.0 回归）
             ScreenVideoSurface(player, Modifier.fillMaxSize())
-        } else {
-            if (!state.serviceMissing) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        "…",
-                        color = Color.White.copy(alpha = 0.6f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp,
-                    )
-                }
+        } else if (!state.serviceMissing && state.error == null) {
+            // 加载中（连接中/等首帧）：纯展示，点击进全屏看详情
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "…",
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                )
             }
         }
-        // 服务缺失：小窗中央提示（不再纯黑屏；点击进全屏看完整安装引导）
+        // 服务缺失：小窗中央提示（纯展示不操作；点击进全屏看完整安装引导/按钮）。
+        // 按具体原因给文案（ffmpeg 缺失 / relay 旧版 / 服务未运行），安装中显示进度
         if (state.serviceMissing) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(horizontal = 6.dp),
                 ) {
                     Icon(
                         Icons.Filled.Monitor,
@@ -703,12 +707,72 @@ fun ScreenPiP(
                         modifier = Modifier.size(18.dp),
                     )
                     Text(
-                        s.screen.pipNeedInstall,
+                        when {
+                            state.relayNeedsUpgrade -> s.screen.serviceUpgradeHint
+                            state.ffmpegMissing -> s.screen.serviceHintFfmpeg
+                            else -> s.screen.pipNeedInstall
+                        },
                         color = Color.White.copy(alpha = 0.75f),
                         style = MaterialTheme.typography.labelSmall,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
                     )
+                    if (state.installing) {
+                        Text(
+                            s.screen.installingService,
+                            color = Color.White.copy(alpha = 0.6f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 }
             }
+        } else {
+            // 错误提示（连接失败/解码失败/首帧超时等）：纯展示，点击进全屏重连
+            state.error?.let { msg ->
+                Box(
+                    Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.ErrorOutline,
+                            contentDescription = null,
+                            tint = Color(0xFFFF6B6B),
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            msg,
+                            color = Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
+        }
+        // 屏幕状态提示（息屏/锁屏/网络不稳，可恢复）：小窗顶部小条。
+        // 与 ✕/全屏角标错开（左右 padding 32dp），画面到达自动清除
+        state.screenHint?.let { hint ->
+            Text(
+                hint,
+                color = Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier =
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 4.dp, start = 32.dp, end = 32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
 
         // 关闭按钮（左上角）：✕ 销毁屏幕会话。圆角半透明胶囊底 + 居中图标，
