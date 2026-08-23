@@ -57,13 +57,22 @@ actual class ScreenPlayer actual constructor(
     companion object {
         /** 低延迟推流缓冲档位（毫秒）。实时推流无 VOD 预缓冲需求，越小延迟越低。 */
         private const val MIN_BUFFER_MS = 500
-        private const val MAX_BUFFER_MS = 800
+        private const val MAX_BUFFER_MS = 600
         private const val BUFFER_FOR_PLAYBACK_MS = 120
-        private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 300
+        private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 200
 
         /** 队列水位上限（包数）：32 包 × 平均 ~8KB ≈ 256KB，720p 下约 0.5~0.7s 画面，
          *  把延迟漂移上限锁在亚秒级。 */
         private const val MAX_QUEUED_PACKETS = 32
+
+        // 直播边追赶：渐进式直播流无法前向 seek（源是字节流，旧数据不保留），
+        // 多余缓冲只能变速消化——落后超过 trigger 提速，回落到 release 恢复常速。
+        // 缓冲量 = 直播延时主体（ExoPlayer 在 min~maxBuffer 间震荡填冲），
+        // 稳态延时 ≈ release + 解码/上屏 ~100-150ms
+        private const val LIVE_EDGE_TRIGGER_MS = 550L
+        private const val LIVE_EDGE_RELEASE_MS = 300L
+        private const val LIVE_EDGE_FAST_SPEED = 1.25f
+        private const val LIVE_EDGE_POLL_MS = 500L
     }
 
     /** 喂给播放器的字节队列（有界 + 水位控制，见 [feed]）。 */
@@ -71,6 +80,30 @@ actual class ScreenPlayer actual constructor(
 
     @Volatile private var stopped = false
     private var server: StreamServer? = null
+
+    /** 主线程 Handler（ExoPlayer 只能主线程访问）。 */
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+    /** 直播边追赶定时器：监控缓冲健康度（=落后直播边的毫秒数），变速消化多余缓冲。 */
+    private val liveEdgeTicker =
+        object : Runnable {
+            override fun run() {
+                if (stopped) return
+                val behind = player.bufferedPosition - player.currentPosition
+                val cur = player.playbackParameters.speed
+                val want =
+                    when {
+                        behind > LIVE_EDGE_TRIGGER_MS -> LIVE_EDGE_FAST_SPEED
+                        behind < LIVE_EDGE_RELEASE_MS -> 1.0f
+                        else -> cur
+                    }
+                if (want != cur) {
+                    player.setPlaybackSpeed(want)
+                    TermLog.i("screen") { "live-edge behind=${behind}ms → speed=$want" }
+                }
+                mainHandler.postDelayed(this, LIVE_EDGE_POLL_MS)
+            }
+        }
 
     private inner class StreamServer : NanoHTTPD("127.0.0.1", 0) {
         override fun serve(session: IHTTPSession): Response {
@@ -180,6 +213,7 @@ actual class ScreenPlayer actual constructor(
         player.setMediaItem(MediaItem.fromUri("http://127.0.0.1:$port/stream.ts"))
         player.prepare()
         player.play()
+        mainHandler.post(liveEdgeTicker)
         TermLog.i("screen") { "player started port=$port" }
     }
 
@@ -200,6 +234,7 @@ actual class ScreenPlayer actual constructor(
 
     actual fun stop() {
         stopped = true
+        mainHandler.removeCallbacks(liveEdgeTicker)
         runCatching { player.release() }
         runCatching { server?.stop() }
         server = null
