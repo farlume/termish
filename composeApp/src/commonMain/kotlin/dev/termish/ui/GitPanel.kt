@@ -187,10 +187,19 @@ internal class GitCommandRunner(
         if (herdrMode) {
             return withContext(ioDispatcher()) {
                 val bin = controller.herdrBin?.let { shellQuote(it) } ?: "herdr"
+                TermLog.i("git") { "herdr workdir: bin=$bin session=${controller.session != null}" }
                 val raw =
                     controller.session?.runCommand("$bin api snapshot", 5_000)
-                        ?: return@withContext null
-                val snap = parseHerdrSnapshot(raw) ?: return@withContext null
+                        ?: run {
+                            TermLog.w("git") { "herdr snapshot: no session or null output" }
+                            return@withContext null
+                        }
+                TermLog.i("git") { "herdr snapshot raw=${raw.take(120)}" }
+                val snap =
+                    parseHerdrSnapshot(raw) ?: run {
+                        TermLog.w("git") { "herdr snapshot parse failed" }
+                        return@withContext null
+                    }
                 snap.panes
                     .firstOrNull { it.focused }
                     ?.cwd
