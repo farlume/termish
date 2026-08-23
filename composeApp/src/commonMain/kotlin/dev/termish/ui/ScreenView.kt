@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -91,10 +94,61 @@ fun ScreenContent(
 ) {
     val s = LocalAppStrings.current
     val density = LocalDensity.current
-    Box(modifier.fillMaxSize().background(Color.Black)) {
-        // 画面帧（播放器渲染面，Fit 缩放）
+    // 全屏手势（单指平移 + 双指缩放桌面）：zoomScale 放大倍数、panOffset 画面左上角偏移
+    var zoomScale by remember { mutableStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+    var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onSizeChanged { viewportSize = it },
+    ) {
+        // 画面帧（播放器渲染面，Fit 缩放；全屏可手势缩放/平移）
         state.player?.let { p ->
-            ScreenVideoSurface(p, Modifier.fillMaxSize())
+            ScreenVideoSurface(
+                p,
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        // 以左上角为缩放原点：translation 即画面左上角偏移，钳制边界与 panOffset 语义一致
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        scaleX = zoomScale
+                        scaleY = zoomScale
+                        translationX = panOffset.x
+                        translationY = panOffset.y
+                    },
+            )
+        }
+
+        // 全屏手势层：单指拖动平移画面、双指捏合放大桌面（视口看局部）。
+        // 先于连接中/错误态/header 声明：这些覆盖层后声明、优先命中触摸，
+        // 手势层只接收它们未覆盖区域的触摸（正常播放时即整个画面）。
+        if (onClose != null) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTransformGestures(panZoomLock = true) { centroid, pan, zoom, _ ->
+                            val old = zoomScale
+                            val new = (old * zoom).coerceIn(1f, MAX_SCREEN_ZOOM)
+                            val effective = new / old
+                            // 围绕双指质心缩放 + 平移增量：质心处画面内容保持不动
+                            panOffset = centroid - (centroid - panOffset) * effective + pan
+                            zoomScale = new
+                            // 钳制在视口内：放大后画面只能平移到边界，scale=1 时归零
+                            if (viewportSize.width > 0 && viewportSize.height > 0) {
+                                val maxX = viewportSize.width * (zoomScale - 1f)
+                                val maxY = viewportSize.height * (zoomScale - 1f)
+                                panOffset =
+                                    Offset(
+                                        panOffset.x.coerceIn(-maxX, 0f),
+                                        panOffset.y.coerceIn(-maxY, 0f),
+                                    )
+                            }
+                        }
+                    },
+            )
         }
 
         // 连接中：居中指示器（含已连通但首帧未到的等待态；全屏模式 session 为 null 也显示）
@@ -420,6 +474,9 @@ internal fun ScreenServiceGuide(
         }
     }
 }
+
+/** 全屏画面最大放大倍数（双指缩放上限）。 */
+private const val MAX_SCREEN_ZOOM = 4f
 
 /** 小窗默认尺寸（dp）。 */
 const val PIP_DEFAULT_W = 160f
