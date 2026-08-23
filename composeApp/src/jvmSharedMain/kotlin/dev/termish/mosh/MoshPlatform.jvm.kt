@@ -15,6 +15,9 @@ internal actual class MoshUdpSocket actual constructor(
     actual val isIpv6: Boolean = remoteAddr is java.net.Inet6Address
     private val socket =
         DatagramSocket().apply {
+            // 屏幕推流 / mosh 都是突发小包：加大接收缓冲避免突发时内核丢包
+            // （默认通常 64~208KB，55×1200B 的分片突发就能打满）
+            runCatching { receiveBufferSize = 1 shl 20 }
             connect(remoteAddr, port)
         }
     private val buf = ByteArray(4096)

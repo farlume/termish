@@ -150,7 +150,9 @@ class ScreenSession(
                 udp.start()
                 TermLog.i("screen") { "UDP 会话已启动 port=$udpPort" }
             } catch (e: Exception) {
-                TermLog.w("screen") { "screen session error: $e" }
+                // message 可能为 null（如 NetworkOnMainThreadException），必须记全类名 + 堆栈
+                TermLog.w("screen") { "screen session error: ${e::class.qualifiedName}: ${e.message}" }
+                TermLog.w("screen") { e.stackTraceToString().take(1500) }
                 if (running) {
                     uiState.error = e.message ?: "连接失败"
                     running = false
@@ -312,7 +314,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 6
+        const val RELAY_VERSION = 7
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -327,11 +329,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=6，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=7，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "6" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=6" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "7" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=7" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -464,7 +466,7 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
-            RELAY_VERSION = 6
+            RELAY_VERSION = 7
             TCP_PORT = ${'$'}PORT
             UDP_PORT = ${'$'}PORT + 1
             FF = "${'$'}FF_REAL"
@@ -569,9 +571,14 @@ class ScreenSession(
                             data = self.ff.stdout.read(65536)
                             if not data:
                                 break
-                            for f in make_fragments(data, 1200, self.frag_id):
+                            for i, f in enumerate(make_fragments(data, 1200, self.frag_id)):
                                 self.frag_id += 1
                                 self.udp.sendto(f, self.addr)
+                                # 发送节奏：每 8 片歇 1ms，避免 55 片突发打满
+                                # 对端接收缓冲导致内核丢包（WiFi 实测丢 ~60%，
+                                # 整块丢弃后 TS 流全是洞，播放器永卡 BUFFERING）
+                                if i % 8 == 7:
+                                    time.sleep(0.001)
                             self.sent += len(data)
                             self.last_data = time.time()
                     except Exception:
@@ -726,7 +733,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 6 > "${'$'}HOME/.termish-screen.version"
+            echo 7 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**

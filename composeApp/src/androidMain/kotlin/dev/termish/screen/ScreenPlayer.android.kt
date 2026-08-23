@@ -73,8 +73,9 @@ actual class ScreenPlayer actual constructor(
     private var server: StreamServer? = null
 
     private inner class StreamServer : NanoHTTPD("127.0.0.1", 0) {
-        override fun serve(session: IHTTPSession): Response =
-            StreamResponse(
+        override fun serve(session: IHTTPSession): Response {
+            TermLog.i("screen") { "http request ${session.uri}" }
+            return StreamResponse(
                 object : InputStream() {
                     private var current: ByteArray? = null
                     private var pos = 0
@@ -121,6 +122,7 @@ actual class ScreenPlayer actual constructor(
                     }
                 },
             )
+        }
     }
 
     /** chunked 流式响应：无 Content-Length，边读边发（播放器渐进读取）。 */
@@ -157,6 +159,18 @@ actual class ScreenPlayer actual constructor(
                     onReady()
                 }
 
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    TermLog.i("screen") { "player state=$playbackState (1=buffering 2=ready 3=ended)" }
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    TermLog.i("screen") { "player playing=$isPlaying" }
+                }
+
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    TermLog.i("screen") { "video size ${videoSize.width}x${videoSize.height}" }
+                }
+
                 override fun onPlayerError(error: PlaybackException) {
                     TermLog.w("screen") { "player error: ${error.errorCodeName} ${error.message}" }
                     onError("播放失败：${error.errorCodeName} ${error.message ?: ""}")
@@ -174,8 +188,13 @@ actual class ScreenPlayer actual constructor(
         // 水位控制：队列满时丢最旧一包再入队。ExoPlayer 解码慢一拍时不背压远端、
         // 不无限堆积——丢旧保新让画面追平最新（丢帧花屏最多到下一个 IDR，
         // 远端 keyint=30 保证 ≤1s 恢复清晰）。
+        var dropped = 0
         while (!queue.offer(data)) {
             if (queue.poll() == null) break
+            dropped++
+        }
+        if (dropped > 0) {
+            TermLog.w("screen") { "queue overflow: dropped $dropped old packets" }
         }
     }
 

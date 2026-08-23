@@ -70,7 +70,10 @@ class ScreenStreamUdpSession(
         if (active) return
         active = true
         lastHopAt = nowMs()
-        openSocket()
+        // 建 socket 必须在 io 协程：MoshUdpSocket 构造做 DNS 解析 + connect，
+        // 在主线程调用会抛 NetworkOnMainThreadException（Android；调用方
+        // ScreenSession 的 scope 是 Compose 主线程协程）
+        scope.launch(ioDispatcher()) { openSocket() }
         launchHeartbeat()
     }
 
