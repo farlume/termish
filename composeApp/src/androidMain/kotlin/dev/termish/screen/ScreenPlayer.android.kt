@@ -12,6 +12,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -33,10 +34,40 @@ actual class ScreenPlayer actual constructor(
     private val onReady: () -> Unit,
     private val onError: (String) -> Unit,
 ) {
-    /** 供 UI 绑定的播放器实例。 */
-    val player: ExoPlayer = ExoPlayer.Builder(AppContext.get()).build()
+    /**
+     * 供 UI 绑定的播放器实例。低延迟 LoadControl：实时推流（本地 HTTP 渐进式
+     * MPEG-TS）无需 VOD 式预缓冲——默认 50s minBuffer / 1s 首帧缓冲会把画面
+     * 延迟拉高到秒级；压到 200ms 首帧 + 500ms 目标缓冲，做到准实时。
+     */
+    val player: ExoPlayer =
+        ExoPlayer
+            .Builder(AppContext.get())
+            .setLoadControl(
+                DefaultLoadControl
+                    .Builder()
+                    .setBufferDurationsMs(
+                        MIN_BUFFER_MS, // minBuffer：缓冲目标（500ms 是 shouldContinueLoading 硬下限）
+                        MAX_BUFFER_MS, // maxBuffer
+                        BUFFER_FOR_PLAYBACK_MS, // 首帧前缓冲：越低首帧越快
+                        BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS, // 重缓冲后恢复
+                    ).setPrioritizeTimeOverSizeThresholds(true)
+                    .build(),
+            ).build()
 
-    private val queue = LinkedBlockingQueue<ByteArray>(256)
+    companion object {
+        /** 低延迟推流缓冲档位（毫秒）。实时推流无 VOD 预缓冲需求，越小延迟越低。 */
+        private const val MIN_BUFFER_MS = 500
+        private const val MAX_BUFFER_MS = 800
+        private const val BUFFER_FOR_PLAYBACK_MS = 120
+        private const val BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS = 300
+
+        /** 队列水位上限（包数）：32 包 × 平均 ~8KB ≈ 256KB，720p 下约 0.5~0.7s 画面，
+         *  把延迟漂移上限锁在亚秒级。 */
+        private const val MAX_QUEUED_PACKETS = 32
+    }
+
+    /** 喂给播放器的字节队列（有界 + 水位控制，见 [feed]）。 */
+    private val queue = LinkedBlockingQueue<ByteArray>(MAX_QUEUED_PACKETS)
 
     @Volatile private var stopped = false
     private var server: StreamServer? = null
@@ -140,10 +171,11 @@ actual class ScreenPlayer actual constructor(
 
     actual fun feed(data: ByteArray) {
         if (stopped) return
-        try {
-            queue.put(data)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
+        // 水位控制：队列满时丢最旧一包再入队。ExoPlayer 解码慢一拍时不背压远端、
+        // 不无限堆积——丢旧保新让画面追平最新（丢帧花屏最多到下一个 IDR，
+        // 远端 keyint=30 保证 ≤1s 恢复清晰）。
+        while (!queue.offer(data)) {
+            if (queue.poll() == null) break
         }
     }
 

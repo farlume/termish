@@ -312,7 +312,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 3
+        const val RELAY_VERSION = 5
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -327,11 +327,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=3，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=5，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "3" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=3" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "5" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=5" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -463,7 +463,7 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading
-            RELAY_VERSION = 3
+            RELAY_VERSION = 5
             PORT = ${'$'}PORT
             FF = "${'$'}FF_REAL"
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
@@ -494,10 +494,18 @@ class ScreenSession(
                 common = ["-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
                           "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
                           # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
-                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=60",
-                          "-pix_fmt", "yuv420p", "-g", "60",
+                          # keyint=30：1s 关键帧间隔（30fps）——解码器任何重同步最多等 1s
+                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=30",
+                          "-pix_fmt", "yuv420p", "-g", "30",
+                          # 显式无 B 帧（ultrafast 默认即 0，写死保险：B 帧需等参考帧，
+                          # 会引入编码端重排延迟）
+                          "-bf", "0",
                           "-threads", "1",
-                          "-f", "mpegts", "-flush_packets", "1", "-"]
+                          "-f", "mpegts",
+                          # muxdelay/muxpreload 0：去掉 mpegts muxer 默认 0.7s 初始解码延迟，
+                          # 与 flush_packets 叠加，包到达即写出（低延迟实时画面）
+                          "-muxdelay", "0", "-muxpreload", "0",
+                          "-flush_packets", "1", "-"]
                 if IS_MAC:
                     # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
                     return ["-f", "avfoundation", "-capture_cursor", "1",
@@ -534,6 +542,8 @@ class ScreenSession(
                     if old is not None:
                         time.sleep(3.0)
                     conn.setblocking(False)
+                    # 关 Nagle：小包立即发出，不合并等待（低延迟实时流）
+                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                     errf = open(ERRLOG, "a")
                     ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=errf)
                     with lock:
@@ -742,7 +752,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 3 > "${'$'}HOME/.termish-screen.version"
+            echo 5 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**
