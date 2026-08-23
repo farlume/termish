@@ -83,7 +83,15 @@ class ScreenStreamUdpSession(
 
     @Volatile private var fragDrop = 0
 
-    /** 最近一次统计窗口的丢帧率（percent，喂心跳反馈）。 */
+    /**
+     * 本地消费慢丢弃的分片计数（inbound 队列满→丢旧分片）。
+     * 与网络丢包分离：本地丢过分片时，后续重组放弃归因于本地（解码/处理
+     * 跟不上），不喂 AIMD——否则解码瓶颈会误报网络拥塞，relay 错降速到
+     * 2MB/s 地板、画质崩塌（清单遗留 #1：帧级顶替误报）。
+     */
+    @Volatile private var localFragDrops = 0
+
+    /** 最近一次统计窗口的网络丢帧率（percent，喂心跳反馈）。 */
     private fun recentLossPercent(): Int {
         val ok = fragOk
         val drop = fragDrop
@@ -124,6 +132,8 @@ class ScreenStreamUdpSession(
                         // 丢旧保新：处理跟不上时丢旧分片（半可靠语义，丢片=丢一帧）
                         while (!inbound.offer(dg.data)) {
                             if (inbound.poll() == null) break
+                            // 本地消费慢：计数归因，不喂 AIMD（见 [localFragDrops]）
+                            localFragDrops++
                         }
                     }
                 } catch (_: Exception) {
@@ -140,8 +150,14 @@ class ScreenStreamUdpSession(
                                 fragOk++
                                 onVideoPacket(pkt)
                             } else if (receiver.lastAbandoned) {
-                                fragDrop++
                                 receiver.lastAbandoned = false
+                                // 重组放弃：若近期本地丢过分片（inbound 满），归因本地
+                                // 消费慢（解码跟不上）；否则是网络丢包，喂 AIMD
+                                if (localFragDrops > 0) {
+                                    localFragDrops--
+                                } else {
+                                    fragDrop++
+                                }
                             }
                         }
                     } catch (_: Exception) {

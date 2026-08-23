@@ -28,3 +28,9 @@ actual fun ScreenVideoSurface(
 ) {
     Box(modifier.background(Color.Black))
 }
+
+/** 桌面无屏幕推流（stub）：返回 0 = 未知，不钳制。 */
+actual fun probeDecoderMaxFps(
+    width: Int,
+    height: Int,
+): Int = 0

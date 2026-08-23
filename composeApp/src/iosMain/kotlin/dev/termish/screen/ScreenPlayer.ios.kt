@@ -29,3 +29,9 @@ actual fun ScreenVideoSurface(
 ) {
     Box(modifier.background(Color.Black))
 }
+
+/** iOS 屏幕推流未实现（stub）：返回 0 = 未知，不钳制。 */
+actual fun probeDecoderMaxFps(
+    width: Int,
+    height: Int,
+): Int = 0

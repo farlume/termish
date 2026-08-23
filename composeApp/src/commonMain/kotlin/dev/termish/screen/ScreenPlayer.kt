@@ -33,3 +33,13 @@ expect fun ScreenVideoSurface(
     player: ScreenPlayer?,
     modifier: Modifier = Modifier,
 )
+
+/**
+ * 解码能力探测：指定分辨率下硬件解码器支持的帧率上限（0 = 未知/失败）。
+ * 用于钳制推流档位——编码帧率超过解码能力只会浪费带宽 + 解码器满载排队
+ * （延迟升高），业界（scrcpy/Parsec）均按解码能力限制编码帧率。
+ */
+expect fun probeDecoderMaxFps(
+    width: Int,
+    height: Int,
+): Int

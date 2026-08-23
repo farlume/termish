@@ -35,6 +35,9 @@ class ScreenUiState {
     /** 当前画质档位（全屏右上角档位显示）。 */
     var streamQuality by mutableStateOf(1)
 
+    /** 解码能力探测的帧率上限（0 = 未知；档位菜单据此隐藏超出项）。 */
+    var decoderMaxFps by mutableStateOf(0)
+
     /** 远端缺 ffmpeg（引导安装信号）。 */
     var ffmpegMissing by mutableStateOf(false)
 
