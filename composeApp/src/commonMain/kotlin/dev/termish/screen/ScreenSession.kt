@@ -91,6 +91,11 @@ class ScreenSession(
                         ?.substringAfter(":")
                         ?.trim()
                         ?.toIntOrNull()
+                // 远端推流参数回读：同步 UI 档位（relay 每连接读 conf，重装 App/
+                // 多端写入后远端值可能与本机默认不同——否则 UI 显示 30 实推 120）
+                val (cfgFps, cfgScale) = parseStreamCfg(result.stdout)
+                cfgFps?.let { uiState.streamFps = it }
+                cfgScale?.let { uiState.streamQuality = qualityIndexFor(it) }
                 if (udpPort == null) {
                     uiState.error = "无法获取远端 UDP 端口"
                     running = false
@@ -397,6 +402,9 @@ class ScreenSession(
                 print("SCREEN_LOCKED")
             ' 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
             fi
+            # 推流参数回读（客户端同步档位显示；conf 可能为其它端写入的旧值）
+            CFG="${'$'}HOME/.termish-screen.conf"
+            [ -f "${'$'}CFG" ] && grep -E '^(fps|scale)=' "${'$'}CFG" | sed 's/^fps=/SCREEN_CFG_FPS:/;s/^scale=/SCREEN_CFG_SCALE:/' || true
             # 视频流走 UDP 漫游：输出 UDP 端口后退出（客户端据此建 UDP 会话）
             echo "SCREEN_UDP_PORT:${'$'}((PORT + 1))"
             """.trimIndent()
@@ -735,6 +743,41 @@ class ScreenSession(
             # 版本文件：客户端读流脚本检测 relay 版本匹配
             echo 7 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
+
+        /**
+         * 从读流脚本 stdout 解析远端推流参数（SCREEN_CFG_FPS / SCREEN_CFG_SCALE 行；
+         * 缺项为 null——conf 缺失时不覆盖客户端本地默认档位）。
+         */
+        internal fun parseStreamCfg(stdout: String): Pair<Int?, String?> {
+            var fps: Int? = null
+            var scale: String? = null
+            stdout.lineSequence().forEach { line ->
+                when {
+                    line.startsWith("SCREEN_CFG_FPS:") ->
+                        line
+                            .substringAfter(":")
+                            .trim()
+                            .toIntOrNull()
+                            ?.let { fps = it }
+
+                    line.startsWith("SCREEN_CFG_SCALE:") ->
+                        line
+                            .substringAfter(":")
+                            .trim()
+                            .takeIf { it.isNotEmpty() }
+                            ?.let { scale = it }
+                }
+            }
+            return Pair(fps, scale)
+        }
+
+        /** scale 字符串 → 画质档位 index（960=0 / 1280=1 / 1920=2；未知按标清）。 */
+        internal fun qualityIndexFor(scale: String): Int =
+            when (scale) {
+                "960:-2" -> 0
+                "1920:-2" -> 2
+                else -> 1
+            }
 
         /**
          * 测试用推流脚本：lavfi 测试图源（不依赖屏幕录制权限）。
