@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material3.Button
@@ -174,36 +175,66 @@ fun ScreenContent(
                 modifier = Modifier.align(Alignment.Center),
             )
         } else {
-            // 错误态：居中提示 + 重连/返回
+            // 错误态：卡片（与安装引导同风格：图标 + 文案 + 主/次按钮）
             state.error?.let { msg ->
-                Row(
+                Box(
                     Modifier
                         .fillMaxSize()
                         .padding(24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    Card(
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text(
-                            msg,
-                            color = StatusColors.Error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        if (state.ffmpegMissing) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            // 错误图标：错误色浅底圆角容器（与安装引导同款）
+                            Box(
+                                Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(StatusColors.Error.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Filled.ErrorOutline,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(28.dp),
+                                    tint = StatusColors.Error,
+                                )
+                            }
                             Text(
-                                s.screen.ffmpegHint,
-                                color = Color.White.copy(alpha = 0.7f),
-                                style = MaterialTheme.typography.bodySmall,
+                                msg,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
                             )
-                        }
-                        TextButton(onClick = onReconnect) {
-                            Text(s.screen.reconnect, color = Color.White)
-                        }
-                        TextButton(onClick = onBack) {
-                            Text(s.terminalCancel, color = Color.White.copy(alpha = 0.6f))
+                            if (state.ffmpegMissing) {
+                                Text(
+                                    s.screen.ffmpegHint,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                )
+                            }
+                            Button(
+                                onClick = onReconnect,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(s.screen.reconnect)
+                            }
+                            TextButton(onClick = onBack) {
+                                Text(
+                                    s.terminalCancel,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }
