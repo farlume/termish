@@ -113,6 +113,44 @@ internal fun clampVirtualMouseAnchor(
     )
 }
 
+/** 右侧渐进挤开的换算结果：视频左移量 + 面板显示 anchor X。 */
+internal data class VirtualMousePush(
+    val overlapPx: Float,
+    val anchorX: Float,
+)
+
+/**
+ * 虚拟鼠标拖到右缘后的「ToDesk 式」渐进推开：anchor 钉在右缘（面板右边缘贴
+ * 视口右缘，完整可见不滑出屏幕——放大态同样如此），继续右拖的过冲量累积为
+ * 视频整体左移（左侧裁掉），满推时光标恰好够到视频右列；左拖先回弹视频、
+ * 回完面板才跟随左移。
+ *
+ * 推量上限 = 把画面右缘推到面板左缘所需的平移量：未放大时画面右缘在视口
+ * 右缘（恰为 controlWidth，与旧行为一致）；放大/平移后画面右缘可能在视口外，
+ * 上限自动变大——鼠标贴近右边时画面持续平移过来，鼠标永不滑出屏幕
+ * （用户反馈：放大后鼠标直接移出屏幕不符合预期）。
+ *
+ * @param rawAnchorX 未被右缘钳制的累积 anchor X（拖拽 delta 全程累加，
+ *   调用方持久化——过冲若随 clamp 丢弃，overlap 每帧只剩当次 delta，
+ *   视频原地抖动永远推不开：用户反馈拖到右缘卡住、点不到最右列）
+ * @param unpushedFrameRight 未推开时的画面右缘（screenFrame(controlArea=0).right）
+ */
+internal fun computeVirtualMousePush(
+    rawAnchorX: Float,
+    viewportWidth: Float,
+    controlWidth: Float,
+    unpushedFrameRight: Float = viewportWidth,
+): VirtualMousePush {
+    if (viewportWidth <= 0f || controlWidth <= 0f) return VirtualMousePush(0f, rawAnchorX)
+    val maxAnchorX = (viewportWidth - controlWidth).coerceAtLeast(0f)
+    val pushCap = (unpushedFrameRight - maxAnchorX).coerceAtLeast(0f)
+    val cappedRaw = rawAnchorX.coerceAtMost(maxAnchorX + pushCap)
+    return VirtualMousePush(
+        overlapPx = (cappedRaw - maxAnchorX).coerceIn(0f, pushCap),
+        anchorX = cappedRaw.coerceAtMost(maxAnchorX),
+    )
+}
+
 /** 控制器右侧触到屏幕边缘时打开右侧控制区，避免面板遮住远端最右侧。 */
 internal fun shouldDockVirtualMouseRight(
     anchorX: Float,

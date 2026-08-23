@@ -391,6 +391,11 @@ fun TerminalScreen(
                         onStreamConfigChange(fullHost, fps, scale)
                     },
                     onFpsIndex = { fps -> screenPip?.streamFps = fps },
+                    // 展开/收起动画期间不上真实视频面（黑底占位）：动画把整个
+                    // 容器 graphicsLayer 缩放，部分设备 SurfaceView 表面不跟随
+                    // 缩放 → 画面卡成小窗尺寸的「亮点」/黑屏（用户反馈）。
+                    // 动画结束（expandP=1）再建面，surface 永远全尺寸创建。
+                    videoEnabled = expandP >= 1f,
                     modifier =
                         Modifier
                             .fillMaxSize()

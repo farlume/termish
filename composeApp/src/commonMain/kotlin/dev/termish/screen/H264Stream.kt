@@ -151,6 +151,34 @@ object H264Stream {
     }
 
     /**
+     * 帧内是否含 IDR NAL（nal_type=5）。
+     *
+     * 换面重建后用缓存参数集立即 configure，起播必须等 IDR：P 帧依赖前置
+     * 参考帧，喂给新解码器不产生画面（部分设备直接报错）。远端 keyint≈0.5s，
+     * 等到 IDR 的代价可控，且不依赖远端在关键帧重复 SPS/PPS。
+     */
+    fun containsIdr(annexB: ByteArray): Boolean {
+        var i = 0
+        val n = annexB.size
+        while (i + 3 < n) {
+            if (annexB[i] == 0.toByte() && annexB[i + 1] == 0.toByte()) {
+                if (annexB[i + 2] == 1.toByte()) {
+                    if ((annexB[i + 3].toInt() and 0x1F) == 5) return true
+                    i += 3
+                } else if (i + 4 < n && annexB[i + 2] == 0.toByte() && annexB[i + 3] == 1.toByte()) {
+                    if ((annexB[i + 4].toInt() and 0x1F) == 5) return true
+                    i += 4
+                } else {
+                    i++
+                }
+            } else {
+                i++
+            }
+        }
+        return false
+    }
+
+    /**
      * 从 SPS NAL 解析裁剪后宽高（H.264 exp-golomb；失败返回 null）。
      *
      * 同时接受裸 NAL 和 MediaCodec CSD 使用的 Annex-B 形式；读位前移除
