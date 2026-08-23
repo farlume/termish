@@ -1,5 +1,7 @@
 package dev.termish.ui
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,7 +24,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +57,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -76,6 +78,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -111,6 +114,8 @@ import dev.termish.screen.ScreenSession
 import dev.termish.screen.ScreenUiState
 import dev.termish.ssh.SftpSession
 import dev.termish.term.argbToRgb
+import dev.termish.ui.PIP_DEFAULT_H
+import dev.termish.ui.PIP_DEFAULT_W
 import dev.termish.ui.theme.StatusColors
 import dev.termish.ui.theme.TerminalTheme
 import dev.termish.util.hapticTick
@@ -197,11 +202,13 @@ fun TerminalScreen(
     /** 屏幕重连（就地全屏用，按主机定位会话）。 */
     onReconnectScreenForHost: (Host) -> Unit = {},
     /** 屏幕推流服务安装（引导卡片按钮；按主机定位会话）。 */
-    onInstallScreenService: (Host) -> Unit = {},
+    onInstallScreenService: (Host, String?) -> Unit = { _, _ -> },
     /** 全屏推流参数切换（帧率/画质）：写远端配置后重建会话生效。 */
     onStreamConfigChange: (Host, Int, String) -> Unit = { _, _, _ -> },
     /** 终端页小窗：当前主机活跃屏幕会话的 uiState（null = 不显示）；点击 = 就地全屏。 */
     screenPip: ScreenUiState? = null,
+    /** 屏幕会话所属主机（全屏头部显示用；独立于 current tab）。 */
+    pipHost: Host? = null,
     /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
     onCloseScreenPip: () -> Unit = {},
 ) {
@@ -214,19 +221,54 @@ fun TerminalScreen(
     // 屏幕小窗就地全屏（提升到 TerminalScreen 根层）：全屏画面要覆盖 tab 栏与
     // 状态栏区域，放在 TerminalBody 内会被 statusBarsPadding + TabBar 框成画布全屏（v1.5.1 反馈）
     var pipFullscreen by remember { mutableStateOf(false) }
+    // 屏幕尺寸（px）：全屏展开动画从小窗几何映射用
+    var screenSize by remember { mutableStateOf(IntSize.Zero) }
+    // 小窗位置/尺寸（提升到 TerminalScreen：全屏展开动画需要从小窗几何放大，
+    // 且全屏时小窗离开组合不能重置——v1.4.0 回归同源）
+    val pipDrag = remember { mutableStateOf(Offset.Zero) }
+    val pipSizeW = remember { mutableStateOf(PIP_DEFAULT_W) }
+    val pipSizeH = remember { mutableStateOf(PIP_DEFAULT_H) }
+    // 全屏展开/收起动画进度（0 = 小窗几何，1 = 全屏）：从小窗位置尺寸放大，
+    // 画面由 setOutputSurface 无缝续帧（用户反馈：中心展开不是小窗放大效果）
+    val expandAnim = remember { Animatable(0f) }
+    LaunchedEffect(pipFullscreen) {
+        if (pipFullscreen) {
+            expandAnim.snapTo(0f)
+            expandAnim.animateTo(1f, animationSpec = tween(240))
+        } else {
+            expandAnim.animateTo(0f, animationSpec = tween(200))
+        }
+    }
     // 切 tab 退出全屏（全屏状态提升后不再随 TerminalBody 销毁自动重置）
     LaunchedEffect(current) { pipFullscreen = false }
     // 沉浸式隐藏状态栏后 inset 归零：记录非全屏时的状态栏高度，
     // 全屏 header 内容下移与终端页 tab 栏对齐（用户反馈：按钮更靠上）
     val screenDensity = LocalDensity.current
     var lastStatusBarTop by remember { mutableIntStateOf(0) }
-    if (!pipFullscreen) {
-        lastStatusBarTop = WindowInsets.statusBars.getTop(screenDensity)
+    // 收起动画完成（expandAnim 归零）后才更新状态栏高度：动画期间全屏层
+    // 还在，此时沉浸式刚退出、inset 可能还是 0——提前更新会让头部主机名
+    // 上跑到状态栏区域（用户反馈）。
+    // ⚠️ 取最大值：状态栏恢复动画刚开始时 getTop 还是 0，直接赋值会把
+    // lastStatusBarTop 置 0——下次全屏 header 的模拟状态栏 padding 失效
+    // （用户反馈：自己写的状态栏没了）
+    if (!pipFullscreen && expandAnim.value <= 0f) {
+        lastStatusBarTop =
+            maxOf(lastStatusBarTop, WindowInsets.statusBars.getTop(screenDensity))
     }
-    // 全屏沉浸式：隐藏系统状态栏，画面铺满整个屏幕
-    PlatformImmersiveMode(pipFullscreen)
-    Box(Modifier.fillMaxSize().background(pageBackground)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    // 全屏沉浸式：隐藏系统状态栏，画面铺满整个屏幕。
+    // 收起动画期间保持隐藏（expandAnim > 0 仍 immersive）：动画结束（全屏层
+    // 移除、回到终端页）才恢复状态栏——否则动画播放中状态栏突然刷出
+    // （用户反馈：点击返回状态栏刷新一下）
+    PlatformImmersiveMode(pipFullscreen || expandAnim.value > 0f)
+    // 固定状态栏高度（px）：沉浸式隐藏状态栏时 statusBarsPadding 会归零，
+    // 返回瞬间从无到有 → tab 页内容跳变（用户定位根因）。用记录值固定
+    val statusBarTopPx = maxOf(lastStatusBarTop, WindowInsets.statusBars.getTop(screenDensity))
+    Box(Modifier.fillMaxSize().background(pageBackground).onSizeChanged { screenSize = it }) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(top = with(screenDensity) { statusBarTopPx.toDp() }),
+        ) {
             TerminalTabBar(
                 tabs = tabs,
                 current = current,
@@ -249,6 +291,12 @@ fun TerminalScreen(
                         onBack = onBack,
                         pipFullscreen = pipFullscreen,
                         onPipFullscreenChange = { pipFullscreen = it },
+                        // 收起动画播放中（全屏层还在缩回）：小窗延迟出现防闪烁
+                        pipCollapsing = !pipFullscreen && expandAnim.value > 0f,
+                        statusBarTopDp = with(screenDensity) { statusBarTopPx.toDp() },
+                        pipDrag = pipDrag,
+                        pipSizeW = pipSizeW,
+                        pipSizeH = pipSizeH,
                         onOpenSftpForHost = onOpenSftpForHost,
                         onOpenFavorites = onOpenFavorites,
                         onFavoritesChanged = onFavoritesChanged,
@@ -313,25 +361,49 @@ fun TerminalScreen(
         }
 
         // 全屏画面覆盖层：根层（TabBar 之上），真全屏铺满；
-        // 沉浸式（状态栏隐藏）由 PlatformImmersiveMode(pipFullscreen) 处理
-        if (pipFullscreen && screenPip != null) {
-            val pipHost = (current as? SessionTab.Terminal)?.controller?.host
-            if (pipHost != null) {
+        // 沉浸式（状态栏隐藏）由 PlatformImmersiveMode(pipFullscreen) 处理。
+        // 展开/收起动画：从小窗【位置+尺寸】放大到全屏（ToDesk 同款），
+        // 画面由 setOutputSurface 无缝续帧；收起反向缩小回小窗。
+        // 动画期间保留在组合中（progress>0），退出动画播完才移除
+        val expandP = expandAnim.value
+        if ((pipFullscreen || expandP > 0f) && screenPip != null) {
+            val fullHost = pipHost ?: (current as? SessionTab.Terminal)?.controller?.host
+            if (fullHost != null) {
+                // 小窗几何（px）：初始右上角（TopEnd + 8dp padding）+ 拖动偏移
+                val edge = with(screenDensity) { 8.dp.toPx() }
+                val pipW = pipSizeW.value * screenDensity.density
+                val pipH = pipSizeH.value * screenDensity.density
+                val sw = screenSize.width.toFloat()
+                val sh = screenSize.height.toFloat()
+                val pipCx = sw - pipW - edge + pipW / 2f + pipDrag.value.x
+                val pipCy = edge + pipH / 2f + pipDrag.value.y
                 ScreenContent(
-                    host = pipHost,
+                    host = fullHost,
                     session = null,
                     state = screenPip,
                     onBack = { pipFullscreen = false },
-                    onReconnect = { onReconnectScreenForHost(pipHost) },
-                    onInstallService = { onInstallScreenService(pipHost) },
+                    onReconnect = { onReconnectScreenForHost(fullHost) },
+                    onInstallService = { password -> onInstallScreenService(fullHost, password) },
                     onClose = { pipFullscreen = false },
                     statusBarInsetTop = lastStatusBarTop,
                     // ⚠️ 之前漏传（默认空实现）——全屏切档位回调从未到达 AppRoot
                     onStreamConfigChange = { fps, scale ->
-                        onStreamConfigChange(pipHost, fps, scale)
+                        onStreamConfigChange(fullHost, fps, scale)
                     },
                     onFpsIndex = { fps -> screenPip?.streamFps = fps },
-                    modifier = Modifier.fillMaxSize().zIndex(100f),
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .zIndex(100f)
+                            // 小窗→全屏变换：scale 从小窗/屏幕比例到 1，
+                            // translation 从小窗中心偏移到 0（画面内容连续）
+                            .graphicsLayer {
+                                val p = expandP
+                                scaleX = (pipW / sw) + (1f - pipW / sw) * p
+                                scaleY = (pipH / sh) + (1f - pipH / sh) * p
+                                translationX = (pipCx - sw / 2f) * (1f - p)
+                                translationY = (pipCy - sh / 2f) * (1f - p)
+                            },
                 )
             }
         }
@@ -350,6 +422,14 @@ private fun TerminalBody(
     pipFullscreen: Boolean,
     /** 全屏状态变更回调。 */
     onPipFullscreenChange: (Boolean) -> Unit,
+    /** 收起动画播放中（全屏层缩回期间小窗延迟出现，防闪烁）。 */
+    pipCollapsing: Boolean = false,
+    /** 固定状态栏高度（dp）：沉浸式期间不归零，返回无跳变。 */
+    statusBarTopDp: Dp = 0.dp,
+    /** 小窗位置/尺寸（TerminalScreen 持有：全屏展开动画需要）。 */
+    pipDrag: MutableState<Offset>,
+    pipSizeW: MutableState<Float>,
+    pipSizeH: MutableState<Float>,
     /** 文件管理（菜单项）：打开当前主机的 SFTP 文件管理视图，定位到给定目录。 */
     onOpenSftpForHost: (Host, String?) -> Unit = { _, _ -> },
     /** 收藏夹（菜单项）：列出当前主机收藏目录并跳转。 */
@@ -365,7 +445,7 @@ private fun TerminalBody(
     /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
     onCloseScreenPip: () -> Unit = {},
     /** 屏幕推流服务安装（引导卡片按钮；就地全屏用当前主机）。 */
-    onInstallScreenService: (Host) -> Unit = {},
+    onInstallScreenService: (Host, String?) -> Unit = { _, _ -> },
     /** 屏幕重连（就地全屏用，按主机定位会话）。 */
     onReconnectScreenForHost: (Host) -> Unit = {},
     /** 全屏推流参数切换（帧率/画质）：写远端配置后重建会话生效。 */
@@ -733,7 +813,7 @@ private fun TerminalBody(
         prevStatus = controller.status
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().padding(top = statusBarTopDp)) {
         // 会话主体：切换 tab 时按会话唯一 id 整体重组（输入框/局部状态独立）
         key(controller.sessionId) {
             // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
@@ -742,13 +822,9 @@ private fun TerminalBody(
             var connectSent by remember { mutableStateOf(false) }
             // 工具栏展开行 3/4（会话内保持）：状态上提至调用方，画布按常驻高度
             // 布局、展开行覆盖画布（不 resize 不闪）；记忆在 key 块内随会话独立
+            // 工具栏展开行 3/4（会话内保持）：状态上提至调用方，画布按常驻高度
+            // 布局、展开行覆盖画布（不 resize 不闪）；记忆在 key 块内随会话独立
             var toolbarExpanded by remember { mutableStateOf(false) }
-            // 屏幕小窗位置/尺寸（会话内保持）：必须放 key 块内、if 块外——
-            // 全屏展开/收起时小窗组件离开组合，若状态在组件内部或条件块内
-            // 会重置回右上角默认大小（v1.4.0 回归）
-            val pipDrag = remember { mutableStateOf(Offset.Zero) }
-            val pipSizeW = remember { mutableStateOf(PIP_DEFAULT_W) }
-            val pipSizeH = remember { mutableStateOf(PIP_DEFAULT_H) }
 
             // 顶部 banner 文案：错误/断开/失联（连接中走画布居中指示器，见下）
             val bannerText =
@@ -813,7 +889,8 @@ private fun TerminalBody(
                             installLog = screenPip.installLog,
                             ffmpegMissing = screenPip.ffmpegMissing,
                             needsUpgrade = screenPip.relayNeedsUpgrade,
-                            onInstall = { onInstallScreenService(controller.host) },
+                            needsSudoPassword = screenPip.needsSudoPassword,
+                            onInstall = { password -> onInstallScreenService(controller.host, password) },
                             modifier =
                                 Modifier.padding(
                                     bottom = with(density) { (toolbarHeightPx + navBarsBottomPx).toDp() },
@@ -916,8 +993,10 @@ private fun TerminalBody(
                 )
 
                 // 屏幕小窗（画中画）：右上角悬浮远程画面，点击 = 就地全屏
-                // （全屏覆盖层在 TerminalScreen 根层，见 TerminalScreen）
-                if (!pipFullscreen) {
+                // （全屏覆盖层在 TerminalScreen 根层，见 TerminalScreen）。
+                // ⚠️ 收起动画期间不显示小窗（等 expandAnim 归零）：否则小窗与
+                // 全屏动画层同时存在，画面在两者间切换闪一下（用户反馈）
+                if (!pipFullscreen && !pipCollapsing) {
                     screenPip?.let { pipState ->
                         ScreenPiP(
                             state = pipState,

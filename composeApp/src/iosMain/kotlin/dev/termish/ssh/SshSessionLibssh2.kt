@@ -47,6 +47,7 @@ import libssh2.LIBSSH2_SFTP
 import libssh2._LIBSSH2_USERAUTH_KBDINT_PROMPT
 import libssh2._LIBSSH2_USERAUTH_KBDINT_RESPONSE
 import libssh2.libssh2_channel_close
+import libssh2.libssh2_channel_direct_tcpip_ex
 import libssh2.libssh2_channel_free
 import libssh2.libssh2_channel_get_exit_status
 import libssh2.libssh2_channel_open_ex
@@ -95,6 +96,7 @@ import platform.posix.poll
 import platform.posix.pollfd
 import platform.posix.socket
 import platform.posix.usleep
+import sftp_write.termish_channel_write
 
 /** keyboard-interactive 回调的全局处理器（staticCFunction 不能捕获变量）。 */
 @Volatile
@@ -164,6 +166,9 @@ class SshSessionLibssh2(
     private var readerJob: Job? = null
     private var lastKeepaliveMs: Long = 0
 
+    /** direct-tcpip / 流式 exec 等辅助通道，仅在 [serialDispatcher] 上读写。 */
+    private val auxiliaryChannels = mutableListOf<CPointer<LIBSSH2_CHANNEL>>()
+
     private var hostKeyInfo: HostKeyInfo? = null
     private var authFailureReason: String? = null
 
@@ -217,6 +222,20 @@ class SshSessionLibssh2(
         val hk = hostKeyInfo
         return SessionInfo(banner, hk, hk?.algorithm ?: "")
     }
+
+    override fun connectAuthOnly(): SessionInfo? =
+        try {
+            val (s, banner) = connectAndAuthenticate()
+            libssh2_session_set_blocking(s, 0)
+            if (connection.keepAliveSeconds > 0) {
+                libssh2_keepalive_config(s, 1, connection.keepAliveSeconds.toUInt())
+            }
+            val hk = hostKeyInfo
+            SessionInfo(banner, hk, hk?.algorithm ?: "")
+        } catch (_: Exception) {
+            cleanup()
+            null
+        }
 
     /** 建立 TCP + SSH 握手 + 主机密钥校验 + 认证，返回会话与 banner。 */
     private fun connectAndAuthenticate(): Pair<CPointer<LIBSSH2_SESSION>?, String> {
@@ -431,6 +450,124 @@ class SshSessionLibssh2(
         rows: Int,
     ): SshExecChannel? = null
 
+    override fun startExecRaw(command: String): SshExecChannel? =
+        runBlocking {
+            withContext(serialDispatcher) {
+                val s = session ?: return@withContext null
+                if (closed) return@withContext null
+                val ch = openChannel(s) ?: return@withContext null
+                val commandLength = command.encodeToByteArray().size
+                if (retryUntilSuccess {
+                        libssh2_channel_process_startup(ch, "exec", 4u, command, commandLength.toUInt())
+                    } != 0
+                ) {
+                    libssh2_channel_free(ch)
+                    return@withContext null
+                }
+                auxiliaryChannels.add(ch)
+                wrapAuxiliaryChannel(ch)
+            }
+        }
+
+    override fun openDirectTcpip(
+        host: String,
+        port: Int,
+    ): SshExecChannel? =
+        runBlocking {
+            withContext(serialDispatcher) {
+                val s = session ?: return@withContext null
+                if (closed) return@withContext null
+                val deadline = Clock.System.now().toEpochMilliseconds() + 10_000
+                var ch: CPointer<LIBSSH2_CHANNEL>? = null
+                while (!closed && Clock.System.now().toEpochMilliseconds() < deadline) {
+                    ch = libssh2_channel_direct_tcpip_ex(s, host, port, "127.0.0.1", 0)
+                    if (ch != null) break
+                    delay(30)
+                }
+                ch?.let {
+                    auxiliaryChannels.add(it)
+                    wrapAuxiliaryChannel(it)
+                }
+            }
+        }
+
+    /**
+     * 将 libssh2 辅助通道包装为阻塞式公共接口。每次原生调用都经串行调度器，
+     * 但 EAGAIN 等待使用 suspend，让视频读与控制写可交替推进同一 SSH 会话。
+     */
+    private fun wrapAuxiliaryChannel(ch: CPointer<LIBSSH2_CHANNEL>): SshExecChannel =
+        object : SshExecChannel {
+            @Volatile
+            private var channelClosed = false
+
+            override fun read(): ByteArray? = readStream(0)
+
+            override fun readErr(): ByteArray? = readStream(1)
+
+            private fun readStream(streamId: Int): ByteArray? =
+                runBlocking {
+                    withContext(serialDispatcher) {
+                        val buffer = ByteArray(64 * 1024)
+                        while (!closed && !channelClosed) {
+                            val read =
+                                buffer.usePinned { pinned ->
+                                    libssh2_channel_read_ex(
+                                        ch,
+                                        streamId,
+                                        pinned.addressOf(0),
+                                        buffer.size.toULong(),
+                                    )
+                                }
+                            when {
+                                read > 0 -> return@withContext buffer.copyOf(read.toInt())
+                                read == 0L -> return@withContext null
+                                read.toInt() == LIBSSH2_ERROR_EAGAIN -> {
+                                    maybeSendKeepalive(session)
+                                    delay(15)
+                                }
+                                else -> return@withContext null
+                            }
+                        }
+                        null
+                    }
+                }
+
+            override fun write(data: ByteArray) {
+                if (channelClosed || data.isEmpty()) return
+                val copy = data.copyOf()
+                scope.launch {
+                    var offset = 0
+                    while (!closed && !channelClosed && offset < copy.size) {
+                        val written =
+                            copy.usePinned { pinned ->
+                                termish_channel_write(
+                                    ch,
+                                    pinned.addressOf(offset).reinterpret(),
+                                    (copy.size - offset).toULong(),
+                                )
+                            }
+                        when {
+                            written > 0 -> offset += written.toInt()
+                            written.toInt() == LIBSSH2_ERROR_EAGAIN -> delay(15)
+                            else -> return@launch
+                        }
+                    }
+                }
+            }
+
+            override fun close() {
+                if (channelClosed) return
+                channelClosed = true
+                scope.launch { closeAuxiliaryChannel(ch) }
+            }
+        }
+
+    private fun closeAuxiliaryChannel(ch: CPointer<LIBSSH2_CHANNEL>) {
+        if (!auxiliaryChannels.remove(ch)) return
+        retryUntilSuccess { libssh2_channel_close(ch) }
+        libssh2_channel_free(ch)
+    }
+
     override fun sendData(data: ByteArray) {
         if (closed || data.isEmpty()) return
         val copy = data.copyOf()
@@ -580,7 +717,7 @@ class SshSessionLibssh2(
         timeoutMs: Long,
     ): CommandOutput? {
         val s = session ?: return null
-        if (closed || channel == null) return null
+        if (closed) return null
         val ch = openChannel(s) ?: return null
         // 命令可能含非 ASCII：长度传字节数（UTF-8 截断会让远端拿到半个字符）
         val cmdLen = command.encodeToByteArray().size
@@ -666,6 +803,14 @@ class SshSessionLibssh2(
     // ---------- 工具 ----------
 
     private fun cleanup() {
+        auxiliaryChannels.toList().forEach { ch ->
+            try {
+                libssh2_channel_close(ch)
+                libssh2_channel_free(ch)
+            } catch (_: Exception) {
+            }
+        }
+        auxiliaryChannels.clear()
         channel?.let {
             retryUntilSuccess { libssh2_channel_close(it) }
             libssh2_channel_free(it)

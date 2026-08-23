@@ -61,6 +61,17 @@ jobs:
           fi
           echo "版本一致：$TAG（桌面包 $PV）"
 
+      # 正式 tag 绝不允许降级为 unsigned 产物；普通 main 构建仍可生成未签名
+      # release artifact 供内部检查，但不会进入 GitHub Release。
+      - name: Verify release signing configuration
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew checkSigningSecrets
+
       # 检查先行：单测失败即停，不产出包
       - name: Run checks (unit tests + lint)
         run: |
@@ -86,6 +97,16 @@ jobs:
           ./gradlew \
             :composeApp:assembleRelease \
             :composeApp:bundleRelease
+
+      - name: Verify release artifact signatures
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          APK=$(find composeApp/build/outputs/apk/release -type f -name '*.apk' -print -quit)
+          AAB=$(find composeApp/build/outputs/bundle/release -type f -name '*.aab' -print -quit)
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)
+          test -n "$APK" && test -n "$AAB" && test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          jarsigner -verify -strict -certs "$AAB"
 
       - name: Upload debug APK
         if: github.event_name != 'pull_request'

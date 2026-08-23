@@ -334,6 +334,49 @@ class SshSessionSshj(
         }
     }
 
+    override fun openDirectTcpip(
+        host: String,
+        port: Int,
+    ): SshExecChannel? {
+        if (closed.get() || !client.isConnected || !client.isAuthenticated) return null
+        return try {
+            val direct = client.newDirectConnection(host, port)
+            val mutex = Any()
+            object : SshExecChannel {
+                override fun read(): ByteArray? =
+                    try {
+                        val buf = ByteArray(64 * 1024)
+                        val n = direct.inputStream.read(buf)
+                        if (n < 0) null else buf.copyOf(n)
+                    } catch (_: Exception) {
+                        null
+                    }
+
+                override fun write(data: ByteArray) {
+                    scope.launch(writeDispatcher) {
+                        synchronized(mutex) {
+                            try {
+                                direct.outputStream.write(data)
+                                direct.outputStream.flush()
+                            } catch (_: Exception) {
+                            }
+                        }
+                    }
+                }
+
+                override fun close() {
+                    try {
+                        direct.close()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "openDirectTcpip $host:$port failed: ${e.message}" }
+            null
+        }
+    }
+
     /** 在已认证连接上打开 SFTP 通道（SFTP 会话独立持有本对象；调用方负责 close）。 */
     fun openSftp(): net.schmizz.sshj.sftp.SFTPClient {
         connectTransport()

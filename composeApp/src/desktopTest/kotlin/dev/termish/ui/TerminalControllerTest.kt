@@ -356,6 +356,27 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun failedReconnectContinuesUntilConfiguredLimit() {
+        val fake = FakeSsh()
+        val (c, _, _) = controller(fake)
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        fake.connectError = IllegalStateException("offline")
+        fake.callbacks.onClosed("lost")
+
+        runBlocking {
+            withTimeout(15_000) {
+                while (c.status != ConnStatus.CLOSED) delay(10)
+            }
+        }
+
+        assertEquals(3, c.reconnectCount)
+        assertEquals("offline", c.errorMessage)
+        c.destroy()
+    }
+
+    @Test
     fun noAutoReconnectLeavesClosed() {
         val (c, fake, _) = controller(FakeSsh(), autoReconnect = false)
         c.connect(80, 24)
@@ -645,6 +666,54 @@ class TerminalControllerTest {
             bootstraps[0].contains("-- ${shSingleQuote("/root/.local/bin/herdr")}"),
             "mosh 引导必须是解析后的绝对路径（非字面 \$HOME）: ${bootstraps[0]}",
         )
+        assertTrue(
+            bootstraps[0].contains("mosh-server new -s"),
+            "mosh 引导必须绑定入站 SSH 使用的本地地址: ${bootstraps[0]}",
+        )
+        c.destroy()
+    }
+
+    @Test
+    fun moshUdpTimeoutCleansOnlyItsDetachedServer() {
+        val commands = mutableListOf<String>()
+        val fake =
+            FakeSsh(
+                commandHandler = { cmd ->
+                    commands += cmd
+                    when {
+                        cmd.contains("mosh-server new") ->
+                            "MOSH CONNECT 60998 AAAAAAAAAAAAAAAAAAAAAA\n" +
+                                "[mosh-server detached, pid = 4242]"
+                        cmd.contains("MOSH_PID=4242") -> "MOSH_CLEANUP_OK"
+                        else -> null
+                    }
+                },
+                execFactory = { FakeExec() },
+            )
+        Dispatchers.setMain(Dispatchers.Unconfined)
+        val r = repo()
+        val host =
+            host().copy(
+                hostname = "203.0.113.1",
+                connectionMode = ConnectionMode.MOSH,
+            )
+        val c =
+            TerminalController(host, "pw", null, r, false) { _, cb ->
+                fake.callbacks = cb
+                fake
+            }
+
+        c.connect(80, 24)
+        runBlocking {
+            withTimeout(10_000) {
+                while (!c.moshDegradedToSsh) delay(10)
+            }
+        }
+
+        val cleanup = commands.single { it.contains("MOSH_PID=4242") }
+        assertTrue(cleanup.contains("ps -p \"\$MOSH_PID\" -o comm="), cleanup)
+        assertTrue(cleanup.contains("kill -USR1 \"\$MOSH_PID\""), cleanup)
+        assertTrue(!cleanup.contains("pkill"), cleanup)
         c.destroy()
     }
 

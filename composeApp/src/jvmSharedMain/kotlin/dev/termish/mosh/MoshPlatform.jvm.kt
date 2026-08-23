@@ -15,9 +15,15 @@ internal actual class MoshUdpSocket actual constructor(
     actual val isIpv6: Boolean = remoteAddr is java.net.Inet6Address
     private val socket =
         DatagramSocket().apply {
+            // 屏幕推流 / mosh 都是突发小包：加大接收缓冲避免突发时内核丢包
+            // （默认通常 64~208KB，55×1200B 的分片突发就能打满）。
+            // 屏幕流实测每秒上千包，1MB 仍会被消费慢打满（RcvbufErrors 每秒 +80），
+            // 拉到 4MB 留足消化窗口
+            runCatching { receiveBufferSize = 4 shl 20 }
             connect(remoteAddr, port)
         }
     private val buf = ByteArray(4096)
+    private val pkt = DatagramPacket(buf, buf.size)
 
     actual fun send(data: ByteArray): SendResult =
         try {
@@ -35,8 +41,12 @@ internal actual class MoshUdpSocket actual constructor(
         }
 
     actual fun receive(timeoutMillis: Int): UdpDatagram? {
-        socket.soTimeout = timeoutMillis.coerceAtLeast(1)
-        val pkt = DatagramPacket(buf, buf.size)
+        // 热路径优化：soTimeout 只在变化时设置（每包 setsockopt 是无谓系统调用，
+        // 屏幕流每秒上千包）；DatagramPacket 复用（免每包分配）
+        if (socket.soTimeout != timeoutMillis.coerceAtLeast(1)) {
+            socket.soTimeout = timeoutMillis.coerceAtLeast(1)
+        }
+        pkt.length = buf.size
         return try {
             socket.receive(pkt)
             UdpDatagram(pkt.data.copyOf(pkt.length))

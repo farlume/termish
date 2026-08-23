@@ -1,181 +1,471 @@
 package dev.termish.screen
 
-import android.graphics.Color
-import androidx.annotation.OptIn
+import android.media.MediaCodec
+import android.media.MediaCodecList
+import android.media.MediaFormat
+import android.os.Build
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
-import dev.termish.AppContext
 import dev.termish.util.TermLog
-import fi.iki.elonen.NanoHTTPD
-import fi.iki.elonen.NanoHTTPD.Response
-import java.io.IOException
-import java.io.InputStream
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
+/** 解码能力探测缓存（分辨率 → 帧率上限），静态复用免每会话重查。 */
+private val decoderProbeCache = HashMap<String, Int>()
+
+/** H.264 解码 MIME（探测与解码共用）。 */
+private const val DECODER_MIME = "video/avc"
+
 /**
- * Android 实现：NanoHTTPD 本地流服务（127.0.0.1 随机端口，MPEG-TS chunked 流）
- * + ExoPlayer 播放。解码/码流解析/上屏全部交给 ExoPlayer（内部处理各厂商
- * MediaCodec 差异——手写管线在 OPPO/MTK 上吞输入不出帧，实测字节级正确仍零输出）。
+ * Android 实现：TCP 显式分帧得到的完整 H.264 帧（Annex-B，AUD 开头）直接喂
+ * MediaCodec 硬解，解码输出即刻上屏——无 MPEG-TS 容器、无本地 HTTP、
+ * 无 ExoPlayer 渐进式缓冲垫（那三者叠加出 ~0.4-1s 延时；ToDesk 式直通
+ * 管线把延时压到网络 + 解码 + 一次 vsync）。
+ *
+ * relay 侧已按 AUD 帧对齐，TCP 长度头保留帧边界；下一个 IDR 可自动
+ * 恢复解码同步，不再有 TS 容器缓冲。
+ *
+ * ⚠️ 历史教训：手写 MediaCodec 管线曾在 OPPO/MTK 上吞输入不出帧（当时
+ * 从 TS 流切 NAL 喂）。本版规避：CSD 显式 configure（SPS/PPS 从关键帧块
+ * 提取）+ 从 IDR 起播 + 独立线程同步模式 + 吞输入 watchdog 打点。
  */
 actual class ScreenPlayer actual constructor(
     private val onReady: () -> Unit,
-    private val onError: (String) -> Unit,
+    private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
-    /** 供 UI 绑定的播放器实例。 */
-    val player: ExoPlayer = ExoPlayer.Builder(AppContext.get()).build()
+    val decoder = ScreenDecoder(onReady, onError)
 
-    private val queue = LinkedBlockingQueue<ByteArray>(256)
-
-    @Volatile private var stopped = false
-    private var server: StreamServer? = null
-
-    private inner class StreamServer : NanoHTTPD("127.0.0.1", 0) {
-        override fun serve(session: IHTTPSession): Response =
-            StreamResponse(
-                object : InputStream() {
-                    private var current: ByteArray? = null
-                    private var pos = 0
-
-                    override fun read(): Int {
-                        while (!stopped) {
-                            val c = current
-                            if (c != null && pos < c.size) {
-                                return (c[pos++].toInt() and 0xff)
-                            }
-                            current = null
-                            val next = queue.poll(2, TimeUnit.SECONDS) ?: continue
-                            current = next
-                            pos = 0
-                        }
-                        return -1
-                    }
-
-                    override fun read(
-                        b: ByteArray,
-                        off: Int,
-                        len: Int,
-                    ): Int {
-                        if (len == 0) return 0
-                        var copied = 0
-                        while (copied == 0 && !stopped) {
-                            val c = current
-                            if (c != null && pos < c.size) {
-                                val n = minOf(len - copied, c.size - pos)
-                                c.copyInto(b, off + copied, pos, pos + n)
-                                pos += n
-                                copied += n
-                            } else {
-                                current = null
-                                val next = queue.poll(2, TimeUnit.SECONDS) ?: continue
-                                current = next
-                                pos = 0
-                            }
-                        }
-                        return if (copied > 0) copied else -1
-                    }
-
-                    override fun close() {
-                    }
-                },
-            )
-    }
-
-    /** chunked 流式响应：无 Content-Length，边读边发（播放器渐进读取）。 */
-    private class StreamResponse(
-        data: InputStream,
-    ) : Response(
-            Response.Status.OK,
-            "video/mp2t",
-            data,
-            -1,
-        ) {
-        init {
-            setChunkedTransfer(true)
-            addHeader("Cache-Control", "no-cache")
-        }
-    }
+    /** 视频实际尺寸（解码器上报）：UI 宽高比布局 + 远程操作坐标映射。 */
+    actual val videoDims: MutableState<Pair<Int, Int>?> = decoder.videoDims
 
     actual fun start() {
-        if (server != null) return
-        try {
-            val srv = StreamServer()
-            srv.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
-            server = srv
-        } catch (e: IOException) {
-            TermLog.w("screen") { "http server failed: $e" }
-            onError("本地流服务启动失败：${e.message}")
-            return
-        }
-        val port = server!!.listeningPort
-        player.addListener(
-            object : Player.Listener {
-                override fun onRenderedFirstFrame() {
-                    TermLog.i("screen") { "player first frame rendered" }
-                    onReady()
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    TermLog.w("screen") { "player error: ${error.errorCodeName} ${error.message}" }
-                    onError("播放失败：${error.errorCodeName} ${error.message ?: ""}")
-                }
-            },
-        )
-        player.setMediaItem(MediaItem.fromUri("http://127.0.0.1:$port/stream.ts"))
-        player.prepare()
-        player.play()
-        TermLog.i("screen") { "player started port=$port" }
+        decoder.start()
     }
 
     actual fun feed(data: ByteArray) {
-        if (stopped) return
-        try {
-            queue.put(data)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
+        decoder.feedFrame(data)
     }
 
     actual fun stop() {
-        stopped = true
-        runCatching { player.release() }
-        runCatching { server?.stop() }
-        server = null
+        decoder.stop()
     }
 }
 
-@OptIn(UnstableApi::class)
+/**
+ * MediaCodec H.264 直解器（独立解码线程 + 有界帧队列）。
+ *
+ * 状态机（全部 codec 操作都在解码线程，UI 只读写线程安全字段）：
+ * 1. [start] 起线程；等待 surface（[attachSurface]，SurfaceView 回调注入）
+ * 2. 丢弃队列里的非关键帧，直到第一个含 SPS/PPS 的关键帧 → configure → 起播
+ * 3. 每帧一个 input buffer，输出立即 render（到达即上屏）
+ * 4. SPS 变化（分辨率切换）→ 重配；surface 销毁 → 释放，下一个关键帧重建
+ *
+ * 队列水位：解码跟不上（120fps 灌 60fps 解码）丢最旧保新——延迟锁死在
+ * 2-3 帧；丢参考帧花屏到下一个 IDR（keyint=30 ≤ 0.5s）自动恢复。
+ */
+class ScreenDecoder(
+    private val onReady: () -> Unit,
+    private val onError: (ScreenPlayerFailure) -> Unit,
+) {
+    companion object {
+        private const val MIME = "video/avc"
+        private const val QUEUE_CAPACITY = 4
+        private const val TIMEOUT_US = 10_000L
+
+        // 帧间隔 33.3ms（30fps 语义）：PTS 与真实帧率一致，避免个别解码器
+        // 按 PTS 排队调度输出（历史值 1s 步进是隐患，Surface 直渲掩盖了它）
+        private const val PTS_STEP_US = 33_333L
+    }
+
+    private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
+
+    /** 渲染帧计数（每秒诊断打点后清零）。 */
+    @Volatile private var statRendered = 0
+
+    /** 视频实际尺寸（裁剪后；从解码器输出 format 上报，UI 按 aspectRatio 布局）。 */
+    val videoDims: MutableState<Pair<Int, Int>?> = mutableStateOf(null)
+
+    @Volatile private var running = false
+
+    @Volatile private var firstFrameRendered = false
+    private var thread: Thread? = null
+
+    /**
+     * 当前存活 surface（小窗 + 全屏是两个独立 SurfaceView，可能同时存在：
+     * 全屏收起动画期间、全屏覆盖在小窗之上等）。用列表管理而不是单值——
+     * 否则全屏 surfaceDestroyed 会把小窗的引用一起清掉，解码器重建后拿
+     * 不到 surface，画面停在最后一帧（用户反馈：小窗画面静止）。
+     */
+    private val surfaces = CopyOnWriteArrayList<Surface>()
+
+    fun attachSurface(surface: Surface) {
+        if (!surfaces.contains(surface)) surfaces.add(surface)
+    }
+
+    /** 只移除指定 surface（小窗/全屏各自销毁互不影响）。 */
+    fun detachSurface(surface: Surface) {
+        surfaces.remove(surface)
+    }
+
+    private fun currentSurface(): Surface? = surfaces.lastOrNull()
+
+    fun start() {
+        if (running) return
+        running = true
+        thread =
+            Thread({ decodeLoop() }, "screen-decoder").apply {
+                priority = Thread.MAX_PRIORITY - 1
+                start()
+            }
+    }
+
+    fun stop() {
+        running = false
+        thread?.interrupt()
+        thread = null
+    }
+
+    /** 喂入一个完整帧（Annex-B 字节；TCP 协议层保证帧对齐）。 */
+    fun feedFrame(frame: ByteArray) {
+        if (!running) return
+        // 丢旧保新：水位满时丢最旧一帧（不背压发送端——延迟优先于连续性）
+        while (!queue.offer(frame)) {
+            if (queue.poll() == null) break
+        }
+    }
+
+    private fun decodeLoop() {
+        var codec: MediaCodec? = null
+        var lastDims: Pair<Int, Int>? = null
+        // 当前 codec 绑定的输出 surface（引用比较：小窗↔全屏切换时变化）
+        var boundSurface: Surface? = null
+        var pts = 0L
+        var fed = 0
+        var dropEvery = 1 // 抽帧：1 = 不抽；n = 每 n 帧丢 1（解码器满时自适应升高）
+        var dropCounter = 0
+        // 诊断统计（每秒打点：喂入/渲染/输入满/抽帧——定位解码吞吐瓶颈）
+        var lastStatAt = 0L
+        var statFed = 0
+        var statFull = 0
+        var statSkipped = 0
+
+        fun releaseCodec() {
+            try {
+                codec?.stop()
+            } catch (_: Exception) {
+            }
+            try {
+                codec?.release()
+            } catch (_: Exception) {
+            }
+            codec = null
+            boundSurface = null
+        }
+
+        try {
+            while (running) {
+                // surface 生命周期：
+                // - 全部销毁（列表空）→ 立即释放 codec（SurfaceView 回调只移除自己的
+                //   surface，codec 操作收口在本线程避免并发崩溃）。不做宽限期：codec
+                //   绑着已销毁 surface 时 setOutputSurface 换绑在部分设备上无输出，
+                //   且换绑后 boundSurface 已更新、再无重建机会 → 黑屏到切档位才恢复
+                //   （用户反馈：缩小再进全屏黑屏）。立即释放 + 下一个关键帧重建
+                //   （keyint ≈ 0.5s）即恢复。
+                // - 变化（小窗↔全屏是两个独立 SurfaceView，切换时新 surface 到达而
+                //   codec 还绑旧 surface）→ 仅当旧 surface 仍存活（双 surface 并存，
+                //   如展开/收起动画期间）才 setOutputSurface 无缝换绑（无需重建/等
+                //   关键帧）；旧 surface 已销毁 → 重建（同上，换绑不可靠）。
+                // 局部快照：codec 在 releaseCodec 闭包中被置空，需在判空前取 val
+                val sc = codec
+                if (sc != null) {
+                    val s = currentSurface()
+                    when {
+                        s == null -> releaseCodec()
+                        s !== boundSurface -> {
+                            // 旧 surface 已被销毁（不在列表中）→ 换绑不可靠，重建
+                            if (boundSurface == null || !surfaces.contains(boundSurface)) {
+                                releaseCodec()
+                            } else {
+                                val ok = runCatching { sc.setOutputSurface(s) }.isSuccess
+                                if (ok) {
+                                    boundSurface = s
+                                    TermLog.i("screen") { "surface 切换，setOutputSurface 无缝换绑" }
+                                } else {
+                                    TermLog.w("screen") { "setOutputSurface 失败，重建解码器" }
+                                    releaseCodec()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                val frame = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                val ps = H264Stream.extractParameterSets(frame)
+                val dims = ps.sps?.let { H264Stream.parseSpsDimensions(it) }
+
+                if (ps.sps != null && ps.pps != null) {
+                    // 带完整参数集的关键帧：首次 configure / 分辨率变化重配
+                    if (codec != null && dims != null && dims != lastDims) {
+                        TermLog.i("screen") { "SPS 变化 $lastDims → $dims，重配解码器" }
+                        releaseCodec()
+                    }
+                    if (codec == null) {
+                        val surface = currentSurface() ?: continue // 等 UI surface
+                        boundSurface = surface
+                        val fmt =
+                            MediaFormat.createVideoFormat(MIME, dims?.first ?: 1920, dims?.second ?: 1080).apply {
+                                setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(ps.sps))
+                                setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(ps.pps))
+                                // 低延迟模式（Android 12+，多数厂商解码器支持）：减少内部
+                                // 缓冲积压——解码输出更快到达 surface（实时性）。不支持时
+                                // 解码器忽略该键，无副作用
+                                if (Build.VERSION.SDK_INT >= 30) {
+                                    runCatching { setInteger(MediaFormat.KEY_LOW_LATENCY, 1) }
+                                }
+                                // 消费速率提示（API 26+）：解码器按此调度缓冲，避免按
+                                // 默认（可能更高）帧率预设缓冲
+                                val cap = probeDecoderMaxFps(dims?.first ?: 1920, dims?.second ?: 1080)
+                                if (cap > 0) {
+                                    runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, cap) }
+                                }
+                            }
+                        runCatching {
+                            codec =
+                                MediaCodec.createDecoderByType(MIME).also {
+                                    it.configure(fmt, surface, null, 0)
+                                    it.start()
+                                }
+                            lastDims = dims
+                            fed = 0
+                            TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
+                        }.onFailure { e ->
+                            TermLog.w("screen") { "decoder configure failed: $e" }
+                            onError(ScreenPlayerFailure.Initialization(e.message))
+                            running = false
+                            return
+                        }
+                    }
+                } else if (codec == null) {
+                    continue // 起播前：丢弃不含参数集的帧（等关键帧）
+                }
+
+                val c = codec ?: continue
+                fed++
+                // 自适应抽帧：输入超解码极限时按比例抽帧（保持节奏均匀）。
+                // 队列丢帧是「丢旧保新」节奏抖动（实测 60fps 流 MTK 解 35fps →
+                // 一快一慢）；抽帧在喂入前均匀丢弃，节奏平滑。
+                // 输入忙（拿不到 buffer）→ 抽帧率升；连续顺畅 → 缓慢回落
+                val idx = c.dequeueInputBuffer(TIMEOUT_US)
+                if (idx < 0) {
+                    // 解码器满：本帧丢弃 + 提高抽帧强度（下 n 帧丢 1）
+                    dropEvery = (dropEvery + 1).coerceAtMost(4)
+                    dropCounter = 0
+                    statFull++
+                    renderOutputs(c)
+                    continue
+                }
+                if (dropEvery > 1) {
+                    dropCounter++
+                    if (dropCounter % dropEvery != 0) {
+                        // 被抽掉的帧：占位释放 input buffer（不喂数据）
+                        c.queueInputBuffer(idx, 0, 0, pts, 0)
+                        statSkipped++
+                        renderOutputs(c)
+                        continue
+                    }
+                    if (dropCounter >= dropEvery * 8) dropCounter = 0
+                    // 连续 8 组顺畅：抽帧强度回落
+                    if (dropCounter == 0 && dropEvery > 1) dropEvery--
+                }
+                statFed++
+                val buf = c.getInputBuffer(idx)
+                if (buf != null && frame.size <= buf.capacity()) {
+                    buf.clear()
+                    buf.put(frame)
+                    c.queueInputBuffer(idx, 0, frame.size, pts, 0)
+                    pts += PTS_STEP_US
+                } else {
+                    c.queueInputBuffer(idx, 0, 0, pts, 0)
+                }
+                renderOutputs(c)
+
+                // 每秒诊断打点：fed/rendered/input-full/skipped——真机定位
+                // 「解码跟不上」是硬件极限还是管线瓶颈（旗舰机 1080p 硬解
+                // 能力远超 30fps，实测只有 25-30 极可能是缓冲/配置问题）
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastStatAt >= 1000) {
+                    val rendered = statRendered
+                    statRendered = 0
+                    TermLog.i("screen") {
+                        "decoder: fed=$statFed rendered=$rendered " +
+                            "inputFull=$statFull skipped=$statSkipped dropEvery=$dropEvery queue=${queue.size}"
+                    }
+                    lastStatAt = nowMs
+                    statFed = 0
+                    statRendered = 0
+                    statFull = 0
+                    statSkipped = 0
+                }
+
+                // ⚠️ MTK 吞输入 watchdog：喂了 600 帧仍零输出 → 上报（历史 OPPO/MTK 坑）
+                if (!firstFrameRendered && fed > 600) {
+                    TermLog.w("screen") { "解码器吞输入：fed=$fed 无输出" }
+                    onError(ScreenPlayerFailure.NoOutput(fed))
+                    running = false
+                    break
+                }
+            }
+        } catch (e: InterruptedException) {
+            // stop() 中断：正常退出
+        } catch (e: Exception) {
+            TermLog.w("screen") { "decode loop error: ${e::class.simpleName} ${e.message}" }
+            onError(ScreenPlayerFailure.Decoding(e.message ?: e::class.simpleName.orEmpty()))
+        } finally {
+            releaseCodec()
+        }
+    }
+
+    private fun renderOutputs(codec: MediaCodec) {
+        val info = MediaCodec.BufferInfo()
+        while (true) {
+            val idx = codec.dequeueOutputBuffer(info, 0)
+            when {
+                idx == MediaCodec.INFO_TRY_AGAIN_LATER -> return
+                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val f = codec.outputFormat
+                    TermLog.i("screen") { "decoder format: $f" }
+                    val dims =
+                        runCatching {
+                            val w =
+                                if (f.containsKey("crop-right") && f.containsKey("crop-left")) {
+                                    f.getInteger("crop-right") + 1 - f.getInteger("crop-left")
+                                } else {
+                                    f.getInteger(MediaFormat.KEY_WIDTH)
+                                }
+                            val h =
+                                if (f.containsKey("crop-bottom") && f.containsKey("crop-top")) {
+                                    f.getInteger("crop-bottom") + 1 - f.getInteger("crop-top")
+                                } else {
+                                    f.getInteger(MediaFormat.KEY_HEIGHT)
+                                }
+                            w to h
+                        }.getOrNull()
+                    if (dims != null) videoDims.value = dims
+                }
+                idx >= 0 -> {
+                    if (info.size > 0) {
+                        codec.releaseOutputBuffer(idx, true)
+                        statRendered++
+                        if (!firstFrameRendered) {
+                            firstFrameRendered = true
+                            TermLog.i("screen") { "first frame rendered (direct)" }
+                            onReady()
+                        }
+                    } else {
+                        codec.releaseOutputBuffer(idx, false)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 actual fun ScreenVideoSurface(
     player: ScreenPlayer?,
     modifier: Modifier,
+    alignBottom: Boolean,
 ) {
-    val p = player?.player
-    if (p == null) {
+    if (player == null) {
         Box(modifier.background(ComposeColor.Black))
         return
     }
-    AndroidView(
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                useController = false
-                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                setBackgroundColor(Color.BLACK)
-                this.player = p
+    // 宽高比适配：解码器上报实际尺寸前铺满（黑底），上报后按比例居中
+    // （替代 ExoPlayer PlayerView 的 RESIZE_MODE_FIT，SurfaceView 不会自己 letterbox）。
+    // 远程键盘弹出时贴底（alignBottom）：视频底部贴工具栏，黑边留顶部
+    val dims = player.decoder.videoDims.value
+    Box(
+        modifier.background(ComposeColor.Black),
+        contentAlignment = if (alignBottom) Alignment.BottomCenter else Alignment.Center,
+    ) {
+        val surfaceModifier =
+            if (dims != null) {
+                Modifier.aspectRatio(dims.first.toFloat() / dims.second.toFloat())
+            } else {
+                Modifier
             }
-        },
-        update = { it.player = p },
-        modifier = modifier,
-    )
+        AndroidView(
+            factory = { ctx ->
+                SurfaceView(ctx).apply {
+                    holder.addCallback(
+                        object : SurfaceHolder.Callback {
+                            override fun surfaceCreated(holder: SurfaceHolder) {
+                                player.decoder.attachSurface(holder.surface)
+                            }
+
+                            override fun surfaceChanged(
+                                holder: SurfaceHolder,
+                                format: Int,
+                                width: Int,
+                                height: Int,
+                            ) {
+                            }
+
+                            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                player.decoder.detachSurface(holder.surface)
+                            }
+                        },
+                    )
+                }
+            },
+            modifier = surfaceModifier,
+        )
+    }
+}
+
+/**
+ * 探测硬件解码器在指定分辨率下的帧率上限（MediaCodecList 能力查询）。
+ * 取所有 avc 硬解器中最大值；无信息/失败返回 0（未知——调用方不钳制）。
+ * 旗舰机 1080p H.264 通常 60+；若探测值 < 推流档位，说明解码器真跟不上，
+ * 档位菜单据此隐藏超出项（避免推了也白推——带宽浪费 + 解码器满载排队）。
+ */
+actual fun probeDecoderMaxFps(
+    width: Int,
+    height: Int,
+): Int {
+    val key = "$width x $height"
+    decoderProbeCache[key]?.let { return it }
+    var best = 0
+    try {
+        val list = MediaCodecList(MediaCodecList.ALL_CODECS)
+        for (info in list.codecInfos) {
+            if (info.isEncoder || !info.supportedTypes.any { it.equals(DECODER_MIME, ignoreCase = true) }) continue
+            if (Build.VERSION.SDK_INT >= 29 && !info.isHardwareAccelerated) continue
+            runCatching {
+                val caps = info.getCapabilitiesForType(DECODER_MIME)
+                val fps =
+                    caps.videoCapabilities
+                        .getSupportedFrameRatesFor(width, height)
+                        .upper
+                        .toInt()
+                if (fps > best) best = fps
+            }
+        }
+    } catch (_: Throwable) {
+        // 探测失败不阻断：返回 0 = 未知
+    }
+    decoderProbeCache[key] = best
+    return best
 }

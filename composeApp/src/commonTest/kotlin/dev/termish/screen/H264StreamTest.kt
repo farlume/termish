@@ -117,5 +117,10 @@ class H264StreamTest {
         assertNotNull(dims, "应能解析出宽高")
         assertEquals(1280, dims.first)
         assertEquals(720, dims.second)
+
+        val annexBDims = H264Stream.parseSpsDimensions(H264Stream.withStartCode(sps))
+        assertNotNull(annexBDims, "MediaCodec CSD 形式的 SPS 也应能解析")
+        assertEquals(1280, annexBDims.first)
+        assertEquals(720, annexBDims.second)
     }
 }
