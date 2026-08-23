@@ -31,6 +31,15 @@ fun parseMoshConnect(output: String): Pair<Int, String>? {
     return m.groupValues[1].toIntOrNull()?.let { it to m.groupValues[2] }
 }
 
+/** 解析 `mosh-server new` 脱离终端时报告的服务端 PID，用于引导失败后精确清理。 */
+internal fun parseMoshServerPid(output: String): Int? =
+    Regex("\\[mosh-server detached, pid = (\\d+)]")
+        .find(output)
+        ?.groupValues
+        ?.get(1)
+        ?.toIntOrNull()
+        ?.takeIf { it > 1 }
+
 /**
  * 系统探测命令（Termius 同款思路：连接后用 exec 通道读取 /etc/os-release 与
  * uname，自动识别远端系统，用户无需手动填写）。

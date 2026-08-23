@@ -23,6 +23,21 @@ class MoshConnectParseTest {
     }
 
     @Test
+    fun parsesDetachedServerPid() {
+        val output =
+            "MOSH CONNECT 60042 dG9rZW4=\n" +
+                "[mosh-server detached, pid = 46810]\nDarwin\n"
+        assertEquals(46810, parseMoshServerPid(output))
+    }
+
+    @Test
+    fun rejectsMissingOrUnsafeServerPid() {
+        assertNull(parseMoshServerPid("MOSH CONNECT 60042 key"))
+        assertNull(parseMoshServerPid("[mosh-server detached, pid = 1]"))
+        assertNull(parseMoshServerPid("[mosh-server detached, pid = not-a-pid]"))
+    }
+
+    @Test
     fun rejectsNonNumericPort() {
         assertNull(parseMoshConnect("MOSH CONNECT abc key"))
     }

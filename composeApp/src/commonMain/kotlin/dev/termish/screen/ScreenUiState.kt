@@ -8,7 +8,7 @@ import androidx.compose.runtime.setValue
  * 屏幕会话 UI 状态（挂在会话条目上，切 tab 保留）。
  */
 class ScreenUiState {
-    /** 视频播放器（ExoPlayer 渲染面绑定用；null = 未建立）。 */
+    /** 视频播放器（渲染面绑定用；null = 未建立）。 */
     var player by mutableStateOf<ScreenPlayer?>(null)
 
     /** 播放器已渲染首帧。 */
@@ -38,6 +38,21 @@ class ScreenUiState {
     /** 解码能力探测的帧率上限（0 = 未知；档位菜单据此隐藏超出项）。 */
     var decoderMaxFps by mutableStateOf(0)
 
+    /** 远程操作模式（触摸→鼠标/滚轮，默认开）；关闭 = 纯观看（本地缩放平移，无键盘）。 */
+    var controlMode by mutableStateOf(true)
+
+    /** 被控端缺辅助功能权限（relay 状态包上报，引导用户授权）。 */
+    var controlPermissionMissing by mutableStateOf(false)
+
+    /** 被控端平台不支持远程控制（Linux 无 CGEvent；relay 状态 2 上报）。 */
+    var controlUnsupported by mutableStateOf(false)
+
+    /** 远程操作发送器（ScreenSession 注入：触摸事件 → TCP 控制包）。 */
+    var controlSender: ((type: Int, x: Float, y: Float, extra: Int) -> Unit)? by mutableStateOf(null)
+
+    /** 远程键盘发送器：keyCode + 修饰掩码 + 文本（文本非空时优先）。 */
+    var keySender: ((keyCode: Int, mods: Int, text: String) -> Unit)? by mutableStateOf(null)
+
     /** 远端缺 ffmpeg（引导安装信号）。 */
     var ffmpegMissing by mutableStateOf(false)
 
@@ -49,6 +64,9 @@ class ScreenUiState {
 
     /** 服务安装中。 */
     var installing by mutableStateOf(false)
+
+    /** Linux 安装 ffmpeg 需要 sudo 密码（仅本次安装使用，不保存）。 */
+    var needsSudoPassword by mutableStateOf(false)
 
     /** 安装日志（实时展示）。 */
     var installLog by mutableStateOf("")

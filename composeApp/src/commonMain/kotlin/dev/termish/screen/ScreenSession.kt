@@ -2,6 +2,7 @@ package dev.termish.screen
 
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
+import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import dev.termish.ssh.createSshSession
 import dev.termish.util.TermLog
@@ -13,9 +14,39 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 
+/** ScreenSession 只持有结构化行为；所有用户可见文案由 AppStrings 在创建时注入。 */
+internal data class ScreenSessionMessages(
+    val connectionFailed: String,
+    val readChannelFailed: String,
+    val tcpPortMissing: String,
+    val tcpChannelFailed: (Int) -> String,
+    val tcpDisconnected: String,
+    val ffmpegMissing: String,
+    val unsupportedOs: (String) -> String,
+    val relayUpgradeRequired: String,
+    val displayMissing: String,
+    val serviceNotRunning: String,
+    val waylandHint: String,
+    val screenAsleepHint: String,
+    val screenLockedHint: String,
+    val firstFrameTimeout: String,
+    val decoderInitializationFailed: (String?) -> String,
+    val decoderNoOutput: (Int) -> String,
+    val decodingFailed: (String) -> String,
+    val playerUnsupported: String,
+) {
+    fun playerFailure(failure: ScreenPlayerFailure): String =
+        when (failure) {
+            is ScreenPlayerFailure.Initialization -> decoderInitializationFailed(failure.detail)
+            is ScreenPlayerFailure.NoOutput -> decoderNoOutput(failure.fedFrames)
+            is ScreenPlayerFailure.Decoding -> decodingFailed(failure.detail)
+            ScreenPlayerFailure.Unsupported -> playerUnsupported
+        }
+}
+
 /**
- * 屏幕推流会话：独立 SSH 连接 + 无 pty exec 通道读远端推流服务，
- * H.264 Annex-B 流逐 NAL 喂硬件解码器，帧回调更新 [ScreenUiState.frame]。
+ * 屏幕推流会话：独立 SSH 连接 + direct-tcpip 转发远端回环视频服务，
+ * TCP 显式分帧后将 H.264 Annex-B 完整帧喂给硬件解码器。
  *
  * 架构（macOS 屏幕录制权限的硬约束决定）：
  * - macOS 的 TCC 只对 GUI 登录会话放行屏幕捕获，SSH/mosh 后台会话无论给
@@ -23,33 +54,33 @@ import kotlinx.datetime.Clock
  * - 因此推流进程（ffmpeg avfoundation 抓屏 → VideoToolbox 硬编 H.264；
  *   Linux 退回落 libx264 软编）作为
  *   LaunchAgent 跑在用户 GUI 域（launchctl bootstrap gui/$(id -u)），常驻
- *   监听 127.0.0.1:17321；手机侧 SSH 只做传输（nc 读流），无需录屏权限。
+ *   监听回环端口；手机侧复用 SSH 传输视频/控制 TCP 流，不需要
+ *   额外公网端口或 UDP 回程。
  * - 服务缺失时远端上报 SCREEN_SERVICE_MISSING → uiState.serviceMissing，
  *   UI 引导一键安装（[installService]，与 herdr 安装引导同模式）。
  */
-class ScreenSession(
+class ScreenSession internal constructor(
     private val connection: SshConnection,
     private val callbacks: SshCallbacks,
     private val scope: CoroutineScope,
     private val uiState: ScreenUiState,
+    private val messages: ScreenSessionMessages,
     /** 非主动关闭的断流回调（EOF/异常）：AppRoot 借此自动重连（用户反馈：
      * relay 重启/会话切换导致「画面流已断开」需手动重连）。 */
     private val onStreamLost: (() -> Unit)? = null,
 ) {
     private var ssh: SshSession? = null
     private var player: ScreenPlayer? = null
+
+    @Volatile
     private var running = false
     private var installing = false
 
-    /** 远端 stderr 最近内容（ffmpeg 报错透传；断流时拼进错误信息供诊断）。 */
-    @Volatile
-    private var lastStderr = ""
-
     /** 首帧超时（连接建立后无帧到达视为推流异常，给可见提示）。 */
     private var firstFrameDeadline = 0L
+    private var firstFrameError: String? = null
 
-    /** UDP 漫游会话（视频流 + 心跳；断网不显示断开，恢复续传）。 */
-    private var udpSession: ScreenStreamUdpSession? = null
+    private var tcpSession: ScreenTcpSession? = null
 
     fun start() {
         if (running) return
@@ -59,24 +90,24 @@ class ScreenSession(
             try {
                 val session = withContext(ioDispatcher()) { createSshSession(connection, callbacks) }
                 ssh = session
-                // 先建立连接 + 认证（否则 startExecRaw 无可用连接直接失败）
+                // 先建立连接 + 认证，后续控制面 exec 与视频 direct-tcpip
+                // 都复用这条 SSH 连接。
                 val connected = withContext(ioDispatcher()) { session.connectAuthOnly() }
                 TermLog.i("screen") { "connectAuthOnly=${connected != null}" }
                 if (connected == null) {
-                    uiState.error = "连接失败"
+                    uiState.error = messages.connectionFailed
                     running = false
                     return@launch
                 }
-                // 读流脚本一次性执行：探测 relay 存活 + 版本/ffmpeg/屏幕状态，
-                // 并输出 UDP 端口——视频流走 UDP 漫游，不再经 SSH 通道读流
-                // （同一连接 runCommand 后不再 startExecRaw，避开 sshj 第二个
-                // exec 通道立即 EOF 的坑）
+                // 控制面探测：relay 存活 + 版本/ffmpeg/屏幕状态 + TCP 内部端口。
+                // 视频面随后用同一 SSH 连接的 direct-tcpip 通道访问远端回环端口，
+                // 不要求公网额外开放视频端口。
                 val result =
                     withContext(ioDispatcher()) {
                         session.runCommandDetailed(READ_STREAM_SCRIPT, 15_000)
                     }
                 if (result == null) {
-                    uiState.error = "无法启动远端读流通道"
+                    uiState.error = messages.readChannelFailed
                     running = false
                     return@launch
                 }
@@ -85,24 +116,44 @@ class ScreenSession(
                     running = false
                     return@launch
                 }
-                val udpPort =
+                val tcpPort =
                     result.stdout
                         .lineSequence()
-                        .firstOrNull { it.startsWith("SCREEN_UDP_PORT:") }
+                        .firstOrNull { it.startsWith("SCREEN_TCP_PORT:") }
                         ?.substringAfter(":")
                         ?.trim()
                         ?.toIntOrNull()
+                val authToken = parseAuthToken(result.stdout)
                 // 远端推流参数回读：同步 UI 档位（relay 每连接读 conf，重装 App/
                 // 多端写入后远端值可能与本机默认不同——否则 UI 显示 30 实推 120）
                 val (cfgFps, cfgScale) = parseStreamCfg(result.stdout)
                 cfgFps?.let { uiState.streamFps = it }
                 cfgScale?.let { uiState.streamQuality = qualityIndexFor(it) }
-                if (udpPort == null) {
-                    uiState.error = "无法获取远端 UDP 端口"
+                if (tcpPort == null || authToken == null) {
+                    uiState.error = if (authToken == null) messages.relayUpgradeRequired else messages.tcpPortMissing
+                    uiState.serviceMissing = authToken == null
+                    uiState.relayNeedsUpgrade = authToken == null
                     running = false
                     return@launch
                 }
-                // 播放器接管解码/渲染（ExoPlayer 本地 HTTP 流）；首帧回调清超时
+                // relay 与 SSH direct-tcpip 通道启动存在很短竞态（服务刚升级/重启时），
+                // 小步重试而不是直接把一次 connection-refused 暴露给用户。
+                var videoChannel: SshExecChannel? = null
+                for (attempt in 0 until 6) {
+                    videoChannel =
+                        withContext(ioDispatcher()) {
+                            session.openDirectTcpip("127.0.0.1", tcpPort)
+                        }
+                    if (videoChannel != null) break
+                    if (attempt < 5) delay(250)
+                }
+                val directChannel = videoChannel
+                if (directChannel == null) {
+                    uiState.error = messages.tcpChannelFailed(tcpPort)
+                    running = false
+                    return@launch
+                }
+                // 播放器接管 H.264 硬解/渲染；首帧回调清超时。
                 val p =
                     ScreenPlayer(
                         onReady = {
@@ -110,11 +161,12 @@ class ScreenSession(
                             scope.launch {
                                 uiState.videoReady = true
                                 // 画面到达：清除超时与息屏/锁屏提示（可恢复状态）
-                                if (uiState.error == FIRST_FRAME_TIMEOUT_MSG) uiState.error = null
+                                if (uiState.error == firstFrameError) uiState.error = null
+                                firstFrameError = null
                                 uiState.screenHint = null
                             }
                         },
-                        onError = { msg -> scope.launch { uiState.error = msg } },
+                        onError = { failure -> scope.launch { uiState.error = messages.playerFailure(failure) } },
                     )
                 player = p
                 uiState.player = p
@@ -131,7 +183,6 @@ class ScreenSession(
                     }
                 uiState.decoderMaxFps = probeDecoderMaxFps(capW, (capW * 9 / 16).coerceAtLeast(480))
                 TermLog.i("screen") { "decoder capability: ${uiState.decoderMaxFps}fps @ ${capW}p" }
-                uiState.connected = true
                 firstFrameDeadline = Clock.System.now().toEpochMilliseconds() + 12_000
                 // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）。
                 // 首帧到达后 onReady 把 deadline 清零，本监控自然退出
@@ -139,40 +190,64 @@ class ScreenSession(
                     while (running && firstFrameDeadline > 0) {
                         if (Clock.System.now().toEpochMilliseconds() > firstFrameDeadline) {
                             if (running && !uiState.videoReady && uiState.error == null) {
-                                uiState.error = FIRST_FRAME_TIMEOUT_MSG
+                                firstFrameError = messages.firstFrameTimeout
+                                uiState.error = firstFrameError
                             }
                             break
                         }
                         delay(500)
                     }
                 }
-                // UDP 漫游会话：视频包喂播放器。断网不显示断开（漫游语义），
-                // 链路健康度只做弱网提示，不触发断流重连
-                val udp =
-                    ScreenStreamUdpSession(
-                        ip = connection.host,
-                        port = udpPort,
+                // 双向视频通道复用已认证 SSH：远端 relay 仅监听回环地址，
+                // 视频与控制均不依赖运营商 UDP 回程或额外公网端口映射。
+                val tcp =
+                    ScreenTcpSession(
+                        channel = directChannel,
                         scope = scope,
+                        authToken = authToken,
                         onVideoPacket = { data -> p.feed(data) },
-                        onLinkStatus = { lostSecs ->
-                            if (lostSecs > 0) {
-                                if (uiState.screenHint == null) {
-                                    uiState.screenHint = "网络不稳定（已断 ${lostSecs}s，恢复后自动续传）"
+                        onStatus = { status ->
+                            // 首包控制状态：0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
+                            scope.launch {
+                                uiState.controlPermissionMissing = status == 1
+                                uiState.controlUnsupported = status == 2
+                            }
+                        },
+                        onDisconnected = {
+                            // direct-tcpip 断开通常意味着底层 SSH 或 relay 已断；走
+                            // AppRoot 的完整重连，重新认证并重建干净通道。
+                            if (running) {
+                                running = false
+                                scope.launch {
+                                    uiState.connected = false
+                                    uiState.error = messages.tcpDisconnected
                                 }
-                            } else if (uiState.screenHint?.startsWith("网络不稳定") == true) {
-                                uiState.screenHint = null
+                                onStreamLost?.invoke()
                             }
                         },
                     )
-                udpSession = udp
-                udp.start()
-                TermLog.i("screen") { "UDP 会话已启动 port=$udpPort" }
+                tcpSession = tcp
+                tcp.start()
+                uiState.connected = true
+                // 远程操作发送器：控制包走 TCP 通道
+                uiState.controlSender = { type, x, y, extra ->
+                    tcp.sendRaw(ScreenControlPacket.encode(type, x, y, extra))
+                }
+                // 远程键盘发送器：文本 / 键码+修饰 → TCP 控制包
+                uiState.keySender = { keyCode, mods, text ->
+                    if (text.isNotEmpty()) {
+                        runCatching { tcp.sendRaw(ScreenControlPacket.encodeText(text)) }
+                    } else {
+                        tcp.sendRaw(ScreenControlPacket.encodeKey(keyCode, mods))
+                    }
+                }
+                TermLog.i("screen") { "SSH direct-tcpip 视频会话已建立 remote=127.0.0.1:$tcpPort" }
             } catch (e: Exception) {
                 // message 可能为 null（如 NetworkOnMainThreadException），必须记全类名 + 堆栈
                 TermLog.w("screen") { "screen session error: ${e::class.qualifiedName}: ${e.message}" }
                 TermLog.w("screen") { e.stackTraceToString().take(1500) }
                 if (running) {
-                    uiState.error = e.message ?: "连接失败"
+                    uiState.error = messages.connectionFailed
                     running = false
                     onStreamLost?.invoke()
                 }
@@ -188,7 +263,7 @@ class ScreenSession(
         if (err.contains("FFMPEG_MISSING")) {
             uiState.ffmpegMissing = true
             uiState.serviceMissing = true
-            uiState.error = "远端未安装 ffmpeg"
+            uiState.error = messages.ffmpegMissing
             return false
         }
         if (err.contains("SCREEN_UNSUPPORTED_OS")) {
@@ -198,34 +273,35 @@ class ScreenSession(
                     .lineSequence()
                     .first()
                     .trim()
-            uiState.error = "屏幕推流仅支持 macOS / Linux 桌面主机（当前远端为 $os）"
+            uiState.error = messages.unsupportedOs(os)
             return false
         }
-        if (err.contains("SCREEN_RELAY_OLD")) {
+        if (err.contains("SCREEN_RELAY_OLD") || err.contains("SCREEN_AUTH_MISSING")) {
             uiState.serviceMissing = true
             uiState.relayNeedsUpgrade = true
-            uiState.error = "推流服务需要升级（远端 relay 版本过旧），点安装更新"
+            uiState.error = messages.relayUpgradeRequired
             return false
         }
         if (err.contains("SCREEN_NO_DISPLAY")) {
-            uiState.error = "屏幕推流需要图形会话（当前远端未检测到 X11 桌面显示）"
+            uiState.error = messages.displayMissing
             return false
         }
         if (err.contains("SCREEN_SERVICE_MISSING") ||
+            err.contains("SCREEN_VIDEO_SERVICE_MISSING") ||
             err.contains("Connection refused", ignoreCase = true)
         ) {
             uiState.serviceMissing = true
-            uiState.error = "远端推流服务未运行"
+            uiState.error = messages.serviceNotRunning
             return false
         }
         // 提示类（不阻断推流）
         if (err.contains("SCREEN_WAYLAND_ONLY")) {
-            uiState.screenHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口（建议改用 Xorg 会话）"
+            uiState.screenHint = messages.waylandHint
         }
         if (err.contains("SCREEN_ASLEEP")) {
-            uiState.screenHint = "Mac 屏幕已关闭，唤醒后画面自动恢复"
+            uiState.screenHint = messages.screenAsleepHint
         } else if (err.contains("SCREEN_LOCKED")) {
-            uiState.screenHint = "Mac 处于锁屏状态，画面为锁屏界面（解锁后恢复桌面）"
+            uiState.screenHint = messages.screenLockedHint
         }
         return true
     }
@@ -236,6 +312,7 @@ class ScreenSession(
      * 流式输出进 [onLog]（UI 实时展示），完成后回调 [onComplete]。
      */
     fun installService(
+        sudoPassword: String? = null,
         onLog: (String) -> Unit,
         onComplete: (Boolean) -> Unit,
     ) {
@@ -250,23 +327,91 @@ class ScreenSession(
         uiState.installLog = ""
         scope.launch {
             try {
+                // 与 Mosh 安装一致：Linux 缺 ffmpeg 时先判断权限三态。
+                // 仅确实需要交互式 sudo 的场景显示密码框；密码不写进命令行。
+                val os = withContext(ioDispatcher()) { s.runCommand("uname -s", 3_000)?.trim() }
+                val ffmpegPresent =
+                    if (os == "Linux") {
+                        withContext(ioDispatcher()) {
+                            s.runCommand(FFMPEG_PROBE_SCRIPT, 3_000)?.contains("FFMPEG_OK") == true
+                        }
+                    } else {
+                        true
+                    }
+                val isRoot =
+                    os == "Linux" &&
+                        withContext(ioDispatcher()) { s.runCommand("id -u", 3_000)?.trim() == "0" }
+                val hasSudo =
+                    os == "Linux" &&
+                        !isRoot &&
+                        withContext(ioDispatcher()) {
+                            s.runCommand("command -v sudo", 3_000)?.isNotBlank() == true
+                        }
+                val sudoPasswordless =
+                    if (os == "Linux" && !ffmpegPresent && !isRoot && hasSudo) {
+                        withContext(ioDispatcher()) {
+                            s
+                                .runCommand("sudo -n true 2>/dev/null && echo SUDO_OK", 3_000)
+                                ?.contains("SUDO_OK") == true
+                        }
+                    } else {
+                        false
+                    }
+                val sudoNeedsPassword =
+                    needsScreenSudoPassword(
+                        os = os,
+                        ffmpegPresent = ffmpegPresent,
+                        isRoot = isRoot,
+                        hasSudo = hasSudo,
+                        sudoPasswordless = sudoPasswordless,
+                    )
+                if (sudoNeedsPassword && sudoPassword.isNullOrBlank()) {
+                    TermLog.i("screen") { "Linux ffmpeg install requires sudo password" }
+                    installing = false
+                    uiState.installing = false
+                    uiState.needsSudoPassword = true
+                    return@launch
+                }
+
                 val log = StringBuilder()
-                val ch = withContext(ioDispatcher()) { s.startExecRaw(INSTALL_SCRIPT) }
+                val command =
+                    if (sudoNeedsPassword) {
+                        "TERMISH_SUDO_STDIN=1\n$INSTALL_SCRIPT"
+                    } else {
+                        INSTALL_SCRIPT
+                    }
+                val ch = withContext(ioDispatcher()) { s.startExecRaw(command) }
                 if (ch != null) {
+                    // 无 PTY 的 stdin 不回显；sudo -S 只为本次安装读取这一行。
+                    if (sudoNeedsPassword) {
+                        withContext(ioDispatcher()) {
+                            ch.write((sudoPassword + "\n").encodeToByteArray())
+                        }
+                    }
+
+                    fun visibleLog(): String {
+                        val tail = log.toString().takeLast(4096)
+                        return if (sudoNeedsPassword && (sudoPassword?.length ?: 0) >= 4) {
+                            tail.replace(sudoPassword!!, "***")
+                        } else {
+                            tail
+                        }
+                    }
+
                     // stdout = 安装进度；stderr 错误合并进日志
                     val errJob =
                         scope.launch {
                             while (true) {
                                 val err = withContext(ioDispatcher()) { ch.readErr() } ?: break
                                 log.append(err.decodeToString().replace("\r", ""))
-                                onLog(log.toString().takeLast(4096))
+                                onLog(visibleLog())
                             }
                         }
                     withContext(ioDispatcher()) {
                         while (true) {
                             val data = ch.read() ?: break
                             log.append(data.decodeToString().replace("\r", ""))
-                            onLog(log.toString().takeLast(4096))
+                            onLog(visibleLog())
                         }
                         ch.close()
                     }
@@ -276,7 +421,9 @@ class ScreenSession(
                 uiState.installing = false
                 // 脚本 set -e 失败时通道 EOF 但退出码拿不到：以脚本的成功标记
                 // TERMISH_SCREEN_OK 判定，避免装失败也触发重连白转圈
-                onComplete(log.contains("TERMISH_SCREEN_OK"))
+                val succeeded = log.contains("TERMISH_SCREEN_OK")
+                if (succeeded) uiState.needsSudoPassword = false
+                onComplete(succeeded)
             } catch (e: Exception) {
                 TermLog.w("screen") { "install service error: $e" }
                 installing = false
@@ -302,13 +449,20 @@ class ScreenSession(
 
     fun close() {
         running = false
-        udpSession?.close()
-        udpSession = null
+        firstFrameDeadline = 0
+        firstFrameError = null
+        tcpSession?.close()
+        tcpSession = null
         try {
             player?.stop()
         } catch (_: Exception) {
         }
         player = null
+        uiState.player = null
+        uiState.controlSender = null
+        uiState.keySender = null
+        uiState.connected = false
+        uiState.videoReady = false
         try {
             ssh?.close()
         } catch (_: Exception) {
@@ -317,14 +471,33 @@ class ScreenSession(
     }
 
     companion object {
-        /** 首帧超时提示文案（帧到达时清除，见 [onFrame]）。 */
-        const val FIRST_FRAME_TIMEOUT_MSG = "画面数据未到达（检查远端推流服务 / ffmpeg）"
-
         /** 推流服务 TCP 端口（LaunchAgent 常驻；读流脚本 lsof 探测存活）。 */
         const val SCREEN_PORT = 17321
 
-        /** 视频流 UDP 端口（relay 分片发送 + 手机心跳，漫游续传）。 */
-        const val SCREEN_UDP_PORT = 17322
+        /** relay 内部 TCP 视频端口（仅监听远端回环，由 SSH direct-tcpip 访问）。 */
+        const val SCREEN_TCP_PORT = 17323
+
+        /** 安装前探测 ffmpeg；与读流/安装脚本使用同一组非交互 SSH PATH 兜底。 */
+        internal val FFMPEG_PROBE_SCRIPT =
+            """
+            for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg /usr/bin/ffmpeg; do
+              if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then echo FFMPEG_OK; exit 0; fi
+            done
+            """.trimIndent()
+
+        /** Linux 缺依赖时是否需要弹出 sudo 密码输入；纯逻辑供各平台一致回归。 */
+        internal fun needsScreenSudoPassword(
+            os: String?,
+            ffmpegPresent: Boolean,
+            isRoot: Boolean,
+            hasSudo: Boolean,
+            sudoPasswordless: Boolean,
+        ): Boolean =
+            os == "Linux" &&
+                !ffmpegPresent &&
+                !isRoot &&
+                hasSudo &&
+                !sudoPasswordless
 
         /**
          * relay 协议版本：客户端内置安装脚本部署的 relay 与远端已运行 relay
@@ -332,28 +505,19 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 12
+        const val RELAY_VERSION = 23
 
         /**
-         * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
-         * （UI 转引导安装）；在则 nc 读流到 stdout。
-         *
-         * 注意：探测必须放脚本内（不能用 sshj 的 runCommand 预探测）——同一连接上
-         * 先 runCommand 再 startExecRaw 时，第二个 exec 通道会立即 EOF（sshj 坑，实测）。
-         * < /dev/null：忽略 stdin——exec 通道 stdin 保持打开时 nc 会阻塞在 stdin 读
-         * 而不读 socket（实测：sshj 通道下 0 字节立即 EOF）。
+         * 读流前置脚本：只做 relay/版本/ffmpeg/显示状态探测，成功时回报
+         * 远端回环 TCP 视频端口。实际视频不经 exec stdout，由 SSH direct-tcpip
+         * 建立独立双向通道。
          */
         val READ_STREAM_SCRIPT =
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=12，远端版本文件缺失/不一致
-            # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
-            # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "12" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=12" >&2
-              exit 1
-            fi
+            # 先确认远端确实是可抓取的桌面系统，再检查 relay 版本。否则无桌面的
+            # Linux 服务器/容器会被误判成“服务版本旧”，诱导用户执行无意义的安装。
             case "${'$'}OS" in
               Darwin)
                 # macOS：avfoundation 抓屏（LaunchAgent 服务）
@@ -364,8 +528,7 @@ class ScreenSession(
                 # SSH 无显示环境（服务器/容器）时直接提示，不引导安装。
                 # 检测：X socket + X server 进程。Xwayland 也计（Wayland 桌面
                 # 的 X11 兼容层，Ubuntu 22.04+ 默认 GNOME 即 Wayland 会话）；
-                # 纯 Wayland 只能抓 X11 应用窗口，标记提示不阻断（用户反馈：
-                # 远端有桌面却报未检测到 X11）
+                # 纯 Wayland 只能抓 X11 应用窗口，标记提示但不阻断。
                 if ! ls /tmp/.X11-unix/X* >/dev/null 2>&1; then
                   echo "SCREEN_NO_DISPLAY" >&2
                   exit 1
@@ -383,6 +546,19 @@ class ScreenSession(
                 exit 1
                 ;;
             esac
+            # relay 版本匹配：远端版本文件缺失/不一致
+            # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
+            # 应与远端脚本版本匹配）
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "$RELAY_VERSION" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=$RELAY_VERSION" >&2
+              exit 1
+            fi
+            TOKEN_FILE="${'$'}HOME/.termish-screen.token"
+            TOKEN="${'$'}(tr -d '\r\n' < "${'$'}TOKEN_FILE" 2>/dev/null || true)"
+            if ! printf '%s' "${'$'}TOKEN" | grep -Eq '^[0-9a-fA-F]{64}${'$'}'; then
+              echo "SCREEN_AUTH_MISSING" >&2
+              exit 1
+            fi
             # ffmpeg 查找：SSH 非交互会话 PATH 受限（无 brew 目录），command -v 常漏掉
             # brew 安装的 ffmpeg → 误报 FFMPEG_MISSING（v1.5.0 用户反馈：装过还提示安装）
             FF=""
@@ -390,8 +566,13 @@ class ScreenSession(
               if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
             done
             if [ -z "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
-            if ! lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1; then
+            if ! (lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1 \
+              || ss -ltn 2>/dev/null | grep -q ":${'$'}PORT "); then
               echo "SCREEN_SERVICE_MISSING" >&2; exit 1
+            fi
+            if ! (lsof -nP -iTCP:${'$'}((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1 \
+              || ss -ltn 2>/dev/null | grep -q ":${'$'}((PORT + 2)) "); then
+              echo "SCREEN_VIDEO_SERVICE_MISSING" >&2; exit 1
             fi
             # 屏幕状态探测（仅提示，不阻断推流）：息屏时 avfoundation 无帧、
             # 锁屏时画面为锁屏界面——客户端据此给出明确提示而非「连接不上」
@@ -418,8 +599,11 @@ class ScreenSession(
             # 推流参数回读（客户端同步档位显示；conf 可能为其它端写入的旧值）
             CFG="${'$'}HOME/.termish-screen.conf"
             [ -f "${'$'}CFG" ] && grep -E '^(fps|scale)=' "${'$'}CFG" | sed 's/^fps=/SCREEN_CFG_FPS:/;s/^scale=/SCREEN_CFG_SCALE:/' || true
-            # 视频流走 UDP 漫游：输出 UDP 端口后退出（客户端据此建 UDP 会话）
-            echo "SCREEN_UDP_PORT:${'$'}((PORT + 1))"
+            # 视频流走 SSH direct-tcpip：只回报 relay 的远端回环 TCP 端口，
+            # 客户端无需也不会直接访问公网端口。token 仅经已认证 SSH stdout
+            # 返回，不写日志；direct-tcpip 建连后先用它做握手。
+            echo "SCREEN_TCP_PORT:${'$'}((PORT + 2))"
+            echo "SCREEN_AUTH_TOKEN:${'$'}TOKEN"
             """.trimIndent()
 
         /**
@@ -464,41 +648,274 @@ class ScreenSession(
                 FF="${'$'}HOME/bin/ffmpeg"
               fi
               else
-                # Linux：免密 sudo 时自动 apt 安装 ffmpeg；需密码时提示手动
-                #（用户反馈：Ubuntu 引导安装失败——ffmpeg 缺失且只提示手动装）
-                if sudo -n true 2>/dev/null; then
-                  echo "==> 正在通过 apt 安装 ffmpeg（sudo 免密）"
-                  sudo apt-get update -qq
-                  sudo apt-get install -y -qq ffmpeg
-                  FF="${'$'}(command -v ffmpeg 2>/dev/null)"
-                  [ -n "${'$'}FF" ] || FF="/usr/bin/ffmpeg"
+                # Linux：root 或免密 sudo 时自动安装；App 已提供密码时走 sudo -S；
+                # 缺少可用授权方式时输出与发行版匹配的手动命令。
+                if [ "${'$'}(id -u)" = "0" ]; then
+                  run_admin() { "${'$'}@"; }
+                elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+                  run_admin() { sudo -n "${'$'}@"; }
+                elif [ "${'$'}{TERMISH_SUDO_STDIN:-}" = "1" ] && command -v sudo >/dev/null 2>&1; then
+                  run_admin() { sudo -S -p '' "${'$'}@"; }
                 else
-                  echo "==> Linux 需要 ffmpeg：请先在服务器执行 sudo apt install ffmpeg（或配置免密 sudo 后重试）" >&2
+                  if command -v apt-get >/dev/null 2>&1; then
+                    echo "==> Linux 需要管理员权限：请先在终端执行 sudo apt-get update && sudo apt-get install -y ffmpeg，然后重试" >&2
+                  elif command -v dnf >/dev/null 2>&1; then
+                    echo "==> Linux 需要管理员权限：请先在终端执行 sudo dnf install -y ffmpeg，然后重试" >&2
+                  elif command -v pacman >/dev/null 2>&1; then
+                    echo "==> Linux 需要管理员权限：请先在终端执行 sudo pacman -S --needed ffmpeg，然后重试" >&2
+                  else
+                    echo "==> Linux 需要 ffmpeg：请用系统包管理器安装后重试" >&2
+                  fi
                   exit 1
                 fi
+                if command -v apt-get >/dev/null 2>&1; then
+                  echo "==> 正在通过 apt 安装 ffmpeg"
+                  # update + install 放进同一次 sudo：即使远端禁用 sudo 时间戳缓存，
+                  # 也只读取一次密码，不会在第二条命令等待额外输入。
+                  run_admin sh -c 'apt-get update -qq && apt-get install -y -qq ffmpeg'
+                elif command -v dnf >/dev/null 2>&1; then
+                  echo "==> 正在通过 dnf 安装 ffmpeg"
+                  run_admin dnf install -y -q ffmpeg
+                elif command -v pacman >/dev/null 2>&1; then
+                  echo "==> 正在通过 pacman 安装 ffmpeg"
+                  run_admin pacman -S --needed --noconfirm ffmpeg
+                else
+                  echo "==> 无法识别 Linux 包管理器，请手动安装 ffmpeg 后重试" >&2
+                  exit 1
+                fi
+                FF="${'$'}(command -v ffmpeg 2>/dev/null)"
+                [ -n "${'$'}FF" ] || FF="/usr/bin/ffmpeg"
               fi
             fi
             FF_REAL=${'$'}(readlink -f "${'$'}FF" 2>/dev/null || echo "${'$'}FF")
             echo "==> ffmpeg: ${'$'}FF_REAL"
+            # 每个远端账号独立的 256-bit bearer token：回环 TCP/UDP 也会被同机
+            # 其它 OS 用户访问，不能把“只监听 127.0.0.1”当作认证边界。
+            TOKEN_FILE="${'$'}HOME/.termish-screen.token"
+            TOKEN="${'$'}(tr -d '\r\n' < "${'$'}TOKEN_FILE" 2>/dev/null || true)"
+            if ! printf '%s' "${'$'}TOKEN" | grep -Eq '^[0-9a-fA-F]{64}${'$'}'; then
+              umask 077
+              TOKEN_TMP="${'$'}TOKEN_FILE.tmp.${'$'}${'$'}"
+              /usr/bin/python3 -c 'import secrets; print(secrets.token_hex(32))' > "${'$'}TOKEN_TMP"
+              mv "${'$'}TOKEN_TMP" "${'$'}TOKEN_FILE"
+            fi
+            chmod 600 "${'$'}TOKEN_FILE"
+            # ---- 远程操作依赖：pyobjc（Quartz CGEvent，仅 macOS）----
+            # ⚠️ 必须限定 Darwin：pyobjc-framework-* 是 macOS 专属包，Ubuntu 上
+            # pip 安装会下载/编译失败甚至卡住（用户反馈：Ubuntu 安装服务失败）——
+            # Linux 无此依赖，跳过
+            if [ "${'$'}OS" = "Darwin" ]; then
+              if /usr/bin/python3 -c "import Quartz, ApplicationServices" 2>/dev/null; then
+                echo "==> pyobjc: 已就绪"
+              else
+                echo "==> 正在安装 pyobjc（远程操作依赖，约 1 分钟）"
+                /usr/bin/python3 -m pip install --user -q pyobjc-framework-Quartz pyobjc-framework-ApplicationServices 2>/dev/null \
+                  && echo "==> pyobjc: 安装完成" || echo "==> pyobjc: 安装失败——远程操作不可用（可看不可控），重装服务可重试"
+              fi
+            fi
             # ---- Python 转发器（断开自愈 + 无客户端零开销）----
             APP_DIR="${'$'}HOME/Library/Application Support/termish"
             RELAY="${'$'}APP_DIR/screen-relay.py"
             mkdir -p "${'$'}APP_DIR"
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
-            import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
-            RELAY_VERSION = 12
+            import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct, hmac
+            RELAY_VERSION = $RELAY_VERSION
             TCP_PORT = ${'$'}PORT
             UDP_PORT = ${'$'}PORT + 1
+            TCP_VIDEO_PORT = ${'$'}PORT + 2
             FF = "${'$'}FF_REAL"
             HEARTBEAT_MAGIC = b"THB\x01"
             RELOAD_MAGIC = b"THB\x02"
+            CONTROL_MAGIC = b"THC1"
+            STATUS_MAGIC = b"THS1"
+            AUTH_MAGIC = b"THA1"
+            AUTH_TOKEN_FILE = os.path.expanduser("~/.termish-screen.token")
+            AUTH_TOKEN = open(AUTH_TOKEN_FILE, "rb").read().strip()
+            if len(AUTH_TOKEN) != 64 or any(c not in b"0123456789abcdefABCDEF" for c in AUTH_TOKEN):
+                raise RuntimeError("invalid screen auth token")
             AUD_TYPE = 9  # AUD NAL 类型（帧对齐切分标记；模块级：class 作用域不进方法）
+            # 远程操作：Quartz CGEvent 模拟鼠标/滚轮（点击需辅助功能权限）。
+            # 系统 python 默认无 pyobjc：安装脚本已 pip --user 补装；仍失败时
+            # 操作功能降级（只看不控）。AXIsProcessTrusted 在 ApplicationServices
+            # 框架（Quartz 模块里没有，实测 AttributeError）
+            try:
+                import Quartz
+            except Exception:
+                Quartz = None
+            try:
+                from ApplicationServices import AXIsProcessTrusted as _AX
+                # 授权弹窗（无权限时主动引导用户勾选，业界同款）：
+                # AXIsProcessTrustedWithOptions 带 prompt 触发系统 TCC 授权框
+                from ApplicationServices import AXIsProcessTrustedWithOptions as _AXPrompt, kAXTrustedCheckOptionPrompt as _AXPromptKey
+            except Exception:
+                try:
+                    from Quartz import AXIsProcessTrusted as _AX
+                except Exception:
+                    _AX = None
+                _AXPrompt = None
+                _AXPromptKey = None
+            # 授权弹窗节流：首次触发后 30s 内不再弹（防高频控制包反复打扰）
+            _LAST_PROMPT = [0.0]
+
+            def handle_control(data, ax_ok):
+                # 17B: magic4 + type1 + x f32(4) + y f32(4) + extra i32(4)
+                if len(data) < 17 or data[:4] != CONTROL_MAGIC:
+                    return
+                typ = data[4]
+                x = struct.unpack(">f", data[5:9])[0]
+                y = struct.unpack(">f", data[9:13])[0]
+                extra = struct.unpack(">i", data[13:17])[0]
+                if Quartz is None or not ax_ok:
+                    return  # 无权限：状态包由调用方发送，客户端引导授权
+                try:
+                    if typ == 4:
+                        # 文本键（软键盘字符/中文 IME 上屏）：payload = UTF-8
+                        chars = data[17:].decode("utf-8", "ignore")
+                        if chars:
+                            _post_key_unicode(chars)
+                        return
+                    if typ == 5:
+                        # 键码键（工具栏）：extra = 虚拟键码，x = 修饰掩码位域
+                        mods = int(x)
+                        _post_key_combo(extra, mods)
+                        return
+                    # 坐标换算：归一化(0-1) × 主屏原生分辨率（视频等比缩放，
+                    # 归一化坐标在任意推流分辨率下映射一致）
+                    b = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+                    px = int(x * b.size.width)
+                    py = int(y * b.size.height)
+                    src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+                    if typ == 0:
+                        ev = Quartz.CGEventCreateMouseEvent(src, Quartz.kCGEventMouseMoved, (px, py), Quartz.kCGMouseButtonLeft)
+                    elif typ == 1:
+                        ev = Quartz.CGEventCreateMouseEvent(src, Quartz.kCGEventLeftMouseDown, (px, py), Quartz.kCGMouseButtonLeft)
+                    elif typ == 2:
+                        ev = Quartz.CGEventCreateMouseEvent(src, Quartz.kCGEventLeftMouseUp, (px, py), Quartz.kCGMouseButtonLeft)
+                    elif typ == 3:
+                        ev = Quartz.CGEventCreateScrollWheelEvent(src, Quartz.kCGScrollEventUnitLine, 1, extra)
+                        # 滚轮事件定位到虚拟箭头处，但不移动系统鼠标指针。
+                        if ev is not None:
+                            Quartz.CGEventSetLocation(ev, (px, py))
+                    elif typ == 6:
+                        ev = Quartz.CGEventCreateMouseEvent(src, Quartz.kCGEventRightMouseDown, (px, py), Quartz.kCGMouseButtonRight)
+                    elif typ == 7:
+                        ev = Quartz.CGEventCreateMouseEvent(src, Quartz.kCGEventRightMouseUp, (px, py), Quartz.kCGMouseButtonRight)
+                    elif typ == 8 or typ == 9:
+                        # 虚拟鼠标只负责精确点按，不能带着 Mac 的实体指针跑。
+                        # 保存实体指针位置，投递一组原子点击后立刻恢复。
+                        current_event = Quartz.CGEventCreate(None)
+                        current = Quartz.CGEventGetLocation(current_event) if current_event is not None else None
+                        button = Quartz.kCGMouseButtonLeft if typ == 8 else Quartz.kCGMouseButtonRight
+                        down_type = Quartz.kCGEventLeftMouseDown if typ == 8 else Quartz.kCGEventRightMouseDown
+                        up_type = Quartz.kCGEventLeftMouseUp if typ == 8 else Quartz.kCGEventRightMouseUp
+                        down = Quartz.CGEventCreateMouseEvent(src, down_type, (px, py), button)
+                        up = Quartz.CGEventCreateMouseEvent(src, up_type, (px, py), button)
+                        if down is not None:
+                            Quartz.CGEventPost(Quartz.kCGHIDEventTap, down)
+                        if up is not None:
+                            Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+                        if current is not None:
+                            restore = Quartz.CGEventCreateMouseEvent(
+                                src, Quartz.kCGEventMouseMoved, current, Quartz.kCGMouseButtonLeft
+                            )
+                            if restore is not None:
+                                Quartz.CGEventPost(Quartz.kCGHIDEventTap, restore)
+                        return
+                    else:
+                        return
+                    if ev is not None:
+                        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                except Exception as e:
+                    try:
+                        sys.stderr.write("control error: %s\n" % e)
+                    except Exception:
+                        pass
+
+            # 修饰键 → 虚拟键码（Carbon kVK）与 CGEvent 标志。
+            # ⚠️ 必须条件定义：Linux 上 Quartz import 失败（None），模块级
+            # 直接取属性会 AttributeError 崩溃（用户反馈：Ubuntu 安装服务失败
+            # ——relay 启动即崩）。Quartz=None 时留空，控制函数入口已降级返回
+            MOD_KEYS = {} if Quartz is None else {
+                1: (55, Quartz.kCGEventFlagMaskCommand),   # Command
+                2: (56, Quartz.kCGEventFlagMaskShift),     # Shift
+                4: (59, Quartz.kCGEventFlagMaskControl),   # Control
+                8: (58, Quartz.kCGEventFlagMaskAlternate), # Option
+            }
+            KEY_SOURCE = None
+
+            def _key_source():
+                global KEY_SOURCE
+                if KEY_SOURCE is None:
+                    KEY_SOURCE = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+                return KEY_SOURCE
+
+            def _post_key_code(keycode, down, mods):
+                ev = Quartz.CGEventCreateKeyboardEvent(_key_source(), keycode, down)
+                if ev is None:
+                    return
+                flags = 0
+                for m in MOD_KEYS.values():
+                    if mods & m[0]:
+                        flags |= m[1]
+                if flags:
+                    Quartz.CGEventSetFlags(ev, flags)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+            def _post_key_combo(keycode, mods):
+                # 修饰键按下 → 主键按下/抬起 → 修饰键抬起（组合键语义，如 ⌘C）
+                mod_codes = [MOD_KEYS[m][0] for m in (1, 2, 4, 8) if mods & m]
+                for mc in mod_codes:
+                    _post_key_code(mc, True, mods)
+                _post_key_code(keycode, True, mods)
+                _post_key_code(keycode, False, mods)
+                for mc in reversed(mod_codes):
+                    _post_key_code(mc, False, mods)
+
+            def _post_key_unicode(chars):
+                # Unicode 文本：按字符逐个发送（中文/符号走 CGEventKeyboardSetUnicodeString，
+                # 不依赖键码映射）
+                for ch in chars:
+                    ev = Quartz.CGEventCreateKeyboardEvent(_key_source(), 0, True)
+                    if ev is None:
+                        continue
+                    Quartz.CGEventKeyboardSetUnicodeString(ev, len(ch), ch)
+                    Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+                    ev2 = Quartz.CGEventCreateKeyboardEvent(_key_source(), 0, False)
+                    if ev2 is not None:
+                        Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev2)
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
             # 目录不存在时 open() 抛异常 → ffmpeg 不会被拉起（用户反馈：
             # Ubuntu 端口监听但推流 0 字节）
             ERRLOG = os.path.expanduser("~/Library/Logs/termish-screen.err" if sys.platform == "darwin" else "~/.termish-screen.err")
+            FF_PIDFILE = os.path.expanduser("~/.termish-screen-ffmpeg.pid")
             IS_MAC = sys.platform == "darwin"
+
+            def remove_owned_ffmpeg_pid(pid):
+                # 只删除仍指向当前 Termish 子进程的 PID 文件；不能用 pkill -x
+                # ffmpeg，它会误杀用户自己的转码/录制任务。
+                try:
+                    if int(open(FF_PIDFILE).read().strip()) == pid:
+                        os.remove(FF_PIDFILE)
+                except Exception:
+                    pass
+
+            def stop_orphaned_ffmpeg():
+                try:
+                    pid = int(open(FF_PIDFILE).read().strip())
+                    comm = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "comm="],
+                        capture_output=True, text=True, timeout=2,
+                    ).stdout.strip()
+                    if os.path.basename(comm) == "ffmpeg":
+                        os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        os.remove(FF_PIDFILE)
+                    except Exception:
+                        pass
 
             def read_stream_cfg():
                 # 推流参数：~/.termish-screen.conf（手机端全屏切换写入，格式 fps=/scale=）
@@ -518,7 +935,14 @@ class ScreenSession(
             def make_args(cfg):
                 # fps 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
                 # -framerate 无效——fps 滤镜才是实际限帧（120fps 会把解码器灌爆）
-                vf = "fps=" + cfg["fps"] + ",scale=" + cfg["scale"]
+                try:
+                    fps = max(1, min(120, int(cfg["fps"])))
+                except (TypeError, ValueError):
+                    fps = 30
+                # 约 0.5s 一个关键帧；不再把 60/120fps 固定为 g=15，
+                # 否则会变成 0.25/0.125s 并徒增带宽和解码压力。
+                gop = max(15, fps // 2)
+                vf = "fps=" + str(fps) + ",scale=" + cfg["scale"]
                 if IS_MAC:
                     # macOS：VideoToolbox 硬编（M 系列 Media Engine 专核，CPU 零负担）。
                     # 历史教训：libx264 软编在 4K/高帧率下 CPU 打满 → 编码端掉帧（卡）+
@@ -534,30 +958,30 @@ class ScreenSession(
                         bitrate = "4M"
                     return ["-f", "avfoundation", "-capture_cursor", "1",
                             "-pixel_format", "uyvy422", "-i", "1:none",
-                            "-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
+                            "-hide_banner", "-loglevel", "error", "-framerate", str(fps),
                             "-vf", vf,
                             "-c:v", "h264_videotoolbox",
                             # 实时编码提示（低延时）：编码器按实时语义工作，无缓冲积压
                             "-realtime", "1",
                             # CBR 码率：屏幕流静态场景码率自动收敛，运动场景不超标
                             "-b:v", bitrate,
-                            # 0.5s 关键帧间隔（-g 15）：丢帧/起播恢复最快——
+                            # 约 0.5s 关键帧间隔：丢帧/起播恢复快——
                             # 流畅度优先，静态画面 GOP 缩短码率代价可忽略
-                            "-g", "15",
+                            "-g", str(gop),
                             "-pix_fmt", "yuv420p",
                             # VT 不自带 AUD：h264_metadata 位流过滤器逐帧插入
                             # （实测每帧恰 1 个 AUD），relay 按 AUD 切帧对齐语义不变
                             "-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert",
                             "-f", "h264", "-"]
                 # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
-                common = ["-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
+                common = ["-hide_banner", "-loglevel", "error", "-framerate", str(fps),
                           "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
                           # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
-                          # keyint=15：0.5s 关键帧间隔（30fps）——解码器重同步/丢帧
+                          # keyint 随帧率变化：约 0.5s 关键帧间隔——解码器重同步/丢帧
                           # 恢复最多等 0.5s（流畅度优先）；aud=1：每帧前发 AUD NAL，
                           # relay 按它切帧对齐块
-                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=15:aud=1",
-                          "-pix_fmt", "yuv420p", "-g", "15",
+                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=%d:aud=1" % gop,
+                          "-pix_fmt", "yuv420p", "-g", str(gop),
                           # 显式无 B 帧（ultrafast 默认即 0，写死保险：B 帧需等参考帧，
                           # 会引入编码端重排延迟）
                           "-bf", "0",
@@ -586,25 +1010,31 @@ class ScreenSession(
                 return frags
 
             LOCK = threading.Lock()
-            STREAM = [None]  # 当前 UdpStream（单 ffmpeg，发到一个客户端地址）
+            STREAM = [None]  # 当前视频流（单 ffmpeg，TCP/旧 UDP 客户端二选一）
             CLIENT = [None]  # 当前客户端地址（心跳更新，漫游时变）
             LAST_HB = [0.0]
+            TCP_CLIENT = [None]  # TCP 视频通道客户端（手机出站连接，单客户端）
 
             class UdpStream:
-                # ffmpeg 抓屏 + 帧对齐分片 UDP 发送。漫游（地址变化）只更新 addr 不重启
-                # ffmpeg，画面连续；心跳超时才停（释放抓屏设备）。
-                # 帧对齐：缓冲按 AUD NAL（x264 aud=1，每帧前发）切块，一个 UDP 重组块
-                # = 一个完整视频帧——丢一片只丢一帧（下一个 IDR 恢复），不是 TS 流打洞。
-                def __init__(self, udp, addr):
+                # ffmpeg 抓屏 + AUD 帧对齐。最终版视频走 SSH 内的 TCP 通道；保留
+                # loopback UDP 参数仅用于兼容旧 relay 测试，不再暴露公网 UDP 端口。
+                def __init__(self, udp, addr, tcp_conn=None):
                     self.udp = udp
                     self.addr = addr
+                    self.tcp_conn = tcp_conn
                     self.stopped = False
+
                     # 发送速率上限（字节/秒，AIMD 自适应：心跳丢帧率反馈驱动，
                     # 初始 12MB/s 满速；丢帧>15% ×0.7、<5% ×1.15）
                     self.rate = 12_000_000
                     self.last_rate_adj = 0.0
                     self.errf = open(ERRLOG, "a")
                     self.ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=self.errf)
+                    try:
+                        with open(FF_PIDFILE, "w") as f:
+                            f.write(str(self.ff.pid))
+                    except Exception:
+                        pass
                     self.frag_id = 0
                     self.started = time.time()
                     self.last_data = time.time()
@@ -614,6 +1044,23 @@ class ScreenSession(
                     threading.Thread(target=self.pump, daemon=True).start()
 
                 def send_frame(self, frame):
+                    # SSH direct-tcpip 视频格式：[4B 大端长度][帧字节]。
+                    # 连接写失败必须终止 pump；继续读 ffmpeg 只会空转并让客户端
+                    # 永远等不到 EOF 后的完整重连。
+                    tcp_c = self.tcp_conn
+                    if tcp_c is not None:
+                        try:
+                            tcp_c.sendall(struct.pack(">I", len(frame)) + frame)
+                        except Exception:
+                            try:
+                                tcp_c.close()
+                            except Exception:
+                                pass
+                            raise
+                    if self.addr is None:
+                        self.sent += len(frame)
+                        self.last_data = time.time()
+                        return
                     # 一个完整帧 → 一组分片（同一 frag_id）。发送节奏按【速率】控制
                     # （非每 8 片硬歇 1ms）：静止帧只有 1-2 片不歇，运动大帧按字节速率
                     # 限到 ~12MB/s——每 8 片歇 1ms 会把 600 片的 IDR 帧拖 75ms，
@@ -683,7 +1130,7 @@ class ScreenSession(
                     except Exception:
                         pass
                     finally:
-                        self.errf.write("[%s] udp stream closed after %.1fs sent=%d\n" % (
+                        self.errf.write("[%s] video stream closed after %.1fs sent=%d\n" % (
                             time.strftime("%H:%M:%S"), time.time() - self.started, self.sent))
                         self.errf.flush()
                         # 自愈：ffmpeg 退出/看门狗触发后清空当前 stream，让主循环在
@@ -693,9 +1140,23 @@ class ScreenSession(
                             if STREAM[0] is self:
                                 STREAM[0] = None
                                 CLIENT[0] = None
+                                if TCP_CLIENT[0] is self.tcp_conn:
+                                    TCP_CLIENT[0] = None
+                        try:
+                            if self.tcp_conn is not None:
+                                self.tcp_conn.close()
+                        except Exception:
+                            pass
+                        remove_owned_ffmpeg_pid(self.ff.pid)
 
                 def stop(self):
                     self.stopped = True
+                    try:
+                        if self.tcp_conn is not None:
+                            self.tcp_conn.shutdown(socket.SHUT_RDWR)
+                            self.tcp_conn.close()
+                    except Exception:
+                        pass
                     try:
                         self.ff.kill()
                     except Exception:
@@ -721,26 +1182,17 @@ class ScreenSession(
                 except Exception:
                     return False
 
-            # 启动时清理一次孤儿 ffmpeg（上次 relay 被强杀后遗留，占用抓屏设备）
-            subprocess.run(["pkill", "-9", "-x", "ffmpeg"], capture_output=True)
+            # 启动时只清理由上一轮 Termish relay 记录的孤儿 ffmpeg；PID +
+            # 进程名双重确认，绝不影响用户自行启动的 ffmpeg。
+            stop_orphaned_ffmpeg()
 
-            # UDP：视频流 + 心跳（手机直连 UDP，必须绑定全部接口收包；
-            # 双栈 IPv6+v4：家宽/蜂窝 IPv6 直连（如 home.ttermish.com AAAA）时
-            # 手机以 IPv6 地址发包——原 AF_INET 0.0.0.0 只收 IPv4，IPv6 手机
-            # 心跳/视频全丢（用户反馈）。V6ONLY=0 让 v4 包以 v4-mapped 地址
-            # 进入，recvfrom 返回的 addr 直接可作 sendto 目标（自动路由回 v4）
+            # 旧 UDP 兼容口仅监听回环。最终版视频走 SSH direct-tcpip，禁止再把
+            # 未鉴权的心跳/reload/控制端口暴露到公网。
             def make_udp():
-                try:
-                    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    s.bind(("::", UDP_PORT))
-                    return s
-                except (OSError, AttributeError):
-                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                    s.bind(("0.0.0.0", UDP_PORT))
-                    return s
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("127.0.0.1", UDP_PORT))
+                return s
 
             udp = make_udp()
 
@@ -758,14 +1210,132 @@ class ScreenSession(
             except OSError:
                 pass
 
+            def recv_exact(conn, count):
+                out = bytearray()
+                while len(out) < count:
+                    chunk = conn.recv(count - len(out))
+                    if not chunk:
+                        raise EOFError("tcp client closed")
+                    out.extend(chunk)
+                return bytes(out)
+
+            def tcp_control_loop(conn, stream):
+                # 客户端 → relay：[4B 大端长度][THC1 控制包]。TCP 没有消息边界，
+                # 必须显式分帧；特别是 UTF-8 文本包长度可变，不能按 recv() 猜边界。
+                try:
+                    while True:
+                        size = struct.unpack(">I", recv_exact(conn, 4))[0]
+                        if size < 17 or size > 64 * 1024:
+                            raise ValueError("bad control size %d" % size)
+                        data = recv_exact(conn, size)
+                        if not data.startswith(CONTROL_MAGIC):
+                            continue
+                        ax_ok = False
+                        if _AX is not None:
+                            try:
+                                ax_ok = bool(_AX())
+                            except Exception:
+                                ax_ok = False
+                        if not ax_ok and _AXPrompt is not None:
+                            try:
+                                if time.time() - _LAST_PROMPT[0] > 30:
+                                    _LAST_PROMPT[0] = time.time()
+                                    _AXPrompt({_AXPromptKey: True})
+                            except Exception:
+                                pass
+                        handle_control(data, ax_ok)
+                except Exception:
+                    pass
+                finally:
+                    owned = False
+                    with LOCK:
+                        if TCP_CLIENT[0] is conn and STREAM[0] is stream:
+                            TCP_CLIENT[0] = None
+                            STREAM[0] = None
+                            owned = True
+                    if owned:
+                        stream.stop()
+
+            # TCP 视频服务只监听远端回环；手机通过已认证 SSH direct-tcpip 访问。
+            # 新连接替换旧连接并重启 ffmpeg，从而立即读取最新画质/帧率配置。
+            def tcp_serve():
+                try:
+                    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    srv.bind(("127.0.0.1", TCP_VIDEO_PORT))
+                    srv.listen(2)
+                except OSError:
+                    return
+                while True:
+                    conn = None
+                    try:
+                        conn, _ = srv.accept()
+                        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 256 * 1024)
+                        # 回环地址不是用户隔离边界：同机其它 OS 用户也能连接固定端口。
+                        # direct-tcpip 建连后首包必须携带仅当前远端账号可读的 token；
+                        # 认证前不替换旧客户端、不启动 ffmpeg，也不返回任何画面数据。
+                        conn.settimeout(5.0)
+                        auth_size = struct.unpack(">I", recv_exact(conn, 4))[0]
+                        if auth_size != 4 + len(AUTH_TOKEN):
+                            raise PermissionError("bad auth size")
+                        auth = recv_exact(conn, auth_size)
+                        if not auth.startswith(AUTH_MAGIC) or not hmac.compare_digest(auth[4:], AUTH_TOKEN):
+                            raise PermissionError("screen auth failed")
+                        conn.settimeout(None)
+                        # 首包 = 控制状态：
+                        # 0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
+                        if Quartz is None:
+                            ctrl_status = 2
+                        else:
+                            try:
+                                ctrl_status = 0 if (_AX is not None and bool(_AX())) else 1
+                            except Exception:
+                                ctrl_status = 1
+                        conn.sendall(STATUS_MAGIC + bytes([ctrl_status]))
+                        with LOCK:
+                            old_stream = STREAM[0]
+                            old_conn = TCP_CLIENT[0]
+                            STREAM[0] = None
+                            TCP_CLIENT[0] = conn
+                        if old_stream is not None:
+                            old_stream.stop()
+                        elif old_conn is not None:
+                            try:
+                                old_conn.close()
+                            except Exception:
+                                pass
+                        stream = UdpStream(udp, None, conn)
+                        with LOCK:
+                            if TCP_CLIENT[0] is conn:
+                                STREAM[0] = stream
+                        stream.start()
+                        threading.Thread(target=tcp_control_loop, args=(conn, stream), daemon=True).start()
+                    except Exception as e:
+                        try:
+                            if conn is not None:
+                                conn.close()
+                        except Exception:
+                            pass
+                        try:
+                            sys.stderr.write("tcp accept error: %s\n" % e)
+                        except Exception:
+                            pass
+
+            threading.Thread(target=tcp_serve, daemon=True).start()
+
             while True:
                 r, _, _ = select.select([udp], [], [], 1.0)
                 now = time.time()
                 if r:
                     try:
-                        data, addr = udp.recvfrom(64)
+                        data, addr = udp.recvfrom(65535)
                     except Exception:
                         continue
+                    # 旧 UDP 兼容口同样要求 token，避免从遗留入口绕过 TCP 握手。
+                    if len(data) <= len(AUTH_TOKEN) or not hmac.compare_digest(data[:len(AUTH_TOKEN)], AUTH_TOKEN):
+                        continue
+                    data = data[len(AUTH_TOKEN):]
                     if data.startswith(RELOAD_MAGIC):
                         # 重载（新会话首包）：重启 ffmpeg 重读推流参数——画质/帧率
                         # 切换的生效路径。漫游语义下旧 ffmpeg 永不重启，conf 写了
@@ -785,6 +1355,41 @@ class ScreenSession(
                             if STREAM[0] is None:
                                 STREAM[0] = s
                             LAST_HB[0] = now
+                    elif data.startswith(CONTROL_MAGIC):
+                        # 远程操作控制包（触摸→鼠标/滚轮）：解析 + CGEvent 模拟。
+                        # 回状态包（5B，权限状态）：客户端据此提示引导授权；
+                        # 控制包同时证明客户端活着，刷新心跳/地址（漫游同语义）
+                        ax_ok = False
+                        if _AX is not None:
+                            try:
+                                ax_ok = bool(_AX())
+                            except Exception:
+                                ax_ok = False
+                        if not ax_ok and _AXPrompt is not None:
+                            # 主动弹系统授权框：用户勾选「python」后点击立即生效
+                            try:
+                                if time.time() - _LAST_PROMPT[0] > 30:
+                                    _LAST_PROMPT[0] = time.time()
+                                    _AXPrompt({_AXPromptKey: True})
+                            except Exception:
+                                pass
+                        handle_control(data, ax_ok)
+                        try:
+                            # 控制状态：0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
+                            #（Linux 无 CGEvent——客户端显示对应文案，不误导 macOS 授权路径）
+                            if Quartz is None:
+                                ctrl_status = 2
+                            else:
+                                ctrl_status = 0 if ax_ok else 1
+                            udp.sendto(STATUS_MAGIC + bytes([ctrl_status]), addr)
+                        except Exception:
+                            pass
+                        with LOCK:
+                            if CLIENT[0] != addr:
+                                CLIENT[0] = addr
+                                if STREAM[0] is not None:
+                                    STREAM[0].addr = addr
+                            LAST_HB[0] = time.time()
                     elif data.startswith(HEARTBEAT_MAGIC):
                         # 丢帧反馈（可选第 5 字节）：丢帧率%驱动 AIMD 速率自适应——
                         # >15% 降速一档（×0.7）、<5% 且未满速则升一档，每秒至多一步。
@@ -811,9 +1416,11 @@ class ScreenSession(
                                     elif loss_pct < 5 and STREAM[0].rate < 12_000_000:
                                         STREAM[0].rate = min(12_000_000, int(STREAM[0].rate * 1.15))
                             LAST_HB[0] = now
-                # 心跳超时（60s）→ 停 stream 释放抓屏设备；断网恢复后心跳重新拉 ffmpeg
+                # 旧 UDP 心跳超时才停流；TCP 连接由 send/recv EOF 驱动生命周期，
+                # 不能套用 LAST_HB（否则 TCP 建立后因 LAST_HB=0 被立即误杀）。
                 with LOCK:
-                    if STREAM[0] is not None and now - LAST_HB[0] > 60:
+                    if (STREAM[0] is not None and STREAM[0].tcp_conn is None
+                            and now - LAST_HB[0] > 60):
                         STREAM[0].stop()
                         STREAM[0] = None
                         CLIENT[0] = None
@@ -840,17 +1447,15 @@ class ScreenSession(
             TERMISH_EOF
             launchctl bootout gui/${'$'}(id -u) "${'$'}PLIST" 2>/dev/null || true
             sleep 1
-            # 清理旧 relay 强杀后遗留的孤儿 ffmpeg（会占用 avfoundation 抓屏设备，
-            # 导致新 relay 拉起的 ffmpeg 拿不到设备 → 无帧断开）。
-            # 用 -x 按进程名精确匹配：正则匹配命令行会命中安装脚本自身
-            #（sshd 经 zsh -c 执行，zsh 命令行含脚本全文，跨段组合即可匹配）
-            pkill -x ffmpeg 2>/dev/null || true
-            sleep 0.5
+            # relay 启动时会按自身 PID 文件清理上一轮孤儿 ffmpeg；这里不能
+            # pkill 全部 ffmpeg，否则会误杀用户自己的转码/录制任务。
             launchctl bootstrap gui/${'$'}(id -u) "${'$'}PLIST"
             sleep 1
             # 验证用 launchctl（不碰连接：探测连接-断开会打断 relay 的当前服务周期；
             # 也不用 pgrep：安装脚本自身的 zsh 命令行含脚本文本会误匹配）
-            if launchctl print gui/${'$'}(id -u)/dev.termish.screen 2>/dev/null | grep -q "state = running"; then
+            if launchctl print gui/${'$'}(id -u)/dev.termish.screen 2>/dev/null | grep -q "state = running" \
+              && lsof -nP -iTCP:${'$'}((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1; then
+              echo $RELAY_VERSION > "${'$'}HOME/.termish-screen.version"
               echo "==> TERMISH_SCREEN_OK"
             else
               echo "==> 服务未启动（检查 ~/Library/Logs/termish-screen.err）" >&2
@@ -878,16 +1483,16 @@ class ScreenSession(
             DISPLAY="${'$'}XDISP" nohup /usr/bin/python3 "${'$'}RELAY" >> "${'$'}LOG" 2>&1 &
             echo ${'$'}! > "${'$'}RELAY_PID"
             sleep 1.5
-            # 验证端口监听（lsof 或 ss）；不碰连接
-            if lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":${'$'}PORT "; then
+            # 验证控制面与回环视频端口都在监听；不建立探测连接（会触发 ffmpeg）。
+            if (lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":${'$'}PORT ") \
+              && (lsof -nP -iTCP:${'$'}((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":${'$'}((PORT + 2)) "); then
+              echo $RELAY_VERSION > "${'$'}HOME/.termish-screen.version"
               echo "==> TERMISH_SCREEN_OK"
             else
               echo "==> 服务未启动（检查 ${'$'}LOG）" >&2
               exit 1
             fi
             fi
-            # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 12 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**
@@ -916,6 +1521,15 @@ class ScreenSession(
             }
             return Pair(fps, scale)
         }
+
+        /** 从已认证 SSH 探测输出提取 relay bearer token；格式异常一律拒绝。 */
+        internal fun parseAuthToken(stdout: String): String? =
+            stdout
+                .lineSequence()
+                .firstOrNull { it.startsWith("SCREEN_AUTH_TOKEN:") }
+                ?.substringAfter(":")
+                ?.trim()
+                ?.takeIf { token -> token.length == 64 && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }
 
         /** scale 字符串 → 画质档位 index（960=0 / 1280=1 / 1920=2；未知按标清）。 */
         internal fun qualityIndexFor(scale: String): Int =

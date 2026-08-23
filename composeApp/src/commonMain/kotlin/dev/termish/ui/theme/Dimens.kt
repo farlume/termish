@@ -35,3 +35,30 @@ object Sizes {
     /** 设置页头像。 */
     val Avatar = 72.dp
 }
+
+/** 远程画面悬浮键盘 / 虚拟鼠标尺寸。 */
+object ScreenControlDimens {
+    val FloatingButton = 44.dp
+    val FloatingIcon = 24.dp
+    val FloatingMargin = 14.dp
+    val FloatingSpacing = 8.dp
+
+    val MousePanelWidth = 128.dp
+    val MousePanelHeight = 158.dp
+    val MouseTopButtonsHeight = 76.dp
+    val MouseScrollWidth = 38.dp
+    val MouseScrollHeight = 98.dp
+    val MouseScrollTopOffset = (-6).dp
+    val MouseCloseButton = 32.dp
+    val MouseCloseGap = 6.dp
+    val MouseCursorWidth = 22.dp
+    val MouseCursorHeight = 26.dp
+    val MouseCursorPanelOffsetX = 26.dp
+    val MouseCursorPanelOffsetY = 8.dp
+    val MousePanelGripHeight = 40.dp
+    val MouseScrollStep = 32.dp
+    val MouseDivider = 1.dp
+    val MouseStroke = 1.dp
+    val MouseScrollLine = 3.dp
+    val MouseGripDot = 3.dp
+}

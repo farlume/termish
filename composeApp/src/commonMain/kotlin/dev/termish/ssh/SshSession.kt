@@ -209,6 +209,18 @@ interface SshSession {
      */
     fun startExecRaw(command: String): SshExecChannel? = null
 
+    /**
+     * 在已认证 SSH 连接上打开 direct-tcpip 通道，连接远端主机可见的 [host]:[port]。
+     *
+     * 典型用途是访问只监听远端回环地址的内部服务：数据全程复用 SSH 加密传输，
+     * 无需把服务端口暴露或转发到公网。返回通道的 stdout/stdin 分别对应目标 TCP
+     * 连接的读/写方向；平台未实现或连接失败时返回 null。
+     */
+    fun openDirectTcpip(
+        host: String,
+        port: Int,
+    ): SshExecChannel? = null
+
     /** 主动关闭会话。 */
     fun close()
 

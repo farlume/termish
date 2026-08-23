@@ -61,6 +61,7 @@ import dev.termish.data.newId
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
 import dev.termish.screen.ScreenSession
+import dev.termish.screen.ScreenSessionMessages
 import dev.termish.screen.ScreenUiState
 import dev.termish.ssh.AuthPrompt
 import dev.termish.ssh.HostKeyInfo
@@ -84,6 +85,28 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
+
+private fun ScreenStrings.toSessionMessages(): ScreenSessionMessages =
+    ScreenSessionMessages(
+        connectionFailed = connectionFailed,
+        readChannelFailed = readChannelFailed,
+        tcpPortMissing = tcpPortMissing,
+        tcpChannelFailed = tcpChannelFailed,
+        tcpDisconnected = tcpDisconnected,
+        ffmpegMissing = ffmpegMissing,
+        unsupportedOs = unsupportedOs,
+        relayUpgradeRequired = relayUpgradeRequired,
+        displayMissing = displayMissing,
+        serviceNotRunning = serviceNotRunning,
+        waylandHint = waylandHint,
+        screenAsleepHint = screenAsleepHint,
+        screenLockedHint = screenLockedHint,
+        firstFrameTimeout = firstFrameTimeout,
+        decoderInitializationFailed = decoderInitializationFailed,
+        decoderNoOutput = decoderNoOutput,
+        decodingFailed = decodingFailed,
+        playerUnsupported = playerUnsupported,
+    )
 
 /** 极简底栏项：图标 + 等宽字体小标签，选中=主题绿，无胶囊指示器。 */
 @Composable
@@ -338,6 +361,7 @@ fun AppRoot(repository: HostRepository) {
                 callbacks,
                 scope,
                 uiState,
+                messages = currentStrings.value.screen.toSessionMessages(),
                 // 断流自动重连（带退避）：relay 重启/会话切换导致的「画面流已断开」
                 // 自动恢复，用户无需手动重连（用户反馈）。重试 2 次后停止（保留错误提示）
                 onStreamLost = {
@@ -389,10 +413,11 @@ fun AppRoot(repository: HostRepository) {
 
     // 屏幕推流服务安装（引导卡片按钮）：复用已认证会话跑安装脚本（流式日志），
     // 装完重建推流会话重连。与 herdr 安装引导同模式。
-    val installScreenService: (Host) -> Unit = { host ->
+    val installScreenService: (Host, String?) -> Unit = { host, sudoPassword ->
         val entry = screenSessions.firstOrNull { it.host.id == host.id && it.session != null }
         if (entry != null) {
             entry.session?.installService(
+                sudoPassword = sudoPassword,
                 onLog = { log -> entry.uiState.installLog = log },
                 onComplete = { ok ->
                     if (ok) {
@@ -894,6 +919,13 @@ fun AppRoot(repository: HostRepository) {
                                     is SessionTab.Sftp -> current.host
                                     is SessionTab.Screen -> current.host
                                 }
+                            // 屏幕会话条目（小窗/全屏主机名同源：不依赖 current tab）
+                            val pipEntry =
+                                (current as? SessionTab.Terminal)?.let { termTab ->
+                                    screenSessions.firstOrNull {
+                                        it.ownerSessionId == termTab.controller.sessionId && it.session != null
+                                    }
+                                }
                             TerminalScreen(
                                 tabs = tabs,
                                 current = current,
@@ -1056,13 +1088,9 @@ fun AppRoot(repository: HostRepository) {
                                     }
                                 },
                                 // 终端页小窗：只显示**属于当前终端 tab** 的屏幕会话（切走即隐藏）
-                                screenPip =
-                                    (current as? SessionTab.Terminal)?.let { termTab ->
-                                        screenSessions
-                                            .firstOrNull {
-                                                it.ownerSessionId == termTab.controller.sessionId && it.session != null
-                                            }?.uiState
-                                    },
+                                screenPip = pipEntry?.uiState,
+                                // 屏幕会话自己的主机（全屏头部显示，不依赖 current tab）
+                                pipHost = pipEntry?.host,
                                 // 小窗 ✕：关闭当前屏幕会话（销毁推流 + 移除条目）
                                 onCloseScreenPip = {
                                     val ownerId = (current as? SessionTab.Terminal)?.controller?.sessionId

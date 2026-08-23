@@ -11,7 +11,7 @@ import kotlin.test.assertNull
 class StreamCfgParseTest {
     @Test
     fun parsesFpsAndScale() {
-        val out = "SCREEN_CFG_FPS:120\nSCREEN_CFG_SCALE:1920:-2\nSCREEN_UDP_PORT:17322\n"
+        val out = "SCREEN_CFG_FPS:120\nSCREEN_CFG_SCALE:1920:-2\nSCREEN_TCP_PORT:17323\n"
         val (fps, scale) = ScreenSession.parseStreamCfg(out)
         assertEquals(120, fps)
         assertEquals("1920:-2", scale)
@@ -20,7 +20,7 @@ class StreamCfgParseTest {
 
     @Test
     fun missingLinesReturnNulls() {
-        val (fps, scale) = ScreenSession.parseStreamCfg("SCREEN_UDP_PORT:17322\n")
+        val (fps, scale) = ScreenSession.parseStreamCfg("SCREEN_TCP_PORT:17323\n")
         assertNull(fps)
         assertNull(scale)
     }
@@ -40,5 +40,14 @@ class StreamCfgParseTest {
         assertEquals(1, ScreenSession.qualityIndexFor("1280:-2"))
         assertEquals(2, ScreenSession.qualityIndexFor("1920:-2"))
         assertEquals(1, ScreenSession.qualityIndexFor("1600:-2")) // 未知按标清
+    }
+
+    @Test
+    fun authTokenRequiresExactly256BitsOfHex() {
+        val token = "01abEF" + "9".repeat(58)
+        assertEquals(token, ScreenSession.parseAuthToken("SCREEN_TCP_PORT:17323\nSCREEN_AUTH_TOKEN:$token\n"))
+        assertNull(ScreenSession.parseAuthToken("SCREEN_AUTH_TOKEN:short\n"))
+        assertNull(ScreenSession.parseAuthToken("SCREEN_AUTH_TOKEN:${"z".repeat(64)}\n"))
+        assertNull(ScreenSession.parseAuthToken("SCREEN_TCP_PORT:17323\n"))
     }
 }

@@ -18,9 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.viewinterop.AndroidView
 import dev.termish.util.TermLog
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 
 /** 解码能力探测缓存（分辨率 → 帧率上限），静态复用免每会话重查。 */
 private val decoderProbeCache = HashMap<String, Int>()
@@ -29,13 +29,13 @@ private val decoderProbeCache = HashMap<String, Int>()
 private const val DECODER_MIME = "video/avc"
 
 /**
- * Android 实现：UDP 重组出的完整 H.264 帧（Annex-B，AUD 开头）直接喂
+ * Android 实现：TCP 显式分帧得到的完整 H.264 帧（Annex-B，AUD 开头）直接喂
  * MediaCodec 硬解，解码输出即刻上屏——无 MPEG-TS 容器、无本地 HTTP、
  * 无 ExoPlayer 渐进式缓冲垫（那三者叠加出 ~0.4-1s 延时；ToDesk 式直通
  * 管线把延时压到网络 + 解码 + 一次 vsync）。
  *
- * relay 侧已按 AUD 帧对齐（一个 UDP 重组块 = 一个完整帧），丢一片只丢
- * 一帧，下一个 IDR 自动恢复——不再有 TS 流打洞问题。
+ * relay 侧已按 AUD 帧对齐，TCP 长度头保留帧边界；下一个 IDR 可自动
+ * 恢复解码同步，不再有 TS 容器缓冲。
  *
  * ⚠️ 历史教训：手写 MediaCodec 管线曾在 OPPO/MTK 上吞输入不出帧（当时
  * 从 TS 流切 NAL 喂）。本版规避：CSD 显式 configure（SPS/PPS 从关键帧块
@@ -43,9 +43,12 @@ private const val DECODER_MIME = "video/avc"
  */
 actual class ScreenPlayer actual constructor(
     private val onReady: () -> Unit,
-    private val onError: (String) -> Unit,
+    private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
     val decoder = ScreenDecoder(onReady, onError)
+
+    /** 视频实际尺寸（解码器上报）：UI 宽高比布局 + 远程操作坐标映射。 */
+    actual val videoDims: MutableState<Pair<Int, Int>?> = decoder.videoDims
 
     actual fun start() {
         decoder.start()
@@ -74,7 +77,7 @@ actual class ScreenPlayer actual constructor(
  */
 class ScreenDecoder(
     private val onReady: () -> Unit,
-    private val onError: (String) -> Unit,
+    private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
     companion object {
         private const val MIME = "video/avc"
@@ -87,7 +90,6 @@ class ScreenDecoder(
     }
 
     private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
-    private val surfaceRef = AtomicReference<Surface?>(null)
 
     /** 渲染帧计数（每秒诊断打点后清零）。 */
     @Volatile private var statRendered = 0
@@ -100,13 +102,24 @@ class ScreenDecoder(
     @Volatile private var firstFrameRendered = false
     private var thread: Thread? = null
 
+    /**
+     * 当前存活 surface（小窗 + 全屏是两个独立 SurfaceView，可能同时存在：
+     * 全屏收起动画期间、全屏覆盖在小窗之上等）。用列表管理而不是单值——
+     * 否则全屏 surfaceDestroyed 会把小窗的引用一起清掉，解码器重建后拿
+     * 不到 surface，画面停在最后一帧（用户反馈：小窗画面静止）。
+     */
+    private val surfaces = CopyOnWriteArrayList<Surface>()
+
     fun attachSurface(surface: Surface) {
-        surfaceRef.set(surface)
+        if (!surfaces.contains(surface)) surfaces.add(surface)
     }
 
-    fun detachSurface() {
-        surfaceRef.set(null)
+    /** 只移除指定 surface（小窗/全屏各自销毁互不影响）。 */
+    fun detachSurface(surface: Surface) {
+        surfaces.remove(surface)
     }
+
+    private fun currentSurface(): Surface? = surfaces.lastOrNull()
 
     fun start() {
         if (running) return
@@ -124,7 +137,7 @@ class ScreenDecoder(
         thread = null
     }
 
-    /** 喂入一个完整帧（Annex-B 字节；UDP 重组层保证帧对齐）。 */
+    /** 喂入一个完整帧（Annex-B 字节；TCP 协议层保证帧对齐）。 */
     fun feedFrame(frame: ByteArray) {
         if (!running) return
         // 丢旧保新：水位满时丢最旧一帧（不背压发送端——延迟优先于连续性）
@@ -164,7 +177,7 @@ class ScreenDecoder(
         try {
             while (running) {
                 // surface 生命周期：
-                // - 销毁（surfaceRef=null）→ 释放 codec（SurfaceView 回调只置空引用，
+                // - 全部销毁（列表空）→ 释放 codec（SurfaceView 回调只移除自己的 surface，
                 //   codec 操作收口在本线程避免并发崩溃）
                 // - 变化（小窗↔全屏是两个独立 SurfaceView，切换时新 surface 到达而
                 //   codec 还绑旧 surface）→ setOutputSurface 无缝换绑（API 23+，无需
@@ -173,7 +186,7 @@ class ScreenDecoder(
                 // 局部快照：codec 在 releaseCodec 闭包中被置空，需在判空前取 val
                 val sc = codec
                 if (sc != null) {
-                    val s = surfaceRef.get()
+                    val s = currentSurface()
                     when {
                         s == null -> releaseCodec()
                         s !== boundSurface -> {
@@ -204,7 +217,7 @@ class ScreenDecoder(
                         releaseCodec()
                     }
                     if (codec == null) {
-                        val surface = surfaceRef.get() ?: continue // 等 UI surface
+                        val surface = currentSurface() ?: continue // 等 UI surface
                         boundSurface = surface
                         val fmt =
                             MediaFormat.createVideoFormat(MIME, dims?.first ?: 1920, dims?.second ?: 1080).apply {
@@ -234,7 +247,7 @@ class ScreenDecoder(
                             TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
                         }.onFailure { e ->
                             TermLog.w("screen") { "decoder configure failed: $e" }
-                            onError("解码器初始化失败：${e.message}")
+                            onError(ScreenPlayerFailure.Initialization(e.message))
                             running = false
                             return
                         }
@@ -304,7 +317,7 @@ class ScreenDecoder(
                 // ⚠️ MTK 吞输入 watchdog：喂了 600 帧仍零输出 → 上报（历史 OPPO/MTK 坑）
                 if (!firstFrameRendered && fed > 600) {
                     TermLog.w("screen") { "解码器吞输入：fed=$fed 无输出" }
-                    onError("解码器无输出（fed=$fed）")
+                    onError(ScreenPlayerFailure.NoOutput(fed))
                     running = false
                     break
                 }
@@ -313,7 +326,7 @@ class ScreenDecoder(
             // stop() 中断：正常退出
         } catch (e: Exception) {
             TermLog.w("screen") { "decode loop error: ${e::class.simpleName} ${e.message}" }
-            onError("解码失败：${e.message ?: e::class.simpleName}")
+            onError(ScreenPlayerFailure.Decoding(e.message ?: e::class.simpleName.orEmpty()))
         } finally {
             releaseCodec()
         }
@@ -368,15 +381,20 @@ class ScreenDecoder(
 actual fun ScreenVideoSurface(
     player: ScreenPlayer?,
     modifier: Modifier,
+    alignBottom: Boolean,
 ) {
     if (player == null) {
         Box(modifier.background(ComposeColor.Black))
         return
     }
     // 宽高比适配：解码器上报实际尺寸前铺满（黑底），上报后按比例居中
-    // （替代 ExoPlayer PlayerView 的 RESIZE_MODE_FIT，SurfaceView 不会自己 letterbox）
+    // （替代 ExoPlayer PlayerView 的 RESIZE_MODE_FIT，SurfaceView 不会自己 letterbox）。
+    // 远程键盘弹出时贴底（alignBottom）：视频底部贴工具栏，黑边留顶部
     val dims = player.decoder.videoDims.value
-    Box(modifier.background(ComposeColor.Black), contentAlignment = Alignment.Center) {
+    Box(
+        modifier.background(ComposeColor.Black),
+        contentAlignment = if (alignBottom) Alignment.BottomCenter else Alignment.Center,
+    ) {
         val surfaceModifier =
             if (dims != null) {
                 Modifier.aspectRatio(dims.first.toFloat() / dims.second.toFloat())
@@ -401,7 +419,7 @@ actual fun ScreenVideoSurface(
                             }
 
                             override fun surfaceDestroyed(holder: SurfaceHolder) {
-                                player.decoder.detachSurface()
+                                player.decoder.detachSurface(holder.surface)
                             }
                         },
                     )

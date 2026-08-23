@@ -12,6 +12,7 @@ import dev.termish.ssh.SshSession
 import dev.termish.ssh.createKmpMoshSession
 import dev.termish.ssh.detectSystemFromOutput
 import dev.termish.ssh.parseMoshConnect
+import dev.termish.ssh.parseMoshServerPid
 import dev.termish.util.NetworkChangeKind
 import dev.termish.util.TermLog
 import dev.termish.util.TermTrace
@@ -48,6 +49,9 @@ internal class SessionConnector(
 
         /** UDP 首包确认窗口：引导成功但首包未到 = mosh 连接失败 → 降级 SSH。 */
         private const val MOSH_UDP_CONFIRM_MS = 5_000L
+
+        /** UDP 未确认时，通过仍存活的 SSH 控制通道清理本次 detached mosh-server。 */
+        private const val MOSH_CLEANUP_TIMEOUT_MS = 3_000L
 
         /** mosh 降级提示自动消失时长（提示常驻会压住终端顶部）。 */
         private const val MOSH_DEGRADE_NOTICE_MS = 6_000L
@@ -198,19 +202,40 @@ internal class SessionConnector(
                     } else {
                         TermLog.e("ssh") { "connect failed after ${elapsed}ms ${c.host.name}: ${e.message}" }
                     }
-                    c.status = ConnStatus.ERROR
                     c.errorMessage = e.message
                     // 自动重连失败：会话已死，必须停掉保活，否则前台服务+wakelock 空转
                     // （首连失败时 keepAliveActive=false，stopKeepAlive 有 guard，安全）
                     c.stopKeepAlive()
-                    // 重连上下文（非首次连接）失败：后台通知，提示需人工干预
-                    if (c.reconnectAttempts > 0) {
+                    c.session = null
+
+                    if (c.reconnectAttempts > 0 && c.autoReconnect && c.reconnectAttempts < RECONNECT_SSH_MAX) {
+                        // doConnect() 自身失败不会再收到 onClosed，必须在这里继续推进
+                        // 剩余重试；否则注释所承诺的「最多 3 次」实际只会尝试 1 次。
+                        c.reconnectAttempts++
+                        c.reconnectCount = c.reconnectAttempts
+                        c.status = ConnStatus.CONNECTING
+                        val delayMs = RECONNECT_BASE_DELAY_MS * c.reconnectAttempts
+                        TermLog.w("ssh") {
+                            "reconnect retry ${c.reconnectAttempts}/$RECONNECT_SSH_MAX ${c.host.name} in ${delayMs}ms"
+                        }
+                        c.scope
+                            .launch {
+                                delay(delayMs)
+                                if (c.status != ConnStatus.CLOSED) doConnect()
+                            }.also { c.reconnectJob = it }
+                    } else if (c.reconnectAttempts > 0) {
+                        // 所有自动重连均失败：只在最终耗尽时关闭会话并通知一次。
+                        c.status = ConnStatus.CLOSED
+                        TermLog.e("ssh") { "reconnect exhausted ${c.host.name} -> CLOSED" }
                         NotificationCenter.post(
                             NotificationEvent.RECONNECT_FAILED,
                             "Termish",
                             strings().notificationReconnectFailed(c.host.name, e.message ?: strings().terminalFailed),
                             hostId = c.host.id,
                         )
+                    } else {
+                        // 首次连接失败由 UI 展示错误，不进入自动重连循环。
+                        c.status = ConnStatus.ERROR
                     }
                 }
             }
@@ -272,9 +297,9 @@ internal class SessionConnector(
             val moshColors = if (c.repository.loadSettings().terminalType == "xterm-256color") "256" else "8"
             val baseBootstrap =
                 if (c.host.moshUdpPort in 1024..65535) {
-                    "mosh-server new -c $moshColors -p ${c.host.moshUdpPort} -l LANG=en_US.UTF-8$bootstrapExtra"
+                    "mosh-server new -s -c $moshColors -p ${c.host.moshUdpPort} -l LANG=en_US.UTF-8$bootstrapExtra"
                 } else {
-                    "mosh-server new -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
+                    "mosh-server new -s -c $moshColors -l LANG=en_US.UTF-8$bootstrapExtra"
                 }
             val bootstrap = "$baseBootstrap 2>&1; $SYSTEM_PROBE_COMMAND"
             TermLog.i("mosh") { "bootstrap ${c.host.name}: $baseBootstrap" }
@@ -316,6 +341,7 @@ internal class SessionConnector(
                 return
             }
             val (moshPort, moshKey) = parsed
+            val moshServerPid = parseMoshServerPid(raw.orEmpty())
             TermLog.i("mosh") { "mosh-server up port=$moshPort ${c.host.hostname}" }
             // 引导成功：待安装状态立即清除（残留可能来自上一次会话）
             c.moshNeedsInstall = false
@@ -365,6 +391,7 @@ internal class SessionConnector(
                 TermLog.w("mosh") { "mosh UDP unconfirmed ${c.host.name} ${MOSH_UDP_CONFIRM_MS}ms——降级 SSH" }
                 c.moshSession?.close()
                 c.moshSession = null
+                cleanupUnconfirmedMoshServer(s, moshServerPid)
                 // UDP 不通是环境性阻断：标记本会话条目后续重连直走 SSH，
                 // 不再重试 mosh（新开会话才会重新尝试）
                 c.moshDegradedToSsh = true
@@ -394,6 +421,37 @@ internal class SessionConnector(
                 c.errorMessage = e.message
                 c.stopKeepAlive()
             }
+        }
+    }
+
+    /**
+     * UDP 首包未确认时清理本次引导出来的远端进程。
+     *
+     * PID 来自 mosh-server 自己的 detached 输出；执行 kill 前再次通过 `ps comm`
+     * 校验目标仍是 mosh-server，防止极端 PID 复用误伤其他进程。SIGUSR1 是
+     * mosh-server 提供的断连会话终止信号，不使用会波及其他会话的 pkill。
+     */
+    private fun cleanupUnconfirmedMoshServer(
+        session: SshSession,
+        pid: Int?,
+    ) {
+        if (pid == null) {
+            TermLog.w("mosh") { "mosh cleanup skipped ${c.host.name}: detached pid unavailable" }
+            return
+        }
+        val command =
+            "MOSH_PID=$pid; " +
+                "MOSH_COMM=\$(ps -p \"\$MOSH_PID\" -o comm= 2>/dev/null); " +
+                "case \"\$MOSH_COMM\" in *mosh-server) " +
+                "kill -USR1 \"\$MOSH_PID\" && echo MOSH_CLEANUP_OK ;; esac"
+        val cleaned =
+            runCatching {
+                session.runCommand(command, MOSH_CLEANUP_TIMEOUT_MS)?.contains("MOSH_CLEANUP_OK") == true
+            }.getOrDefault(false)
+        if (cleaned) {
+            TermLog.i("mosh") { "cleaned unconfirmed mosh-server pid=$pid ${c.host.name}" }
+        } else {
+            TermLog.w("mosh") { "mosh cleanup not confirmed pid=$pid ${c.host.name}" }
         }
     }
 

@@ -109,20 +109,56 @@ abstract class CheckSigningSecretsTask @Inject constructor() : DefaultTask() {
     @get:Internal
     abstract val envFilePath: org.gradle.api.provider.Property<String>
 
+    @get:Internal
+    abstract val rootPath: org.gradle.api.provider.Property<String>
+
     @TaskAction
     fun check() {
-        val hasEnv = !System.getenv("ANDROID_KEYSTORE_PASSWORD").isNullOrEmpty()
-        val hasFile = java.io.File(envFilePath.get()).isFile
-        check(hasEnv || hasFile) {
-            "缺少签名机密：请准备项目根 .env（cp .env.example .env 后填值；留底在 ~/Documents/秘钥/）或注入 ANDROID_KEYSTORE_* 环境变量"
+        val root = java.io.File(rootPath.get())
+        val fileEnv = mutableMapOf<String, String>()
+        java.io.File(envFilePath.get()).takeIf { it.isFile }?.readLines()?.forEach { line ->
+            val trimmed = line.trim()
+            if (trimmed.isNotEmpty() && !trimmed.startsWith("#") && '=' in trimmed) {
+                fileEnv[trimmed.substringBefore('=').trim()] = trimmed.substringAfter('=').trim()
+            }
         }
-        println("✅ 签名机密就绪（jks 缺失时将自动从 ANDROID_KEYSTORE_BASE64 解码）")
+        val legacy = java.util.Properties().apply {
+            root.resolve("keystore.properties").takeIf { it.isFile }?.inputStream()?.use { load(it) }
+        }
+        fun secret(envKey: String, legacyKey: String): String? =
+            System.getenv(envKey)?.takeIf { it.isNotBlank() }
+                ?: fileEnv[envKey]?.takeIf { it.isNotBlank() }
+                ?: legacy.getProperty(legacyKey)?.takeIf { it.isNotBlank() }
+
+        val configuredPath = secret("ANDROID_KEYSTORE_FILE", "storeFile")
+        val keyFiles =
+            buildList {
+                if (configuredPath != null) {
+                    val configured = java.io.File(configuredPath)
+                    add(if (configured.isAbsolute) configured else root.resolve(configuredPath))
+                    add(root.resolve("composeApp").resolve(configuredPath))
+                }
+                add(root.resolve("termish-release.jks"))
+            }
+        val hasKeyMaterial = keyFiles.any { it.isFile } || secret("ANDROID_KEYSTORE_BASE64", "keystoreBase64") != null
+        val missing =
+            buildList {
+                if (!hasKeyMaterial) add("ANDROID_KEYSTORE_FILE 或 ANDROID_KEYSTORE_BASE64")
+                if (secret("ANDROID_KEYSTORE_PASSWORD", "storePassword") == null) add("ANDROID_KEYSTORE_PASSWORD")
+                if (secret("ANDROID_KEY_ALIAS", "keyAlias") == null) add("ANDROID_KEY_ALIAS")
+                if (secret("ANDROID_KEY_PASSWORD", "keyPassword") == null) add("ANDROID_KEY_PASSWORD")
+            }
+        check(missing.isEmpty()) {
+            "release 签名配置不完整，缺少：${missing.joinToString()}。请补齐项目根 .env 或 CI Secrets"
+        }
+        logger.lifecycle("release 签名机密已完整配置")
     }
 }
 tasks.register<CheckSigningSecretsTask>("checkSigningSecrets") {
     group = "verification"
     description = "检查 release 签名机密（项目根 .env 或 ANDROID_KEYSTORE_* 环境变量）"
     envFilePath.set(layout.projectDirectory.file(".env").asFile.absolutePath)
+    rootPath.set(layout.projectDirectory.asFile.absolutePath)
 }
 
 /** ktlint 检查/格式化（规则读 .editorconfig，覆盖 composeApp 全部 Kotlin 源集）。 */
