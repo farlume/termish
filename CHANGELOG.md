@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-08-23
+
+### 新增
+
+- **全屏帧率/画质切换**：右上角档位菜单（30/60/120 fps × 流畅/标清/高清），relay 支持动态参数（每连接读取 ~/.termish-screen.conf），切换后自动重建会话生效
+- **relay 版本协商**（RELAY_VERSION）：客户端检测远端 relay 版本，旧版引导一键升级——客户端与远端脚本版本匹配（不再出现新客户端配旧 relay 跑不起新功能）
+- **断流自动重连**：非主动断流 3 秒后自动重建会话（保留档位设置），无需手动重连
+
+### 修复
+
+- 档位切换回调漏传（全屏覆盖层未接 onStreamConfigChange）——帧率菜单点后右上角不更新、远端不生效；画质因本地 state 更新而看似可用
+- 切档位与断流自动重连竞态：旧 uiState 档位未同步，自动重连把新档位覆盖回 30
+- 小窗双指缩放改质心锚定（朝手指方向展开）+ 边界感知钳制（一边到头另一边继续撑开，不超出屏幕）
+- coerceIn(min>max) 边界崩溃（小窗放大到接近画布大小时滑动可能崩溃）
+- 工具栏键恢复正方形（宽屏 48dp 封顶居中，不再撑成扁块）
+- 文档：ktlint 工作流规范 + 仓库公开状态表述更新
+
 ## [1.6.1] - 2026-08-23
 
 ### 修复
@@ -454,7 +471,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2
 [1.6.1]: https://github.com/ttermish/termish/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/ttermish/termish/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/ttermish/termish/compare/v1.5.0...v1.5.1
