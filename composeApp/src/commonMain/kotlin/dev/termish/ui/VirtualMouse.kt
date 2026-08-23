@@ -23,6 +23,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,6 +82,9 @@ internal fun VirtualMousePanel(
     modifier: Modifier = Modifier,
 ) {
     val panelShape = RoundedCornerShape(percent = 42)
+
+    val currentOnMovePanel by rememberUpdatedState(onMovePanel)
+    val currentOnScroll by rememberUpdatedState(onScroll)
 
     Box(
         modifier
@@ -140,7 +146,7 @@ internal fun VirtualMousePanel(
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
-                            onMovePanel(dragAmount)
+                            currentOnMovePanel(dragAmount)
                         }
                     },
             ) {
@@ -155,9 +161,15 @@ internal fun VirtualMousePanel(
             onScroll = onScroll,
             modifier =
                 Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = ScreenControlDimens.MouseScrollTopOffset)
-                    .zIndex(6f),
+                    .align(Alignment.TopStart)
+                    .offset(
+                        x =
+                            (
+                                ScreenControlDimens.MousePanelWidth -
+                                    ScreenControlDimens.MouseScrollWidth
+                            ) / 2,
+                        y = ScreenControlDimens.MouseScrollTopOffset,
+                    ).zIndex(6f),
         )
 
         Box(
@@ -186,6 +198,7 @@ private fun MouseScrollControl(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val currentOnScroll by rememberUpdatedState(onScroll)
     val shape = RoundedCornerShape(ScreenControlDimens.MouseScrollWidth)
     Column(
         modifier
@@ -198,7 +211,7 @@ private fun MouseScrollControl(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .clickable { onScroll(ScreenControlTokens.SCROLL_DIRECTION_UP) },
+                .clickable { currentOnScroll(ScreenControlTokens.SCROLL_DIRECTION_UP) },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -222,7 +235,7 @@ private fun MouseScrollControl(
                         accumulated += amount.y
                         val lines = (accumulated / step).toInt()
                         if (lines != 0) {
-                            onScroll(-lines)
+                            currentOnScroll(-lines)
                             accumulated -= lines * step
                         }
                     }
@@ -244,7 +257,7 @@ private fun MouseScrollControl(
             Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .clickable { onScroll(ScreenControlTokens.SCROLL_DIRECTION_DOWN) },
+                .clickable { currentOnScroll(ScreenControlTokens.SCROLL_DIRECTION_DOWN) },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -297,15 +310,21 @@ internal fun VirtualMouseCursor(
         val cursorHeight = ScreenControlDimens.MouseCursorHeight.toPx()
         val hotspot = cursorHotspot(cursor, frame)
         val origin = cursorVisualOrigin(hotspot, frame, cursorWidth, cursorHeight)
+        // 确保箭头不超出画布边界（frame 左侧可能因右侧控制区挤开而为负）
+        val clampedOrigin =
+            ScreenPoint(
+                x = origin.x.coerceIn(0f, (size.width - cursorWidth).coerceAtLeast(0f)),
+                y = origin.y.coerceIn(0f, (size.height - cursorHeight).coerceAtLeast(0f)),
+            )
         val path =
             Path().apply {
-                moveTo(origin.x, origin.y)
-                lineTo(origin.x, origin.y + cursorHeight * 0.78f)
-                lineTo(origin.x + cursorWidth * 0.25f, origin.y + cursorHeight * 0.59f)
-                lineTo(origin.x + cursorWidth * 0.47f, origin.y + cursorHeight)
-                lineTo(origin.x + cursorWidth * 0.66f, origin.y + cursorHeight * 0.90f)
-                lineTo(origin.x + cursorWidth * 0.44f, origin.y + cursorHeight * 0.53f)
-                lineTo(origin.x + cursorWidth * 0.82f, origin.y + cursorHeight * 0.53f)
+                moveTo(clampedOrigin.x, clampedOrigin.y)
+                lineTo(clampedOrigin.x, clampedOrigin.y + cursorHeight * 0.78f)
+                lineTo(clampedOrigin.x + cursorWidth * 0.25f, clampedOrigin.y + cursorHeight * 0.59f)
+                lineTo(clampedOrigin.x + cursorWidth * 0.47f, clampedOrigin.y + cursorHeight)
+                lineTo(clampedOrigin.x + cursorWidth * 0.66f, clampedOrigin.y + cursorHeight * 0.90f)
+                lineTo(clampedOrigin.x + cursorWidth * 0.44f, clampedOrigin.y + cursorHeight * 0.53f)
+                lineTo(clampedOrigin.x + cursorWidth * 0.82f, clampedOrigin.y + cursorHeight * 0.53f)
                 close()
             }
         drawPath(path, color = ScreenControlTokens.CursorFill)

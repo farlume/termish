@@ -59,4 +59,24 @@ class VirtualMouseGeometryTest {
         assertFalse(shouldDockVirtualMouseRight(300f, 700f, 1080f))
         assertTrue(shouldDockVirtualMouseRight(380f, 700f, 1080f))
     }
+
+    @Test
+    fun viewportWidthClampsPanelRightEdgeToViewportEdge() {
+        // 视频被右侧控制区推走（frame.left 为负）后，anchor 仍可超出 frame.right
+        // 挤入控制区，但面板右边缘（anchor + controlWidth）不超出视口右缘
+        val pushedFrame = ScreenRect(-100f, 20f, 900f, 520f)
+        val anchor = clampVirtualMouseAnchor(ScreenPoint(9999f, 100f), pushedFrame, 800f, 200f, 80f, 1080f - 700f)
+        // maxX = 1080 - 700 = 380
+        assertEquals(380f, anchor.x)
+        assertEquals(100f, anchor.y)
+    }
+
+    @Test
+    fun viewportWidthKeepsPanelFullyVisibleWhenPushed() {
+        // 完全推开（overlap = controlWidth）时面板右边缘正好贴视口右缘：
+        // 视口 1080，anchor + controlWidth(700) = 1080
+        val pushedFrame = ScreenRect(-700f, 20f, 300f, 520f)
+        val anchor = clampVirtualMouseAnchor(ScreenPoint(9999f, 100f), pushedFrame, 800f, 200f, 80f, 380f)
+        assertEquals(380f, anchor.x)
+    }
 }

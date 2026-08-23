@@ -54,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -175,7 +176,7 @@ fun ScreenContent(
     var viewportSize by remember { mutableStateOf(IntSize.Zero) }
     var videoViewportSize by remember { mutableStateOf(IntSize.Zero) }
     var virtualMouseOpen by remember { mutableStateOf(false) }
-    var virtualMouseDockedRight by remember { mutableStateOf(false) }
+    var rightControlAreaPx by remember { mutableFloatStateOf(0f) }
     var virtualMouseAnchorPosition by remember { mutableStateOf<Offset?>(null) }
 
     val mousePanelWidthPx = with(density) { ScreenControlDimens.MousePanelWidth.toPx() }
@@ -189,17 +190,12 @@ fun ScreenContent(
     val mouseControlWidthPx = mouseCursorPanelOffsetXPx + mousePanelWidthPx + mouseCloseSpacePx
     val mouseControlHeightPx = mouseCursorPanelOffsetYPx + mousePanelHeightPx
     val mousePanelTopInsetPx = statusBarInsetTop + with(density) { Sizes.HeaderCompact.toPx() }
-    val rightControlAreaPx =
-        if (virtualMouseDockedRight && viewportSize.width > 0) {
-            mouseControlWidthPx.coerceAtMost(viewportSize.width.toFloat())
-        } else {
-            0f
-        }
+    // rightControlAreaPx is now a state updated in onMovePanel (gradual push)
 
     fun closeVirtualMouse() {
         if (!virtualMouseOpen) return
         virtualMouseOpen = false
-        virtualMouseDockedRight = false
+        rightControlAreaPx = 0f
         virtualMouseAnchorPosition = null
         TermLog.i("screen") { "virtual mouse closed" }
     }
@@ -266,7 +262,6 @@ fun ScreenContent(
 
     LaunchedEffect(
         virtualMouseOpen,
-        virtualMouseDockedRight,
         viewportSize,
         videoViewportSize,
         state.player?.videoDims?.value,
@@ -278,7 +273,7 @@ fun ScreenContent(
         val current = virtualMouseAnchorPosition
         val proposed =
             when {
-                virtualMouseDockedRight -> ScreenPoint(frame.right, current?.y ?: frame.top)
+                rightControlAreaPx > 0f && current != null -> ScreenPoint(frame.right, current.y)
                 current != null -> ScreenPoint(current.x, current.y)
                 else ->
                     ScreenPoint(
@@ -293,6 +288,10 @@ fun ScreenContent(
                 viewportHeight = viewportSize.height.toFloat(),
                 controlHeight = mouseControlHeightPx,
                 topInset = mousePanelTopInsetPx,
+                // 与 onMovePanel 一致：面板右边缘贴视口右缘（完整可见），
+                // 避免 effect 重启时 anchor 跳变导致面板闪动
+                viewportWidth =
+                    (viewportSize.width.toFloat() - mouseControlWidthPx).coerceAtLeast(0f),
             )
         virtualMouseAnchorPosition = Offset(clamped.x, clamped.y)
     }
@@ -700,43 +699,32 @@ fun ScreenContent(
                         },
                         onMovePanel = { delta ->
                             val current = virtualMouseAnchorPosition ?: return@VirtualMousePanel
-                            val releaseDock =
-                                virtualMouseDockedRight &&
-                                    delta.x < 0f &&
-                                    -delta.x > abs(delta.y)
                             val candidate = ScreenPoint(current.x + delta.x, current.y + delta.y)
-                            val dockRight =
-                                when {
-                                    virtualMouseDockedRight && !releaseDock -> true
-                                    virtualMouseDockedRight -> false
-                                    else ->
-                                        shouldDockVirtualMouseRight(
-                                            anchorX = candidate.x,
-                                            controlWidth = mouseControlWidthPx,
-                                            viewportWidth = viewportSize.width.toFloat(),
-                                        )
-                                }
-                            virtualMouseDockedRight = dockRight
-                            val controlArea =
-                                if (dockRight) {
-                                    mouseControlWidthPx.coerceAtMost(viewportSize.width.toFloat())
-                                } else {
-                                    0f
-                                }
-                            val targetFrame = screenFrame(state, controlArea)
-                            val target =
-                                if (dockRight) {
-                                    ScreenPoint(targetFrame.right, candidate.y)
-                                } else {
-                                    candidate
-                                }
+                            // 右侧渐进挤开：面板右边缘超出视口多少，视频就左移多少
+                            val panelRight = candidate.x + mouseControlWidthPx
+                            val viewportRight = viewportSize.width.toFloat()
+                            val overlap =
+                                (panelRight - viewportRight).coerceAtLeast(0f).coerceAtMost(
+                                    mouseControlWidthPx,
+                                )
+                            rightControlAreaPx = overlap
+                            val targetFrame = screenFrame(state, overlap)
                             val clamped =
                                 clampVirtualMouseAnchor(
-                                    proposed = target,
+                                    proposed = candidate,
                                     frame = targetFrame,
                                     viewportHeight = viewportSize.height.toFloat(),
                                     controlHeight = mouseControlHeightPx,
                                     topInset = mousePanelTopInsetPx,
+                                    // 面板完整可见：anchor（箭头热点）上界 = 视口宽 - 控制区总宽，
+                                    // 即面板右边缘最多贴视口右边缘——渐进推走时面板不滑出屏幕。
+                                    // 注意：与 LaunchedEffect 的 clamp 保持一致（否则 effect 重启时
+                                    // anchor 跳变、面板闪动）。
+                                    viewportWidth =
+                                        (
+                                            viewportSize.width.toFloat() -
+                                                mouseControlWidthPx
+                                        ).coerceAtLeast(0f),
                                 )
                             virtualMouseAnchorPosition = Offset(clamped.x, clamped.y)
                         },
@@ -823,7 +811,7 @@ fun ScreenContent(
                             contentDescription = s.screen.virtualMouse,
                             onClick = {
                                 virtualMouseOpen = true
-                                virtualMouseDockedRight = false
+                                rightControlAreaPx = 0f
                                 TermLog.i("screen") { "virtual mouse opened" }
                             },
                         )

@@ -99,12 +99,16 @@ internal fun clampVirtualMouseAnchor(
     viewportHeight: Float,
     controlHeight: Float,
     topInset: Float,
+    /** 视口宽度（px）：null=同 frame.right（旧行为），非 null=面板右边缘最多贴视口右缘（完整可见）。 */
+    viewportWidth: Float? = null,
 ): ScreenPoint {
     if (frame.width <= 0f || frame.height <= 0f || viewportHeight <= 0f) return proposed
     val minY = max(frame.top, topInset)
     val maxY = min(frame.bottom, viewportHeight - controlHeight).coerceAtLeast(minY)
+    // 面板左边缘可超出视频帧右边界（挤入右侧控制区），但面板右边缘不超出视口右边界
+    val maxX = viewportWidth ?: frame.right
     return ScreenPoint(
-        x = proposed.x.coerceIn(frame.left, frame.right),
+        x = proposed.x.coerceIn(frame.left, maxX),
         y = proposed.y.coerceIn(minY, maxY),
     )
 }

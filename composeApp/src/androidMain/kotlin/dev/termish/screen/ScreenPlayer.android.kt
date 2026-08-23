@@ -177,12 +177,16 @@ class ScreenDecoder(
         try {
             while (running) {
                 // surface 生命周期：
-                // - 全部销毁（列表空）→ 释放 codec（SurfaceView 回调只移除自己的 surface，
-                //   codec 操作收口在本线程避免并发崩溃）
+                // - 全部销毁（列表空）→ 立即释放 codec（SurfaceView 回调只移除自己的
+                //   surface，codec 操作收口在本线程避免并发崩溃）。不做宽限期：codec
+                //   绑着已销毁 surface 时 setOutputSurface 换绑在部分设备上无输出，
+                //   且换绑后 boundSurface 已更新、再无重建机会 → 黑屏到切档位才恢复
+                //   （用户反馈：缩小再进全屏黑屏）。立即释放 + 下一个关键帧重建
+                //   （keyint ≈ 0.5s）即恢复。
                 // - 变化（小窗↔全屏是两个独立 SurfaceView，切换时新 surface 到达而
-                //   codec 还绑旧 surface）→ setOutputSurface 无缝换绑（API 23+，无需
-                //   重建解码器/等关键帧——否则黑屏到下一关键帧且竞态下小窗永久黑屏）；
-                //   换绑失败降级重建
+                //   codec 还绑旧 surface）→ 仅当旧 surface 仍存活（双 surface 并存，
+                //   如展开/收起动画期间）才 setOutputSurface 无缝换绑（无需重建/等
+                //   关键帧）；旧 surface 已销毁 → 重建（同上，换绑不可靠）。
                 // 局部快照：codec 在 releaseCodec 闭包中被置空，需在判空前取 val
                 val sc = codec
                 if (sc != null) {
@@ -190,7 +194,10 @@ class ScreenDecoder(
                     when {
                         s == null -> releaseCodec()
                         s !== boundSurface -> {
-                            if (Build.VERSION.SDK_INT >= 23) {
+                            // 旧 surface 已被销毁（不在列表中）→ 换绑不可靠，重建
+                            if (boundSurface == null || !surfaces.contains(boundSurface)) {
+                                releaseCodec()
+                            } else {
                                 val ok = runCatching { sc.setOutputSurface(s) }.isSuccess
                                 if (ok) {
                                     boundSurface = s
@@ -199,8 +206,6 @@ class ScreenDecoder(
                                     TermLog.w("screen") { "setOutputSurface 失败，重建解码器" }
                                     releaseCodec()
                                 }
-                            } else {
-                                releaseCodec()
                             }
                         }
                     }
