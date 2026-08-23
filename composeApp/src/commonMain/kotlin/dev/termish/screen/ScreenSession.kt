@@ -20,7 +20,8 @@ import kotlinx.datetime.Clock
  * 架构（macOS 屏幕录制权限的硬约束决定）：
  * - macOS 的 TCC 只对 GUI 登录会话放行屏幕捕获，SSH/mosh 后台会话无论给
  *   sshd/ffmpeg 授权都无法抓屏（实测：挂起/黑帧/退出）。
- * - 因此推流进程（ffmpeg avfoundation 抓屏 → libx264 → H.264）作为
+ * - 因此推流进程（ffmpeg avfoundation 抓屏 → VideoToolbox 硬编 H.264；
+ *   Linux 退回落 libx264 软编）作为
  *   LaunchAgent 跑在用户 GUI 域（launchctl bootstrap gui/$(id -u)），常驻
  *   监听 127.0.0.1:17321；手机侧 SSH 只做传输（nc 读流），无需录屏权限。
  * - 服务缺失时远端上报 SCREEN_SERVICE_MISSING → uiState.serviceMissing，
@@ -118,6 +119,18 @@ class ScreenSession(
                 player = p
                 uiState.player = p
                 p.start()
+                // 解码能力探测（按当前画质档位对应分辨率）：档位菜单据此
+                // 隐藏解码器跑不满的帧率项（旗舰机 1080p 通常 60+；若探测
+                // 值更低说明真瓶颈，推高了也白推——解码器满载排队延迟更高）
+                val capScale = uiState.streamQuality
+                val capW =
+                    when (capScale) {
+                        0 -> 960
+                        2 -> 1920
+                        else -> 1280
+                    }
+                uiState.decoderMaxFps = probeDecoderMaxFps(capW, (capW * 9 / 16).coerceAtLeast(480))
+                TermLog.i("screen") { "decoder capability: ${uiState.decoderMaxFps}fps @ ${capW}p" }
                 uiState.connected = true
                 firstFrameDeadline = Clock.System.now().toEpochMilliseconds() + 12_000
                 // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）。
@@ -319,7 +332,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 9
+        const val RELAY_VERSION = 12
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -334,11 +347,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=9，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=12，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "9" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=9" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "12" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=12" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -474,7 +487,7 @@ class ScreenSession(
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
             import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
-            RELAY_VERSION = 9
+            RELAY_VERSION = 12
             TCP_PORT = ${'$'}PORT
             UDP_PORT = ${'$'}PORT + 1
             FF = "${'$'}FF_REAL"
@@ -506,13 +519,45 @@ class ScreenSession(
                 # fps 滤镜强制限帧：avfoundation 实际输出 ~120fps（ProMotion），
                 # -framerate 无效——fps 滤镜才是实际限帧（120fps 会把解码器灌爆）
                 vf = "fps=" + cfg["fps"] + ",scale=" + cfg["scale"]
+                if IS_MAC:
+                    # macOS：VideoToolbox 硬编（M 系列 Media Engine 专核，CPU 零负担）。
+                    # 历史教训：libx264 软编在 4K/高帧率下 CPU 打满 → 编码端掉帧（卡）+
+                    # 被迫降质量（糊）；Parsec/ToDesk/RustDesk 全走硬编。
+                    # 码率按分辨率档位映射（CBR 精确生效，实测 -b:v 8M → 8Mbps）：
+                    # 960/1280/1920 对应 4/6/10Mbps——1080p60 屏幕流 10M 足够清晰。
+                    scale = cfg["scale"]
+                    if scale.startswith("1920"):
+                        bitrate = "10M"
+                    elif scale.startswith("1280"):
+                        bitrate = "6M"
+                    else:
+                        bitrate = "4M"
+                    return ["-f", "avfoundation", "-capture_cursor", "1",
+                            "-pixel_format", "uyvy422", "-i", "1:none",
+                            "-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
+                            "-vf", vf,
+                            "-c:v", "h264_videotoolbox",
+                            # 实时编码提示（低延时）：编码器按实时语义工作，无缓冲积压
+                            "-realtime", "1",
+                            # CBR 码率：屏幕流静态场景码率自动收敛，运动场景不超标
+                            "-b:v", bitrate,
+                            # 0.5s 关键帧间隔（-g 15）：丢帧/起播恢复最快——
+                            # 流畅度优先，静态画面 GOP 缩短码率代价可忽略
+                            "-g", "15",
+                            "-pix_fmt", "yuv420p",
+                            # VT 不自带 AUD：h264_metadata 位流过滤器逐帧插入
+                            # （实测每帧恰 1 个 AUD），relay 按 AUD 切帧对齐语义不变
+                            "-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert",
+                            "-f", "h264", "-"]
+                # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
                 common = ["-hide_banner", "-loglevel", "error", "-framerate", cfg["fps"],
                           "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
                           # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
-                          # keyint=30：1s 关键帧间隔（30fps）——解码器任何重同步最多等 1s
-                          # aud=1：每帧前发 AUD NAL，relay 按它切帧对齐块
-                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=30:aud=1",
-                          "-pix_fmt", "yuv420p", "-g", "30",
+                          # keyint=15：0.5s 关键帧间隔（30fps）——解码器重同步/丢帧
+                          # 恢复最多等 0.5s（流畅度优先）；aud=1：每帧前发 AUD NAL，
+                          # relay 按它切帧对齐块
+                          "-x264opts", "sliced-threads=0:rc-lookahead=0:sync-lookahead=0:keyint=15:aud=1",
+                          "-pix_fmt", "yuv420p", "-g", "15",
                           # 显式无 B 帧（ultrafast 默认即 0，写死保险：B 帧需等参考帧，
                           # 会引入编码端重排延迟）
                           "-bf", "0",
@@ -522,11 +567,6 @@ class ScreenSession(
                           # （客户端 MediaCodec 直解，无 ExoPlayer/HTTP/容器层）
                           "-bsf:v", "dump_extra=freq=keyframe",
                           "-f", "h264", "-"]
-                if IS_MAC:
-                    # macOS：avfoundation 抓屏（LaunchAgent 跑在 GUI 域，TCC 放行）
-                    return ["-f", "avfoundation", "-capture_cursor", "1",
-                            "-pixel_format", "uyvy422", "-i", "1:none"] + common
-                # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
                 return ["-f", "x11grab", "-i", os.environ.get("DISPLAY", ":0") + ".0"] + common
 
             def make_fragments(payload, mtu, frag_id):
@@ -684,17 +724,39 @@ class ScreenSession(
             # 启动时清理一次孤儿 ffmpeg（上次 relay 被强杀后遗留，占用抓屏设备）
             subprocess.run(["pkill", "-9", "-x", "ffmpeg"], capture_output=True)
 
-            # UDP：视频流 + 心跳（手机直连 UDP，必须绑定 0.0.0.0 收所有接口；
-            # 旧 TCP 版是 SSH 内 nc 127.0.0.1 本机转发，UDP 版手机直连内网 IP）
-            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            udp.bind(("0.0.0.0", UDP_PORT))
+            # UDP：视频流 + 心跳（手机直连 UDP，必须绑定全部接口收包；
+            # 双栈 IPv6+v4：家宽/蜂窝 IPv6 直连（如 home.ttermish.com AAAA）时
+            # 手机以 IPv6 地址发包——原 AF_INET 0.0.0.0 只收 IPv4，IPv6 手机
+            # 心跳/视频全丢（用户反馈）。V6ONLY=0 让 v4 包以 v4-mapped 地址
+            # 进入，recvfrom 返回的 addr 直接可作 sendto 目标（自动路由回 v4）
+            def make_udp():
+                try:
+                    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+                    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("::", UDP_PORT))
+                    return s
+                except (OSError, AttributeError):
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    s.bind(("0.0.0.0", UDP_PORT))
+                    return s
 
-            # TCP：仅 bind+listen 用于读流脚本 lsof 探测 relay 存活，不服务视频
+            udp = make_udp()
+
+            # TCP：仅 bind+listen 用于读流脚本 lsof 探测 relay 存活，不服务视频。
+            # 同时监听 IPv6 回环（::1）：SSH -L [::1]:PORT 转发同样可达
             tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             tcp.bind(("127.0.0.1", TCP_PORT))
             tcp.listen(4)
+            try:
+                tcp6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+                tcp6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                tcp6.bind(("::1", TCP_PORT))
+                tcp6.listen(4)
+            except OSError:
+                pass
 
             while True:
                 r, _, _ = select.select([udp], [], [], 1.0)
@@ -825,7 +887,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 9 > "${'$'}HOME/.termish-screen.version"
+            echo 12 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**
@@ -872,8 +934,8 @@ class ScreenSession(
             FF=${'$'}(command -v ffmpeg 2>/dev/null || echo "${'$'}HOME/bin/ffmpeg")
             if [ ! -x "${'$'}FF" ]; then echo "FFMPEG_MISSING" >&2; exit 1; fi
             exec "${'$'}FF" -hide_banner -loglevel error -f lavfi -i testsrc=size=640x360:rate=30 \
-              -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 60 \
-              -f h264 -flush_packets 1 -
+              -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -g 15 \
+              -x264opts keyint=15:aud=1 -f h264 -flush_packets 1 -
             """.trimIndent()
     }
 }
