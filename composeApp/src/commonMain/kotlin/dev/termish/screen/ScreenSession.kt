@@ -47,6 +47,9 @@ class ScreenSession(
     /** 首帧超时（连接建立后无帧到达视为推流异常，给可见提示）。 */
     private var firstFrameDeadline = 0L
 
+    /** UDP 漫游会话（视频流 + 心跳；断网不显示断开，恢复续传）。 */
+    private var udpSession: ScreenStreamUdpSession? = null
+
     fun start() {
         if (running) return
         running = true
@@ -63,15 +66,33 @@ class ScreenSession(
                     running = false
                     return@launch
                 }
-                // 探测已并入读流脚本内部（lsof 检查端口）：同一连接上先 runCommand
-                // 再 startExecRaw 时第二个 exec 通道会立即 EOF（sshj 坑，实测复现）
-                val channel =
+                // 读流脚本一次性执行：探测 relay 存活 + 版本/ffmpeg/屏幕状态，
+                // 并输出 UDP 端口——视频流走 UDP 漫游，不再经 SSH 通道读流
+                // （同一连接 runCommand 后不再 startExecRaw，避开 sshj 第二个
+                // exec 通道立即 EOF 的坑）
+                val result =
                     withContext(ioDispatcher()) {
-                        session.startExecRaw(READ_STREAM_SCRIPT)
+                        session.runCommandDetailed(READ_STREAM_SCRIPT, 15_000)
                     }
-                TermLog.i("screen") { "execRaw=${channel != null}" }
-                if (channel == null) {
+                if (result == null) {
                     uiState.error = "无法启动远端读流通道"
+                    running = false
+                    return@launch
+                }
+                // 处理远端探测标记（版本过旧/缺 ffmpeg/无显示/服务未运行/屏幕状态）
+                if (!handleReadStreamStderr(result.stderr)) {
+                    running = false
+                    return@launch
+                }
+                val udpPort =
+                    result.stdout
+                        .lineSequence()
+                        .firstOrNull { it.startsWith("SCREEN_UDP_PORT:") }
+                        ?.substringAfter(":")
+                        ?.trim()
+                        ?.toIntOrNull()
+                if (udpPort == null) {
+                    uiState.error = "无法获取远端 UDP 端口"
                     running = false
                     return@launch
                 }
@@ -94,116 +115,40 @@ class ScreenSession(
                 p.start()
                 uiState.connected = true
                 firstFrameDeadline = Clock.System.now().toEpochMilliseconds() + 12_000
-                // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）
-                val timeoutJob =
-                    scope.launch {
-                        while (running && firstFrameDeadline > 0) {
-                            if (Clock.System.now().toEpochMilliseconds() > firstFrameDeadline) {
-                                if (running && !uiState.videoReady && uiState.error == null) {
-                                    uiState.error = FIRST_FRAME_TIMEOUT_MSG
+                // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）。
+                // 首帧到达后 onReady 把 deadline 清零，本监控自然退出
+                scope.launch {
+                    while (running && firstFrameDeadline > 0) {
+                        if (Clock.System.now().toEpochMilliseconds() > firstFrameDeadline) {
+                            if (running && !uiState.videoReady && uiState.error == null) {
+                                uiState.error = FIRST_FRAME_TIMEOUT_MSG
+                            }
+                            break
+                        }
+                        delay(500)
+                    }
+                }
+                // UDP 漫游会话：视频包喂播放器。断网不显示断开（漫游语义），
+                // 链路健康度只做弱网提示，不触发断流重连
+                val udp =
+                    ScreenStreamUdpSession(
+                        ip = connection.host,
+                        port = udpPort,
+                        scope = scope,
+                        onVideoPacket = { data -> p.feed(data) },
+                        onLinkStatus = { lostSecs ->
+                            if (lostSecs > 0) {
+                                if (uiState.screenHint == null) {
+                                    uiState.screenHint = "网络不稳定（已断 ${lostSecs}s，恢复后自动续传）"
                                 }
-                                break
+                            } else if (uiState.screenHint?.startsWith("网络不稳定") == true) {
+                                uiState.screenHint = null
                             }
-                            delay(500)
-                        }
-                    }
-                // stderr 独立协程消费：与 stdout 串行阻塞读会永久卡死主循环（黑屏）；
-                // 错误文本累计到 lastStderr，断流时透传给用户
-                val stderrJob =
-                    scope.launch {
-                        val sb = StringBuilder()
-                        while (running) {
-                            val err = withContext(ioDispatcher()) { channel.readErr() } ?: break
-                            val text = err.decodeToString()
-                            sb.append(text)
-                            if (sb.length > 8192) sb.deleteRange(0, sb.length - 8192)
-                            if (sb.contains("FFMPEG_MISSING")) {
-                                uiState.ffmpegMissing = true
-                                // 与 SCREEN_SERVICE_MISSING 一致进引导卡片：ffmpeg 缺失
-                                // 同样可一键安装（安装脚本会自动补装 ffmpeg）
-                                uiState.serviceMissing = true
-                                uiState.error = "远端未安装 ffmpeg"
-                                running = false
-                                break
-                            }
-                            // 非 macOS/Linux 主机：屏幕推流不支持（不引导安装）
-                            if (sb.contains("SCREEN_UNSUPPORTED_OS")) {
-                                val os =
-                                    sb
-                                        .toString()
-                                        .substringAfter("SCREEN_UNSUPPORTED_OS:")
-                                        .lineSequence()
-                                        .first()
-                                        .trim()
-                                uiState.error = "屏幕推流仅支持 macOS / Linux 桌面主机（当前远端为 $os）"
-                                running = false
-                                break
-                            }
-                            // relay 版本过旧：引导重新安装（升级）
-                            if (sb.contains("SCREEN_RELAY_OLD")) {
-                                uiState.serviceMissing = true
-                                uiState.relayNeedsUpgrade = true
-                                uiState.error = "推流服务需要升级（远端 relay 版本过旧），点安装更新"
-                                running = false
-                                break
-                            }
-                            // Linux Wayland 桌面：x11grab 仅覆盖 X11 应用窗口
-                            if (sb.contains("SCREEN_WAYLAND_ONLY")) {
-                                uiState.screenHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口（建议改用 Xorg 会话）"
-                            }
-                            // Linux 无图形会话（服务器/容器，无 X11 显示）
-                            if (sb.contains("SCREEN_NO_DISPLAY")) {
-                                uiState.error = "屏幕推流需要图形会话（当前远端未检测到 X11 桌面显示）"
-                                running = false
-                                break
-                            }
-                            // Mac 息屏/锁屏提示（非错误）：推流可能无帧或为锁屏画面，
-                            // 唤醒/解锁后自动恢复——不设 error（避免误入错误态/断流）
-                            if (sb.contains("SCREEN_ASLEEP")) {
-                                uiState.screenHint = "Mac 屏幕已关闭，唤醒后画面自动恢复"
-                            } else if (sb.contains("SCREEN_LOCKED")) {
-                                uiState.screenHint = "Mac 处于锁屏状态，画面为锁屏界面（解锁后恢复桌面）"
-                            }
-                            if (sb.contains("SCREEN_SERVICE_MISSING") ||
-                                sb.contains("Connection refused", ignoreCase = true)
-                            ) {
-                                uiState.serviceMissing = true
-                                uiState.error = "远端推流服务未运行"
-                                running = false
-                                break
-                            }
-                        }
-                        lastStderr = sb.toString()
-                    }
-                // 读循环（阻塞读，跑 ioDispatcher）：原始 TS 字节喂播放器
-                var bytesRead = 0L
-                val readStart = Clock.System.now().toEpochMilliseconds()
-                withContext(ioDispatcher()) {
-                    while (running) {
-                        val data = channel.read() ?: break
-                        if (!running) break // close() 后残留数据不再喂
-                        bytesRead += data.size
-                        p.feed(data)
-                    }
-                    // 关闭通道：远端 nc 立即退出、relay 收尾释放 avfoundation
-                    // （否则 nc 挂在 FIN_WAIT_2 往死通道里写、relay 连接悬置
-                    // 到下次连接才被踢，白占抓屏设备）
-                    channel.close()
-                }
-                // 通道 EOF（远端命令退出）：等 stderr 协程收尾，把错误拼进错误信息
-                timeoutJob.cancel()
-                val readMs = Clock.System.now().toEpochMilliseconds() - readStart
-                TermLog.w("screen") {
-                    "read loop EOF after ${readMs}ms bytes=$bytesRead stderr=${lastStderr.trim().takeLast(200)}"
-                }
-                if (running) {
-                    stderrJob.join()
-                    val detail = lastStderr.trim().takeLast(500)
-                    uiState.error =
-                        if (detail.isNotEmpty()) "画面流已断开：$detail" else "画面流已断开"
-                    running = false
-                    onStreamLost?.invoke()
-                }
+                        },
+                    )
+                udpSession = udp
+                udp.start()
+                TermLog.i("screen") { "UDP 会话已启动 port=$udpPort" }
             } catch (e: Exception) {
                 TermLog.w("screen") { "screen session error: $e" }
                 if (running) {
@@ -213,6 +158,56 @@ class ScreenSession(
                 }
             }
         }
+    }
+
+    /**
+     * 处理读流脚本 stderr 的探测标记（一次性；替代原 readErr 循环）。
+     * 返回 false = 已设置错误态 / 引导安装态，调用方应停止。
+     */
+    private fun handleReadStreamStderr(err: String): Boolean {
+        if (err.contains("FFMPEG_MISSING")) {
+            uiState.ffmpegMissing = true
+            uiState.serviceMissing = true
+            uiState.error = "远端未安装 ffmpeg"
+            return false
+        }
+        if (err.contains("SCREEN_UNSUPPORTED_OS")) {
+            val os =
+                err
+                    .substringAfter("SCREEN_UNSUPPORTED_OS:")
+                    .lineSequence()
+                    .first()
+                    .trim()
+            uiState.error = "屏幕推流仅支持 macOS / Linux 桌面主机（当前远端为 $os）"
+            return false
+        }
+        if (err.contains("SCREEN_RELAY_OLD")) {
+            uiState.serviceMissing = true
+            uiState.relayNeedsUpgrade = true
+            uiState.error = "推流服务需要升级（远端 relay 版本过旧），点安装更新"
+            return false
+        }
+        if (err.contains("SCREEN_NO_DISPLAY")) {
+            uiState.error = "屏幕推流需要图形会话（当前远端未检测到 X11 桌面显示）"
+            return false
+        }
+        if (err.contains("SCREEN_SERVICE_MISSING") ||
+            err.contains("Connection refused", ignoreCase = true)
+        ) {
+            uiState.serviceMissing = true
+            uiState.error = "远端推流服务未运行"
+            return false
+        }
+        // 提示类（不阻断推流）
+        if (err.contains("SCREEN_WAYLAND_ONLY")) {
+            uiState.screenHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口（建议改用 Xorg 会话）"
+        }
+        if (err.contains("SCREEN_ASLEEP")) {
+            uiState.screenHint = "Mac 屏幕已关闭，唤醒后画面自动恢复"
+        } else if (err.contains("SCREEN_LOCKED")) {
+            uiState.screenHint = "Mac 处于锁屏状态，画面为锁屏界面（解锁后恢复桌面）"
+        }
+        return true
     }
 
     /**
@@ -287,6 +282,8 @@ class ScreenSession(
 
     fun close() {
         running = false
+        udpSession?.close()
+        udpSession = null
         try {
             player?.stop()
         } catch (_: Exception) {
@@ -303,8 +300,11 @@ class ScreenSession(
         /** 首帧超时提示文案（帧到达时清除，见 [onFrame]）。 */
         const val FIRST_FRAME_TIMEOUT_MSG = "画面数据未到达（检查远端推流服务 / ffmpeg）"
 
-        /** 推流服务监听端口（LaunchAgent 常驻；手机 SSH 会话 nc 读流）。 */
+        /** 推流服务 TCP 端口（LaunchAgent 常驻；读流脚本 lsof 探测存活）。 */
         const val SCREEN_PORT = 17321
+
+        /** 视频流 UDP 端口（relay 分片发送 + 手机心跳，漫游续传）。 */
+        const val SCREEN_UDP_PORT = 17322
 
         /**
          * relay 协议版本：客户端内置安装脚本部署的 relay 与远端已运行 relay
@@ -312,7 +312,7 @@ class ScreenSession(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 5
+        const val RELAY_VERSION = 6
 
         /**
          * 读流脚本：检查推流服务（lsof 探测，不产生连接）→ 缺失报 SCREEN_SERVICE_MISSING
@@ -327,11 +327,11 @@ class ScreenSession(
             """
             PORT=$SCREEN_PORT
             OS=${'$'}(uname)
-            # relay 版本匹配：客户端 RELAY_VERSION=5，远端版本文件缺失/不一致
+            # relay 版本匹配：客户端 RELAY_VERSION=6，远端版本文件缺失/不一致
             # → 旧 relay（不支持新协议）→ 引导重新安装（用户反馈：客户端脚本
             # 应与远端脚本版本匹配）
-            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "5" ]; then
-              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=5" >&2
+            if [ ! -f "${'$'}HOME/.termish-screen.version" ] || [ "${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null)" != "6" ]; then
+              echo "SCREEN_RELAY_OLD:have=${'$'}(cat "${'$'}HOME/.termish-screen.version" 2>/dev/null || echo none) expect=6" >&2
               exit 1
             fi
             case "${'$'}OS" in
@@ -395,7 +395,8 @@ class ScreenSession(
                 print("SCREEN_LOCKED")
             ' 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
             fi
-            nc 127.0.0.1 ${'$'}PORT < /dev/null
+            # 视频流走 UDP 漫游：输出 UDP 端口后退出（客户端据此建 UDP 会话）
+            echo "SCREEN_UDP_PORT:${'$'}((PORT + 1))"
             """.trimIndent()
 
         /**
@@ -462,10 +463,12 @@ class ScreenSession(
             mkdir -p "${'$'}APP_DIR"
             PORT="${'$'}PORT" FF_REAL="${'$'}FF_REAL" cat > "${'$'}RELAY" <<TERMISH_EOF
             #!/usr/bin/env python3
-            import socket, subprocess, time, select, os, signal, sys, threading
-            RELAY_VERSION = 5
-            PORT = ${'$'}PORT
+            import socket, subprocess, time, select, os, signal, sys, threading, zlib, struct
+            RELAY_VERSION = 6
+            TCP_PORT = ${'$'}PORT
+            UDP_PORT = ${'$'}PORT + 1
             FF = "${'$'}FF_REAL"
+            HEARTBEAT_MAGIC = b"THB\x01"
             # macOS 才有 ~/Library/Logs；Linux 用 ~/.termish-screen.err——
             # 目录不存在时 open() 抛异常 → ffmpeg 不会被拉起（用户反馈：
             # Ubuntu 端口监听但推流 0 字节）
@@ -513,128 +516,95 @@ class ScreenSession(
                 # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
                 return ["-f", "x11grab", "-i", os.environ.get("DISPLAY", ":0") + ".0"] + common
 
-            lock = threading.Lock()
-            active = [None]  # 当前活跃连接（新连接优先：重连时踢掉旧会话残留）
-            active_ff = [None]  # 当前活跃 ffmpeg（kick 时直接 SIGKILL，不等旧线程收尾）
+            def make_fragments(payload, mtu, frag_id):
+                # 分片格式与客户端（Kotlin Fragment.toBytes）一致：8B id 大端 + 2B (final<<15|num)
+                usable = mtu - 10
+                compressed = zlib.compress(payload)
+                frags = []
+                num = 0
+                off = 0
+                while off < len(compressed):
+                    end = min(off + usable, len(compressed))
+                    final = 1 if end == len(compressed) else 0
+                    hdr = struct.pack(">QH", frag_id, (final << 15) | num)
+                    frags.append(hdr + compressed[off:end])
+                    off = end
+                    num += 1
+                return frags
 
-            def handle(conn):
-                try:
-                    with lock:
-                        old = active[0]
-                        oldff = active_ff[0]
-                        active[0] = conn
-                        active_ff[0] = None
-                    if old is not None:
-                        # 踢掉旧连接：其 handle 检测关闭后 kill ffmpeg，释放 avfoundation 设备
-                        try:
-                            old.shutdown(socket.SHUT_RDWR)
-                            old.close()
-                        except Exception:
-                            pass
-                    if oldff is not None and oldff.poll() is None:
-                        # 旧 ffmpeg 可能卡死在 avfoundation（读管道阻塞 → 旧线程
-                        # 永远走不到 finally 的 kill）——新线程直接 SIGKILL，
-                        # 否则抓屏设备被僵尸进程占死、新 ffmpeg 挂起无输出
-                        try:
-                            os.kill(oldff.pid, signal.SIGKILL)
-                        except Exception:
-                            pass
-                    if old is not None:
-                        time.sleep(3.0)
-                    conn.setblocking(False)
-                    # 关 Nagle：小包立即发出，不合并等待（低延迟实时流）
-                    conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                    errf = open(ERRLOG, "a")
-                    ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=errf)
-                    with lock:
-                        active_ff[0] = ff
-                    started = time.time()
-                    last_data = time.time()
-                    sent = 0
-                    reason = "eof"
-                    waited_display = False
+            LOCK = threading.Lock()
+            STREAM = [None]  # 当前 UdpStream（单 ffmpeg，发到一个客户端地址）
+            CLIENT = [None]  # 当前客户端地址（心跳更新，漫游时变）
+            LAST_HB = [0.0]
+
+            class UdpStream:
+                # ffmpeg 抓屏 + 分片 UDP 发送。漫游（地址变化）只更新 addr 不重启
+                # ffmpeg，画面连续；心跳超时才停（释放抓屏设备）。
+                def __init__(self, udp, addr):
+                    self.udp = udp
+                    self.addr = addr
+                    self.stopped = False
+                    self.errf = open(ERRLOG, "a")
+                    self.ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=self.errf)
+                    self.frag_id = 0
+                    self.started = time.time()
+                    self.last_data = time.time()
+                    self.sent = 0
+
+                def start(self):
+                    threading.Thread(target=self.pump, daemon=True).start()
+
+                def pump(self):
                     try:
-                        while True:
-                            r, _, _ = select.select([ff.stdout], [], [], 1.0)
-                            if r:
-                                data = ff.stdout.read(65536)
-                                if not data:
-                                    reason = "ffmpeg-exit"
-                                    break
-                                if not send_all(conn, data):
-                                    reason = "peer-closed"
-                                    break
-                                sent += len(data)
-                                last_data = time.time()
-                            else:
-                                # 自愈看门狗：ffmpeg 卡死（设备被占/挂起）时无数据输出——
-                                # 首帧 45s / 中途 20s 无数据即放弃本连接，kill ffmpeg
-                                # 放客户端重连（否则僵尸 ffmpeg 堆积占死抓屏设备）。
-                                # 例外：屏幕息屏时 ffmpeg 无帧源属正常——不 kill 不断连，
-                                # 等屏幕唤醒帧自动恢复（否则杀→重连→再超时循环）
+                        while not self.stopped:
+                            r, _, _ = select.select([self.ff.stdout], [], [], 1.0)
+                            if not r:
+                                # 自愈看门狗：ffmpeg 卡死无输出（首帧 45s / 中途 20s）
                                 now = time.time()
-                                if (sent == 0 and now - started > 45) or (sent > 0 and now - last_data > 20):
+                                if (self.sent == 0 and now - self.started > 45) or (self.sent > 0 and now - self.last_data > 20):
                                     if display_asleep():
-                                        if not waited_display:
-                                            errf.write("[%s] display asleep, waiting for wake\n" % time.strftime("%H:%M:%S"))
-                                            errf.flush()
-                                            waited_display = True
                                         continue
-                                    reason = "ffmpeg-stall"
                                     break
-                                # 1 秒无数据（ffmpeg 预热/静默期）：探测对端真实状态。
-                                # 关键：BSD nc 客户端（脚本用 < /dev/null）在 stdin EOF 时
-                                # 立即半关闭写方向（FIN）——recv 返回 b"" 只代表「对端
-                                # 不再发送」，不代表「对端已断开」（对端仍在读）。若把
-                                # b"" 当断连杀 ffmpeg，预热期（1-3s）的 ffmpeg 会被
-                                # 误杀（sent=0 peer-finished，手机端画面流 1 秒即断）。
-                                # 真正断连由 RST（recv 抛 OSError）或后续 send 失败检测。
-                                try:
-                                    conn.recv(1, socket.MSG_PEEK)
-                                except (socket.timeout, BlockingIOError):
-                                    pass
-                                except OSError:
-                                    reason = "peer-error"
-                                    break
-                    except (BrokenPipeError, ConnectionResetError, OSError) as e:
-                        reason = "send-err:%r" % (e,)
+                                continue
+                            data = self.ff.stdout.read(65536)
+                            if not data:
+                                break
+                            for f in make_fragments(data, 1200, self.frag_id):
+                                self.frag_id += 1
+                                self.udp.sendto(f, self.addr)
+                            self.sent += len(data)
+                            self.last_data = time.time()
+                    except Exception:
+                        pass
                     finally:
-                        # SIGTERM 后 ffmpeg 可能卡死在 avfoundation 释放（实测最长
-                        # ~1 分钟）：期间抓屏设备被占、本线程卡在 wait() 不关连接
-                        #（socket 悬置 CLOSE_WAIT）；限时 5s 后 SIGKILL 兜底。
+                        self.errf.write("[%s] udp stream closed after %.1fs sent=%d\n" % (
+                            time.strftime("%H:%M:%S"), time.time() - self.started, self.sent))
+                        self.errf.flush()
+                        # 自愈：ffmpeg 退出/看门狗触发后清空当前 stream，让主循环在
+                        # 下次心跳时重新拉 ffmpeg（否则手机持续心跳会不断刷新 LAST_HB，
+                        # 60s 超时永不触发，视频流会永久卡死）
+                        with LOCK:
+                            if STREAM[0] is self:
+                                STREAM[0] = None
+                                CLIENT[0] = None
+
+                def stop(self):
+                    self.stopped = True
+                    try:
+                        self.ff.kill()
+                    except Exception:
+                        pass
+                    try:
+                        self.ff.wait(timeout=5)
+                    except Exception:
                         try:
-                            ff.kill()
+                            os.kill(self.ff.pid, signal.SIGKILL)
                         except Exception:
                             pass
-                        try:
-                            ff.wait(timeout=5)
-                        except Exception:
-                            try:
-                                os.kill(ff.pid, signal.SIGKILL)
-                            except Exception:
-                                pass
-                            try:
-                                ff.wait()
-                            except Exception:
-                                pass
-                        errf.write("[%s] conn closed after %.1fs sent=%d reason=%s\n" % (
-                            time.strftime("%H:%M:%S"), time.time() - started, sent, reason))
-                        errf.flush()
-                        errf.close()
-                        with lock:
-                            if active[0] is conn:
-                                active[0] = None
-                            if active_ff[0] is ff:
-                                active_ff[0] = None
-                        conn.close()
-                except Exception:
-                    pass
 
             def display_asleep():
-                # 主显示器是否睡眠（CGDisplayIsAsleep）。
-                # 息屏时 avfoundation 无帧源，ffmpeg 挂起不输出属正常——看门狗靠它
-                # 区分「真卡死」与「屏幕关了」（v1.5.1 用户反馈：息屏后客户端连接不上）。
-                # 不用 pmset powerstate：输出格式随 macOS 版本不稳定
+                # 主显示器是否睡眠（CGDisplayIsAsleep）。息屏时 ffmpeg 无帧源属正常，
+                # 看门狗靠它区分「真卡死」与「屏幕关了」
                 try:
                     import ctypes
                     cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
@@ -645,43 +615,47 @@ class ScreenSession(
                 except Exception:
                     return False
 
-            def send_all(conn, data):
-                # 非阻塞发送 + select 等待可写：客户端消费慢（解码慢）时不超时误断；
-                # 对端半关闭（FIN，nc stdin EOF 即发）只代表不再发送，不代表断开——
-                # recv 返回 b"" 时继续等待，真正断开由后续 send 的 ECONNRESET 检测
-                view = memoryview(data)
-                while view:
-                    try:
-                        n = conn.send(view)
-                        view = view[n:]
-                    except BlockingIOError:
-                        r, w, _ = select.select([], [conn], [], 1.0)
-                        if w:
-                            continue
-                        try:
-                            conn.recv(1, socket.MSG_PEEK)
-                        except (socket.timeout, BlockingIOError):
-                            pass
-                        except OSError:
-                            return False
-                    except OSError:
-                        return False
-                return True
-
-            # 启动时清理一次孤儿 ffmpeg（上次 relay 被强杀后遗留，占用 avfoundation
-            # 设备，会导致新拉起的 ffmpeg 挂起无输出）。-x 按进程名精确匹配，
-            # 不会误伤 zsh（其命令行含脚本全文）；只在启动时执行——循环内执行
-            # 会把正在服务其他连接的 ffmpeg 误杀
+            # 启动时清理一次孤儿 ffmpeg（上次 relay 被强杀后遗留，占用抓屏设备）
             subprocess.run(["pkill", "-9", "-x", "ffmpeg"], capture_output=True)
-            # bind/listen 只做一次：循环内重复 bind 会因端口已被 LISTEN 占用而失败，
-            # 导致 accept 循环死掉、新连接永远排队无人服务（重连/多次连接即触发）
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind(("127.0.0.1", PORT))
-            srv.listen(4)
+
+            # UDP：视频流 + 心跳（手机直连 UDP，必须绑定 0.0.0.0 收所有接口；
+            # 旧 TCP 版是 SSH 内 nc 127.0.0.1 本机转发，UDP 版手机直连内网 IP）
+            udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            udp.bind(("0.0.0.0", UDP_PORT))
+
+            # TCP：仅 bind+listen 用于读流脚本 lsof 探测 relay 存活，不服务视频
+            tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            tcp.bind(("127.0.0.1", TCP_PORT))
+            tcp.listen(4)
+
             while True:
-                conn, _ = srv.accept()
-                threading.Thread(target=handle, args=(conn,), daemon=True).start()
+                r, _, _ = select.select([udp], [], [], 1.0)
+                now = time.time()
+                if r:
+                    try:
+                        data, addr = udp.recvfrom(64)
+                    except Exception:
+                        continue
+                    if data.startswith(HEARTBEAT_MAGIC):
+                        with LOCK:
+                            if STREAM[0] is None:
+                                CLIENT[0] = addr
+                                s = UdpStream(udp, addr)
+                                s.start()
+                                STREAM[0] = s
+                            elif CLIENT[0] != addr:
+                                # 漫游：地址变化，更新目标地址（ffmpeg 不重启，画面连续）
+                                CLIENT[0] = addr
+                                STREAM[0].addr = addr
+                            LAST_HB[0] = now
+                # 心跳超时（60s）→ 停 stream 释放抓屏设备；断网恢复后心跳重新拉 ffmpeg
+                with LOCK:
+                    if STREAM[0] is not None and now - LAST_HB[0] > 60:
+                        STREAM[0].stop()
+                        STREAM[0] = None
+                        CLIENT[0] = None
             TERMISH_EOF
             # ---- 服务启动：macOS 用 LaunchAgent（GUI 域录屏权限）；
             # Linux 用 nohup 后台 + DISPLAY=:0（X11 抓屏，SSH 断开不受影响）----
@@ -752,7 +726,7 @@ class ScreenSession(
             fi
             fi
             # 版本文件：客户端读流脚本检测 relay 版本匹配
-            echo 5 > "${'$'}HOME/.termish-screen.version"
+            echo 6 > "${'$'}HOME/.termish-screen.version"
             """.trimIndent()
 
         /**
