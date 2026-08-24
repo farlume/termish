@@ -106,7 +106,16 @@ jobs:
           APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -1)
           test -n "$APK" && test -n "$AAB" && test -x "$APKSIGNER"
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          jarsigner -verify -strict -certs "$AAB"
+          # AAB 验签：jarsigner -strict 在新 JDK 上把自签名证书链的 PKIX 警告
+          # 当失败（exit 4，v1.6.4 首跑即被拦）——release keystore 本就是自签名，
+          # 这是预期；而「未签名」的 jar 无论 strict 与否都返回 0。改为：
+          # ① 断言签名条目存在（META-INF/*.{RSA,DSA,EC} + *.SF 只会由签名产生）
+          # ② jarsigner 输出含 verified（未签名/被篡改时输出 unsigned/error）
+          unzip -l "$AAB" | grep -Eq 'META-INF/[^/]+\.(RSA|DSA|EC)$' \
+            && unzip -l "$AAB" | grep -Eq 'META-INF/[^/]+\.SF$' \
+            || { echo "::error::AAB 缺少签名条目（未签名产物不得发版）"; exit 1; }
+          jarsigner -verify "$AAB" | grep -q "jar verified" \
+            || { echo "::error::AAB jarsigner 校验未通过（被篡改/损坏？）"; exit 1; }
 
       - name: Upload debug APK
         if: github.event_name != 'pull_request'
