@@ -108,7 +108,10 @@ internal fun clampVirtualMouseAnchor(
     // 面板左边缘可超出视频帧右边界（挤入右侧控制区），但面板右边缘不超出视口右边界
     val maxX = viewportWidth ?: frame.right
     return ScreenPoint(
-        x = proposed.x.coerceIn(frame.left, maxX),
+        // 左界 = 画面左缘与屏幕左缘的较大者：放大后画面左缘在屏幕外（<0），
+        // 鼠标不能挪出屏幕（贴屏幕左缘触发左推）；未放大时画面左缘在屏幕内
+        // （黑边），鼠标仍限制在画面内
+        x = proposed.x.coerceIn(max(frame.left, 0f), maxX),
         y = proposed.y.coerceIn(minY, maxY),
     )
 }

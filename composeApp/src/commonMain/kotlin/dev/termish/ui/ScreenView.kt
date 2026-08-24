@@ -726,23 +726,50 @@ fun ScreenContent(
                             val rawX =
                                 (if (virtualMouseRawX.isNaN()) current.x else virtualMouseRawX) +
                                     delta.x
-                            val push =
-                                computeVirtualMousePush(
-                                    rawX,
-                                    viewportRight,
-                                    mouseControlWidthPx,
-                                    unpushedFrame.right,
-                                )
-                            virtualMouseRawX =
-                                rawX.coerceIn(
-                                    unpushedFrame.left,
-                                    maxAnchorX + (unpushedFrame.right - maxAnchorX).coerceAtLeast(0f),
-                                )
-                            rightControlAreaPx = push.overlapPx
-                            val targetFrame = screenFrame(state, push.overlapPx)
+                            // 左/右边界渐进推开（对称）：面板拖过画面边缘的过冲量，
+                            // 转成画面反向平移——右推=画面左移（右边内容挤进来），
+                            // 左推=画面右移（放大后左边隐藏内容挤出来）
+                            // 左界 = 画面左缘与屏幕左缘的较大者：放大后画面左缘在
+                            // 屏幕外（<0），鼠标不能挪出屏幕（贴屏幕左缘触发左推）；
+                            // 未放大时画面左缘在屏幕内，鼠标仍限制在画面内
+                            val leftEdge = unpushedFrame.left.coerceAtLeast(0f)
+                            val overLeft = leftEdge - rawX
+                            val anchorX: Float
+                            val overlapPx: Float
+                            if (overLeft > 0f && panOffset.x < 0f) {
+                                // 左推：贴屏幕左缘后继续左拖的过冲，转成 panOffset.x
+                                // 增大（画面右移，左边隐藏内容挤出来）；上限 = 归零
+                                val maxPanX =
+                                    (videoViewportSize.width * (zoomScale - 1f)).coerceAtLeast(0f)
+                                panOffset =
+                                    Offset(
+                                        (panOffset.x + overLeft).coerceIn(-maxPanX, 0f),
+                                        panOffset.y,
+                                    )
+                                virtualMouseRawX = leftEdge
+                                anchorX = leftEdge
+                                overlapPx = 0f
+                            } else {
+                                val push =
+                                    computeVirtualMousePush(
+                                        rawX,
+                                        viewportRight,
+                                        mouseControlWidthPx,
+                                        unpushedFrame.right,
+                                    )
+                                virtualMouseRawX =
+                                    rawX.coerceIn(
+                                        leftEdge,
+                                        maxAnchorX + (unpushedFrame.right - maxAnchorX).coerceAtLeast(0f),
+                                    )
+                                anchorX = push.anchorX
+                                overlapPx = push.overlapPx
+                            }
+                            rightControlAreaPx = overlapPx
+                            val targetFrame = screenFrame(state, overlapPx)
                             val clamped =
                                 clampVirtualMouseAnchor(
-                                    proposed = ScreenPoint(push.anchorX, current.y + delta.y),
+                                    proposed = ScreenPoint(anchorX, current.y + delta.y),
                                     frame = targetFrame,
                                     viewportHeight = viewportSize.height.toFloat(),
                                     controlHeight = mouseControlHeightPx,
