@@ -581,6 +581,7 @@ fun SnippetInsertSheet(
     /** content = 片段内容，run = true 表示直接执行（带回车）。 */
     onUse: (content: String, run: Boolean) -> Unit,
     onDismiss: () -> Unit,
+    allowRun: Boolean = true,
 ) {
     val s = LocalAppStrings.current
     var snippets by remember { mutableStateOf(repository.listSnippets()) }
@@ -767,13 +768,15 @@ fun SnippetInsertSheet(
                 expanded = true,
                 onDismissRequest = { menuFor = null },
             ) {
-                DropdownMenuItem(
-                    text = { Text(s.snippetRun) },
-                    onClick = {
-                        menuFor = null
-                        onUse(snippet.content, true)
-                    },
-                )
+                if (allowRun) {
+                    DropdownMenuItem(
+                        text = { Text(s.snippetRun) },
+                        onClick = {
+                            menuFor = null
+                            onUse(snippet.content, true)
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text(s.snippetDelete) },
                     onClick = {

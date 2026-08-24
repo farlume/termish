@@ -98,6 +98,9 @@ kotlin {
             implementation(libs.multiplatform.settings)
             implementation(libs.multiplatform.settings.noarg)
             implementation(libs.androidx.lifecycle.viewmodel)
+            implementation("com.mikepenz:multiplatform-markdown-renderer:0.33.0")
+            implementation("com.mikepenz:multiplatform-markdown-renderer-code:0.33.0")
+            implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.33.0")
         }
 
         androidMain.dependencies {

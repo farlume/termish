@@ -11,6 +11,8 @@ build/
 *.iml
 .vscode/
 .DS_Store
+__pycache__/
+*.py[cod]
 
 # Android
 local.properties

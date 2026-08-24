@@ -199,6 +199,26 @@ flowchart TB
 - **识别服务可插拔**：火山引擎流式识别为首个实现；设置页可添加/编辑/删除
   多个服务（名称 / Key / 资源 ID），Key 存平台安全存储；新增引擎只需实现统一接口
 
+**原生 Agent 对话**
+- 从任意主机卡片打开 **Agents**，用手机原生对话界面操作 Codex、Claude Code、
+  Gemini CLI、OpenCode 或 Pi，不必在手机上操作它们的终端 UI
+- 首次使用时 App 通过 SFTP 上传内置的纯标准库 Python Bridge；无需 Docker、
+  `pip`、公网端口或手工部署服务
+- 对话、思考过程、工具调用、取消与可恢复会话统一为一个协议；缺少的受支持
+  Agent CLI 可直接在页面内安装到远端用户自己的 npm 前缀
+- 独立工作区抽屉包含新对话、历史、Agent 管理、按主机保存的默认项、重命名/
+  删除及返回 Termish；底部输入区支持手机附件、已有快捷命令和远端目录浏览，
+  并持续显示上传/安装进度
+- 可添加 API Key 保存在平台安全存储中的 DeepSeek 供应商，并为每个 Agent
+  分别选择 DeepSeek 或 Agent 已有的内置登录；首批兼容 Claude Code、OpenCode
+  与 Pi
+- 每次请求作为一个 Turn 展示：推理摘要与工具调用进入同一条有序执行时间线，
+  运行时展开、完成后自动折叠；最终回答使用 CommonMark/GFM，并支持代码高亮
+- Bridge daemon 只监听权限为 `0600` 的 Unix socket，App 始终经已认证的 SSH
+  连接访问；手机断开后 Agent 仍在远端执行，重连可打开已持久化的对话
+- 后续可靠性、审批与工作流缺口见
+  [原生 Agent 功能差距评估](docs/native-agent-gap-analysis.zh.md)
+
 **应用**
 - 主机 / 连接 / 设置三个 tab；主机搜索、标签、快速命令、
   密码 / 私钥 / 加密私钥（PKCS#8 / 传统 PEM / OpenSSH，连接时询问一次口令、
@@ -236,10 +256,14 @@ flowchart TB
 5. **会话保活**——设置启动命令如 `tmux new -A -s main` 做服务端持久化。
    离开终端页会话在后台保持运行（Android 前台服务）；连接 tab 可带着
    完整缓冲重新进入。
-6. **herdr 工作台**——主机开启 herdr 模式（agent 口袋入口）。远端未装 herdr 时
+6. **原生 Agent 对话**——点主机卡片上的机器人按钮。首次进入按卡片安装内置
+   Agent Bridge，在紧凑网格选择 Agent、浏览远端工作目录，并从输入区添加附件。
+   历史、Agent 管理和设置统一放在工作区抽屉。
+   远端需要 `python3`；受支持的 Agent CLI 可在 App 内安装。
+7. **herdr 工作台**——主机开启 herdr 模式（agent 口袋入口）。远端未装 herdr 时
    自动弹**引导安装**卡片：一键安装（官网脚本），卡片实时显示安装日志，
    装完直接进入 agent 工作台；日常用 herdr 等 TUI 时打开「同步终端主题」。
-7. **SFTP**——`+` → Connect via SFTP：浏览、上传、下载文件与整个目录。
+8. **SFTP**——`+` → Connect via SFTP：浏览、上传、下载文件与整个目录。
 
 ## 文档
 
@@ -263,6 +287,9 @@ flowchart TB
 ```bash
 # 单元测试（crypto RFC 向量 + 终端模拟器 + mosh）
 ./gradlew :composeApp:desktopTest
+
+# 零第三方依赖的 Python Agent Bridge 测试
+./gradlew agentBridgeTest
 
 # 传输层集成测试（自动起本地测试 sshd；测试探测 127.0.0.1:22222，
 # sshd 缺席时优雅 SKIP，跳过不算失败）
@@ -298,6 +325,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   仅开发用途的文件存储
 - 主机密钥：TOFU（首次使用信任）+ 指纹确认；已知主机严格校验
 - 无遥测、无分析，除你的 SSH 连接外没有任何网络请求
+- Agent Bridge 不监听 TCP：私有 Unix socket 权限为 `0600`，部署与协议流量
+  全部留在经过主机密钥校验的 SSH 通道内
 
 安全披露与上报：见 [SECURITY.md](SECURITY.md)。
 
@@ -309,6 +338,10 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   配合 `tmux`/Mosh 做服务端连续性
 - **桌面端密钥**存放在 `~/.termish` 下的明文 properties 文件
   （仅开发/测试 harness——移动端构建用 Keystore/Keychain）
+- **原生 Agent 对话**目前要求远端已有 `python3`。支持 Codex、Claude Code、
+  Gemini CLI、OpenCode 与 Pi。Termish 会保留 Agent 已有的权限配置，但尚未把
+  交互式审批桥接到手机：无需审批或已自动放行的操作会直接执行；无头协议无法
+  上报审批时会安全拒绝或返回明确错误
 - **iOS 构建**走维护者私有的 Xcode Cloud（见
   `iosApp/ci_scripts/ci_post_clone.sh`）；公开 GitHub Actions CI 只覆盖
   Android + desktop。贡献者本地验证：`make ios-native && make ios-framework`，
@@ -319,7 +352,9 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [x] 纯 Kotlin Mosh 客户端（含本地回显预测）
 - [x] 会话管理——多会话 tab、Connections、自动重连
 - [x] SFTP 与密钥/known_hosts 管理
-- [ ] **Agent 友好支持**——herdr/codex 会话接管、状态徽章、任务通知、手机端批准
+- [x] 原生 Agent 对话——内置 SSH 部署 Bridge、统一流式事件、持久化会话、
+  App 内安装 Agent CLI
+- [ ] Agent 后续增强——herdr 会话接管、状态徽章、任务通知、手机端批准
 - [ ] 连接增强——端口转发、ProxyJump、`~/.ssh/config` 导入
 - [ ] Snippets 片段库
 - [ ] 语音输入

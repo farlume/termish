@@ -105,8 +105,37 @@ data class AppSettings(
      * 已被列表取代，读取时自动迁移（见 AppRoot）。
      */
     val asrProviders: List<AsrProvider> = emptyList(),
+    /** Agent 模型供应商配置；密钥按 provider id 单独存 SecretStore。 */
+    val agentProviders: List<AgentProvider> = emptyList(),
     /** @deprecated 旧版单实例配置：已被 [asrProviders] 取代（迁移用）。 */
     val asrResourceId: String = "",
+)
+
+/** 每台主机独立保存的 Agent 工作区偏好，避免污染全局终端设置。 */
+@Serializable
+data class AgentWorkspacePreferences(
+    val defaultAgent: String = "",
+    val defaultModel: String = "",
+    val defaultDirectory: String = "",
+    val showThinking: Boolean = true,
+    val expandTools: Boolean = false,
+    /** Agent id -> provider id；缺失/空字符串表示使用 CLI 自带登录。 */
+    val providerByAgent: Map<String, String> = emptyMap(),
+)
+
+@Serializable
+enum class AgentProviderType {
+    DEEPSEEK,
+}
+
+/** Agent 模型供应商的非敏感配置；API key 不进入 Settings 序列化。 */
+@Serializable
+data class AgentProvider(
+    val id: String,
+    val type: AgentProviderType = AgentProviderType.DEEPSEEK,
+    val name: String = "DeepSeek",
+    val baseUrl: String = "https://api.deepseek.com",
+    val enabled: Boolean = true,
 )
 
 /** 语音识别服务类型（可插拔 provider）。 */

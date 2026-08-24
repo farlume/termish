@@ -51,13 +51,13 @@ import dev.termish.data.AppSettings
 import dev.termish.data.AsrProvider
 import dev.termish.data.AsrProviderType
 import dev.termish.data.Host
-import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.ThemeMode
 import dev.termish.data.asrKeyAccount
 import dev.termish.data.newId
+import dev.termish.data.resolveCredentials
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
 import dev.termish.screen.ScreenSession
@@ -143,6 +143,10 @@ private sealed interface Screen {
 
     data class Edit(
         val hostId: String?,
+    ) : Screen
+
+    data class Agents(
+        val hostId: String,
     ) : Screen
 
     /** 直接持有 controller 引用：会话由 SessionManager 管理，跨页面存活。 */
@@ -780,6 +784,7 @@ fun AppRoot(repository: HostRepository) {
                                                 repository.deleteHost(host.id)
                                                 refreshHosts()
                                             },
+                                            onAgents = { host -> screen = Screen.Agents(host.id) },
                                         )
 
                                     HomeTab.CONNECTIONS ->
@@ -892,6 +897,19 @@ fun AppRoot(repository: HostRepository) {
                             },
                             onCancel = { screen = Screen.Home },
                         )
+                    }
+
+                    is Screen.Agents -> {
+                        val host = hosts.firstOrNull { it.id == s.hostId }
+                        if (host == null) {
+                            screen = Screen.Home
+                        } else {
+                            AgentScreen(
+                                host = host,
+                                repository = repository,
+                                onBack = { screen = Screen.Home },
+                            )
+                        }
                     }
 
                     // 返回主页不断开：默认后台运行，会话保留在 SessionManager，
@@ -1223,16 +1241,5 @@ fun AppRoot(repository: HostRepository) {
                 TermishSnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
             }
         }
-    }
-}
-
-/** 从安全存储解析认证凭据。 */
-fun resolveCredentials(host: Host): Pair<String?, String?> {
-    val pw = SecretStore.get(SECRET_SERVICE, secretAccountFor(host.id, "password"))
-    val key = SecretStore.get(SECRET_SERVICE, secretAccountFor(host.id, "privateKey"))
-    return when (host.authMethod) {
-        HostAuthMethod.PASSWORD -> pw to null
-        HostAuthMethod.PRIVATE_KEY -> null to key
-        HostAuthMethod.KEY_OR_PASSWORD -> key to pw
     }
 }

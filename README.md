@@ -226,6 +226,30 @@ browser for desktop workflows while the phone stays native.
   engine; add/edit/remove providers (name, key, resource ID) in Settings —
   keys live in the platform vault; new engines plug in behind one interface
 
+**Native Agent chat**
+- Open **Agents** from any host card to use Codex, Claude Code, Gemini CLI,
+  OpenCode, or Pi in a mobile-native chat instead of operating their terminal UI
+- The app uploads its bundled, standard-library-only Python Bridge over SFTP
+  on first use; no Docker, `pip`, public port, or manual server setup is needed
+- Conversations, thinking output, tool calls, cancellation, and resumable
+  sessions are normalized behind one protocol; missing supported CLIs can be
+  installed from the same screen into the remote user's npm prefix
+- A dedicated workspace drawer provides new chat, recent history, Agent
+  management, per-host defaults, rename/delete, and a route back to Termish;
+  the composer supports phone attachments, saved quick commands, and a browsable
+  remote directory picker, with upload/install progress kept visible
+- Add a DeepSeek provider whose API key stays in the platform vault, then select
+  either that provider or the Agent's built-in login independently per Agent;
+  the first compatibility set covers Claude Code, OpenCode, and Pi
+- Every prompt is rendered as a turn: reasoning and tool calls share an ordered
+  execution timeline that expands while running and folds when complete; final
+  answers use CommonMark/GFM with syntax-highlighted code
+- The Bridge daemon listens on a mode-`0600` Unix socket and the app reaches it
+  only through the already authenticated SSH connection; an Agent keeps running
+  when the phone disconnects and its persisted conversation can be reopened
+- The remaining reliability, approval, and workflow work is tracked in the
+  [Native Agent gap analysis](docs/native-agent-gap-analysis.zh.md)
+
 **Screen mirroring (remote desktop, macOS)**
 - **Watch your Mac's screen live**: SSH transport carries an H.264 stream
   (avfoundation capture → libx264 → MPEG-TS), decoded by ExoPlayer with Fit
@@ -294,11 +318,17 @@ browser for desktop workflows while the phone stays native.
    for server-side persistence. Leaving the terminal page keeps the session
    running in the background (Android foreground service); the Connections tab
    re-enters it with the exact buffer.
-6. **herdr workspace** — turn on the host's herdr mode (pocket entry to your
+6. **Native Agent chat** — tap the robot action on a host card. On first use,
+   install the bundled Agent Bridge, choose an Agent from the compact grid,
+   browse to a remote working directory, attach files in the composer, and
+   start chatting. Recent chats, Agent management, and settings live in the
+   workspace drawer. The remote needs
+   `python3`; supported Agent CLIs can be installed inside the app.
+7. **herdr workspace** — turn on the host's herdr mode (pocket entry to your
    agents). If herdr is missing on the remote, a **guided install** card pops:
    one-tap install (official script), live install log on the card, straight
    into your agent workspace when done.
-7. **SFTP** — `+` → Connect via SFTP: browse, upload, download files and whole
+8. **SFTP** — `+` → Connect via SFTP: browse, upload, download files and whole
    folders.
 
 ## Documentation
@@ -325,6 +355,9 @@ Deep dives for contributors (English summary at the top of each file):
 ```bash
 # Unit tests (crypto RFC vectors + terminal emulator + mosh)
 ./gradlew :composeApp:desktopTest
+
+# Dependency-free Python Agent Bridge tests
+./gradlew agentBridgeTest
 
 # Transport integration tests (auto-starts the local test sshd; tests self-detect
 # sshd on 127.0.0.1:22222 and SKIP gracefully when absent)
@@ -362,6 +395,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - Host keys: TOFU (trust on first use) with fingerprint confirmation; strict
   verification for known hosts
 - No telemetry, no analytics, no network calls except your SSH connections
+- Agent Bridge exposes no TCP listener: its private Unix socket is mode `0600`,
+  while deployment and protocol traffic stay inside the verified SSH channel
 
 Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 
@@ -373,6 +408,11 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
   auto-reconnect on return — pair with `tmux`/Mosh for server-side continuity
 - **Desktop secrets** live in a plaintext properties file under `~/.termish`
   (dev/test harness only — mobile builds use Keystore/Keychain)
+- **Native Agent chat** currently requires `python3` on the remote. Codex,
+  Claude Code, Gemini CLI, OpenCode, and Pi are supported. Existing Agent
+  permission configuration is preserved, but interactive approval requests are
+  not yet bridged to the phone: auto-approved actions run, while headless modes
+  that cannot surface a request fail closed or return an explicit error
 - **iOS builds** run on the maintainer's private Xcode Cloud (see
   `iosApp/ci_scripts/ci_post_clone.sh`); the public GitHub Actions CI only
   covers Android + desktop. Contributors verify iOS changes locally:
@@ -383,8 +423,10 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 - [x] Pure-Kotlin Mosh client (incl. local echo prediction)
 - [x] Session manager — multi-session tabs, Connections, auto-reconnect
 - [x] SFTP & secret/known-hosts management
-- [ ] **Agent-friendly** — herdr/codex session takeover, status badges,
-  task notifications, phone approve
+- [x] Native Agent chat — bundled SSH-deployed Bridge, normalized streaming,
+  persisted sessions, in-app CLI install
+- [ ] Agent follow-ups — herdr session takeover, status badges, task
+  notifications, phone approvals
 - [ ] Connection — port forwarding, ProxyJump, `~/.ssh/config` import
 - [ ] Snippets
 - [ ] Voice input

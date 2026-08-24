@@ -36,7 +36,7 @@ reinstall: ## 卸载后重装（gradle reinstallDebug，治签名冲突）
 
 .PHONY: test
 test: ## 单元测试 + 集成测试（sshd/mosh 不在时自动 SKIP）
-	$(GRADLEW) :composeApp:desktopTest
+	$(GRADLEW) agentBridgeTest :composeApp:desktopTest
 
 .PHONY: test-integration
 test-integration: ## 集成测试：自动起 sshd 后跑（gradle testIntegration）

@@ -5,6 +5,7 @@ import dev.termish.crypto.Sha256
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
+import dev.termish.data.resolveCredentials
 import dev.termish.ssh.SftpSession
 import dev.termish.util.TermLog
 import dev.termish.util.base64Encode

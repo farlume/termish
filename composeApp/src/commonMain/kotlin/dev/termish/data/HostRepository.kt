@@ -157,6 +157,19 @@ class HostRepository(
         settings.putString(settingsKey, json.encodeToString(s))
     }
 
+    fun loadAgentPreferences(hostId: String): AgentWorkspacePreferences {
+        val key = "termish.agent.preferences.$hostId"
+        val raw = settings.getStringOrNull(key) ?: return AgentWorkspacePreferences()
+        return runCatching { json.decodeFromString<AgentWorkspacePreferences>(raw) }.getOrDefault(AgentWorkspacePreferences())
+    }
+
+    fun saveAgentPreferences(
+        hostId: String,
+        preferences: AgentWorkspacePreferences,
+    ) {
+        settings.putString("termish.agent.preferences.$hostId", json.encodeToString(preferences))
+    }
+
     // ---------- 目录收藏（SFTP 文件管理器，按主机持久化） ----------
 
     fun loadFavorites(hostId: String): List<String> {
