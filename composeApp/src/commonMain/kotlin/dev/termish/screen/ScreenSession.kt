@@ -505,7 +505,7 @@ class ScreenSession internal constructor(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 23
+        const val RELAY_VERSION = 26
 
         /**
          * 读流前置脚本：只做 relay/版本/ffmpeg/显示状态探测，成功时回报
@@ -713,6 +713,35 @@ class ScreenSession internal constructor(
                   && echo "==> pyobjc: 安装完成" || echo "==> pyobjc: 安装失败——远程操作不可用（可看不可控），重装服务可重试"
               fi
             fi
+            # ---- 远程操作依赖：python3-xlib（XTEST 注入）+ xclip（文本粘贴，仅 Linux）----
+            if [ "${'$'}OS" = "Linux" ]; then
+              # python3-xlib：优先系统包（免密 sudo），失败退 pip --user（python-xlib）
+              if /usr/bin/python3 -c "import Xlib" 2>/dev/null; then
+                echo "==> python-xlib: 已就绪"
+              else
+                _XOK=0
+                if command -v apt-get >/dev/null 2>&1; then
+                  { sudo -n apt-get install -y -qq python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
+                elif command -v dnf >/dev/null 2>&1; then
+                  { sudo -n dnf install -y -q python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
+                else
+                  /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null && _XOK=1
+                fi
+                [ "${'$'}_XOK" = "1" ] && echo "==> python-xlib: 安装完成" || echo "==> python-xlib: 安装失败——远程控制不可用（可看不可控）"
+              fi
+              # xclip：文本粘贴走剪贴板（无 pip 版，只能系统包）
+              if command -v xclip >/dev/null 2>&1; then
+                echo "==> xclip: 已就绪"
+              else
+                _XCLIP_OK=0
+                if command -v apt-get >/dev/null 2>&1; then
+                  sudo -n apt-get install -y -qq xclip 2>/dev/null && _XCLIP_OK=1
+                elif command -v dnf >/dev/null 2>&1; then
+                  sudo -n dnf install -y -q xclip 2>/dev/null && _XCLIP_OK=1
+                fi
+                [ "${'$'}_XCLIP_OK" = "1" ] && echo "==> xclip: 安装完成" || echo "==> xclip: 安装失败——文本粘贴不可用（鼠标/键码仍可用）"
+              fi
+            fi
             # ---- Python 转发器（断开自愈 + 无客户端零开销）----
             APP_DIR="${'$'}HOME/Library/Application Support/termish"
             RELAY="${'$'}APP_DIR/screen-relay.py"
@@ -758,6 +787,133 @@ class ScreenSession internal constructor(
             # 授权弹窗节流：首次触发后 30s 内不再弹（防高频控制包反复打扰）
             _LAST_PROMPT = [0.0]
 
+            # ---- Linux 远程控制：X11 XTEST 注入（对应 macOS CGEvent）----
+            # Xlib 仅 Linux 桌面可用；macOS 上 import 失败 → _XTEST_OK=False 降级
+            #（与 Quartz=None 同理）。Wayland 会话 XTEST 无效（协议禁止全局注入），
+            # 读流脚本已提示改用 Xorg。
+            try:
+                from Xlib import X as _XLIB_X
+                from Xlib import XK as _XLIB_XK
+                from Xlib import display as _xdisplay
+                from Xlib.ext import xtest as _xtest
+                _XDISPLAY = _xdisplay.Display()
+                _XTEST_OK = True
+            except Exception:
+                _XDISPLAY = None
+                _XTEST_OK = False
+
+            # Carbon kVK（US 布局，客户端键码体系）→ X keysym 名。Linux 注入时
+            # 反查 X keycode（XKB 布局相关，经 XKeysymToKeycode 换算）
+            _KVK_TO_KEYSYM = {
+                0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x",
+                8: "c", 9: "v", 11: "b", 12: "q", 13: "w", 14: "e", 15: "r",
+                16: "y", 17: "t", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6",
+                23: "5", 24: "equal", 25: "9", 26: "7", 27: "minus", 28: "8",
+                29: "0", 30: "bracketright", 31: "o", 32: "u", 33: "bracketleft",
+                34: "i", 35: "p", 37: "l", 38: "j", 39: "apostrophe", 40: "k",
+                41: "semicolon", 42: "backslash", 43: "comma", 44: "slash",
+                45: "n", 46: "m", 47: "period", 50: "grave",
+                36: "Return", 48: "Tab", 49: "space", 51: "BackSpace",
+                53: "Escape", 115: "Home", 119: "End", 116: "Prior",
+                121: "Next", 117: "Delete",
+                123: "Left", 124: "Right", 125: "Down", 126: "Up",
+                # 修饰键（Carbon kVK → X keysym）
+                55: "Super_L", 56: "Shift_L", 59: "Control_L", 58: "Alt_L",
+                # F1-F12（Carbon kVK 非连续）
+                122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
+                98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
+            }
+
+            def _kvk_to_keycode(kvk):
+                if _XDISPLAY is None:
+                    return None
+                name = _KVK_TO_KEYSYM.get(kvk)
+                if name is None:
+                    return None
+                try:
+                    keysym = _XLIB_XK.string_to_keysym(name)
+                    if keysym == 0:
+                        return None
+                    kc = _XDISPLAY.keysym_to_keycode(keysym)
+                    return kc if kc else None
+                except Exception:
+                    return None
+
+            def _x_inject_control(typ, x, y, extra, payload):
+                # 与 macOS handle_control 相同的控制包语义，Linux 用 XTEST 注入
+                if not _XTEST_OK:
+                    return
+                try:
+                    W = _XDISPLAY.screen().width_in_pixels
+                    H = _XDISPLAY.screen().height_in_pixels
+                    px = int(x * W)
+                    py = int(y * H)
+                    if typ == 0:  # 移动
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                    elif typ == 1:  # 左键按下（先移动到手指位置再按——对应 macOS 用坐标）
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, 1)
+                    elif typ == 2:  # 左键释放
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, 1)
+                    elif typ == 3:  # 滚轮：按钮 4（上）/ 5（下），extra 为滚动量
+                        btn = 4 if extra > 0 else 5
+                        for _ in range(min(abs(extra), 30)):
+                            _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, btn)
+                            _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, btn)
+                    elif typ == 6:  # 右键按下
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, 3)
+                    elif typ == 7:  # 右键释放
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, 3)
+                    elif typ == 8 or typ == 9:  # 虚拟点击（原子：移动+按下+释放）
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        btn = 1 if typ == 8 else 3
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, btn)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, btn)
+                    elif typ == 5:  # 键码：extra=kvK，x 的低位 = 修饰掩码
+                        _x_post_key(extra, int(x))
+                    elif typ == 4:  # 文本：剪贴板 + Ctrl+V（XTEST 发不了 Unicode）
+                        _x_type_text(payload)
+                    _XDISPLAY.sync()
+                except Exception:
+                    pass
+
+            def _x_post_key(kvk, mods):
+                kc = _kvk_to_keycode(kvk)
+                if kc is None:
+                    return
+                # 修饰键（kvk, 掩码位）→ 组合键：修饰按下 → 主键 → 修饰抬起
+                mod_entries = [(55, 1), (56, 2), (59, 4), (58, 8)]
+                mod_kcs = [m for m in (_kvk_to_keycode(e[0]) for e in mod_entries if mods & e[1]) if m]
+                for mk in mod_kcs:
+                    _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyPress, mk)
+                _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyPress, kc)
+                _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyRelease, kc)
+                for mk in reversed(mod_kcs):
+                    _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyRelease, mk)
+
+            def _x_type_text(payload):
+                try:
+                    chars = payload.decode("utf-8", "ignore")
+                    if not chars:
+                        return
+                    # xclip 写剪贴板 → Ctrl+V 粘贴（中文/符号都能过，无需键码映射）
+                    import subprocess as _sp
+                    p = _sp.Popen(["xclip", "-selection", "clipboard"], stdin=_sp.PIPE)
+                    p.communicate(chars.encode("utf-8"))
+                    ctrl = _kvk_to_keycode(59)  # Control
+                    v = _kvk_to_keycode(9)      # kVK 9 = V
+                    if ctrl and v:
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyPress, ctrl)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyPress, v)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyRelease, v)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.KeyRelease, ctrl)
+                except Exception:
+                    pass
+
+
             def handle_control(data, ax_ok):
                 # 17B: magic4 + type1 + x f32(4) + y f32(4) + extra i32(4)
                 if len(data) < 17 or data[:4] != CONTROL_MAGIC:
@@ -766,6 +922,10 @@ class ScreenSession internal constructor(
                 x = struct.unpack(">f", data[5:9])[0]
                 y = struct.unpack(">f", data[9:13])[0]
                 extra = struct.unpack(">i", data[13:17])[0]
+                if sys.platform != "darwin":
+                    # Linux：XTEST 注入（鼠标/滚轮/键码/剪贴板文本）
+                    _x_inject_control(typ, x, y, extra, data[17:])
+                    return
                 if Quartz is None or not ax_ok:
                     return  # 无权限：状态包由调用方发送，客户端引导授权
                 try:
@@ -1286,7 +1446,8 @@ class ScreenSession internal constructor(
                         # 首包 = 控制状态：
                         # 0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
                         if Quartz is None:
-                            ctrl_status = 2
+                            # Linux：XTEST 可用则支持控制（0），否则平台不支持（2）
+                            ctrl_status = 0 if _XTEST_OK else 2
                         else:
                             try:
                                 ctrl_status = 0 if (_AX is not None and bool(_AX())) else 1
@@ -1376,9 +1537,9 @@ class ScreenSession internal constructor(
                         handle_control(data, ax_ok)
                         try:
                             # 控制状态：0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
-                            #（Linux 无 CGEvent——客户端显示对应文案，不误导 macOS 授权路径）
+                            #（Linux 走 XTEST：可用则 0，不可用则 2）
                             if Quartz is None:
-                                ctrl_status = 2
+                                ctrl_status = 0 if _XTEST_OK else 2
                             else:
                                 ctrl_status = 0 if ax_ok else 1
                             udp.sendto(STATUS_MAGIC + bytes([ctrl_status]), addr)
