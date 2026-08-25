@@ -496,10 +496,15 @@ internal fun GitOverlay(
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
-    // 面板打开时拦截系统返回：先关面板，不直接退回首页。
-    // 注意：ModalBottomSheet 是 Dialog 窗口，BACK 由 Dialog 消费（关闭面板），
-    // 不会到这里；diff 页返回由页内 ← 按钮处理（回状态页）
-    PlatformBackHandler(enabled = open) { onOpenChange(false) }
+    // 面板内也保持分层返回：diff → 状态页 → 关闭面板，不依赖顶部按钮。
+    // ModalBottomSheet / 提交对话框会先消费自身的返回事件。
+    PlatformBackHandler(enabled = open) {
+        if (selected != null) {
+            selected = null
+        } else {
+            onOpenChange(false)
+        }
+    }
 
     // Git 命令走独立 exec 通道（复用已认证连接 / mosh 控制面连接），不注入
     // 交互终端——vim/tmux 全屏程序下也可用（命令不进 TUI）。探测不到工作
@@ -661,7 +666,13 @@ internal fun GitOverlay(
     // 独立悬浮位；面板本体不变。
     if (open) {
         ModalBottomSheet(
-            onDismissRequest = { onOpenChange(false) },
+            onDismissRequest = {
+                if (selected != null) {
+                    selected = null
+                } else {
+                    onOpenChange(false)
+                }
+            },
             containerColor = theme.background(),
             contentColor = theme.foreground(),
         ) {

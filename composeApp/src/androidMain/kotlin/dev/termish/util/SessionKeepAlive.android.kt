@@ -23,4 +23,6 @@ actual object SessionKeepAlive {
     }
 
     actual fun isActive(): Boolean = SessionService.isRunning
+
+    actual fun requiresSshReconnectOnForeground(): Boolean = !SessionService.isRunning
 }

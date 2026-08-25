@@ -781,16 +781,35 @@ private fun TerminalBody(
         b.defaultCursorRgb = argbToRgb(theme.cursor)
     }
 
-    // 返回即退到列表：会话默认在后台保持运行（SessionManager/前台服务保活），
-    // 不弹保留策略选择。拦截系统返回（手势/返回键）与点击返回按钮一致。
-    PlatformBackHandler(enabled = true, onBack = onBack)
-    // ⚠️ Compose 返回链 LIFO：后注册的 enabled handler 先触发——以下覆盖层
-    // 处理器必须晚于上面的 onBack 注册，否则全屏/面板打开时系统返回会直接
-    // 命中 onBack 退回主页（v1.4.0 回归：小窗全屏按返回直接回首页）
-    // 屏幕全屏时：返回先收起画面，不退回首页
-    PlatformBackHandler(enabled = pipFullscreen) { onPipFullscreenChange(false) }
-    // 面板打开时拦截系统返回：先关面板，不直接退回首页
-    PlatformBackHandler(enabled = snippetOpen) { snippetOpen = false }
+    // 终端页只注册一个返回处理器，按视觉层级从上到下收起。
+    // 避免依赖 Compose BackHandler 的注册顺序；新增终端内全屏层时必须加入此处。
+    PlatformBackHandler(enabled = true) {
+        when (
+            terminalBackTarget(
+                screenFullscreen = pipFullscreen,
+                voiceActive = voiceState != VoiceUiState.IDLE,
+                gitOpen = gitPanelOpen,
+                toolMenuOpen = toolMenuOpen,
+                snippetsOpen = snippetOpen,
+                selectionActive = controller.selection.isActive,
+            )
+        ) {
+            TerminalBackTarget.CLOSE_SCREEN -> onPipFullscreenChange(false)
+            TerminalBackTarget.CANCEL_VOICE -> {
+                voiceSession?.abort()
+                recorder.stop()
+                resetVoice()
+            }
+            TerminalBackTarget.CLOSE_GIT -> gitPanelOpen = false
+            TerminalBackTarget.CLOSE_TOOL_MENU -> toolMenuOpen = false
+            TerminalBackTarget.CLOSE_SNIPPETS -> snippetOpen = false
+            TerminalBackTarget.CLEAR_SELECTION -> {
+                controller.selection.clear()
+                controller.frame++
+            }
+            TerminalBackTarget.EXIT -> onBack()
+        }
+    }
 
     val appCursorKeys = controller.buffer.applicationCursorKeys
 

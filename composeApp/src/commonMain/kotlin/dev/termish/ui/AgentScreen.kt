@@ -411,7 +411,7 @@ private fun AgentWorkspace(
         rememberFilePicker { file ->
             uploader.enqueue(file, uploadTargetDir.orEmpty().ifBlank { "/tmp" })
         }
-    val canReturnToAgentHome = page == AgentWorkspacePage.CHAT && controller.currentSession != null
+    val canNavigateWithinWorkspace = page != AgentWorkspacePage.CHAT || controller.currentSession != null
     val density = LocalDensity.current
     val backGestureEdge = with(density) { Sizes.AgentBackGestureEdge.toPx() }
     val backGestureThreshold = with(density) { Sizes.AgentBackGestureThreshold.toPx() }
@@ -522,20 +522,32 @@ private fun AgentWorkspace(
         }
     }
 
-    PlatformBackHandler(enabled = canReturnToAgentHome) { controller.newChat() }
-
-    // 屏幕远控全屏：系统返回键优先关闭屏幕。BackHandler 后注册先触发——
-    // 必须放在其他 handler（newChat / AppRoot 全局回首页）之后注册才能抢到；
-    // 否则全屏时按返回会跑到首页（用户反馈）
-    if (screenActive) {
-        PlatformBackHandler(enabled = true) {
-            screenEntry?.let { onCloseScreen(it.host) }
+    fun handleWorkspaceBack() {
+        when (
+            agentBackTarget(
+                screenOpen = screenActive,
+                fileBrowserOpen = fileBrowserOpen,
+                gitOpen = gitOpen,
+                childPageOpen = page != AgentWorkspacePage.CHAT,
+                sessionOpen = controller.currentSession != null,
+            )
+        ) {
+            AgentBackTarget.CLOSE_SCREEN -> screenEntry?.let { onCloseScreen(it.host) }
+            AgentBackTarget.CLOSE_FILE_BROWSER -> fileBrowserOpen = false
+            AgentBackTarget.CLOSE_GIT -> gitOpen = false
+            AgentBackTarget.SHOW_CHAT -> page = AgentWorkspacePage.CHAT
+            AgentBackTarget.SHOW_AGENT_HOME -> controller.newChat()
+            AgentBackTarget.EXIT -> onExit()
         }
     }
 
+    // Agent 工作区只注册一个页面级返回处理器：全屏/覆盖层 → 子页面 → 会话 → 上一页。
+    // 对话框和 BottomSheet 自己消费返回；即使漏掉，也不会穿透到 AppRoot 直接回首页。
+    PlatformBackHandler(enabled = true, onBack = ::handleWorkspaceBack)
+
     val backSwipeModifier =
-        if (canReturnToAgentHome) {
-            Modifier.pointerInput(controller.currentSession?.id) {
+        if (canNavigateWithinWorkspace) {
+            Modifier.pointerInput(controller.currentSession?.id, page) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     if (down.position.x > backGestureEdge) return@awaitEachGesture
@@ -547,7 +559,7 @@ private fun AgentWorkspace(
                         val vertical = change.position.y - start.y
                         if (horizontal >= backGestureThreshold && horizontal > abs(vertical)) {
                             change.consume()
-                            controller.newChat()
+                            handleWorkspaceBack()
                             break
                         }
                     }
@@ -2645,6 +2657,10 @@ private fun AgentComposer(
                 if (!recording && voiceEngine === engine) resetVoice(abort = true)
             }
         }
+    }
+
+    PlatformBackHandler(enabled = voiceState != AsrEngine.State.IDLE) {
+        resetVoice(abort = true)
     }
 
     DisposableEffect(Unit) {

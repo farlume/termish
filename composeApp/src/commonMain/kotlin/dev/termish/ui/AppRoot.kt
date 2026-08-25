@@ -221,8 +221,17 @@ fun AppRoot(repository: HostRepository) {
     }
     val settings by repository.appSettings.collectAsState()
     var hosts by remember { mutableStateOf(repository.listHosts()) }
-    var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    val navigation = remember { NavigationStack<Screen>(Screen.Home) }
+    val screen = navigation.current
     val scope = rememberCoroutineScope()
+
+    fun navigate(target: Screen) {
+        navigation.push(target)
+    }
+
+    fun navigateBack() {
+        navigation.pop()
+    }
 
     // 语言文案（提前声明供 connectSftp 等 lambda 使用）
     val appStrings = remember(settings.language) { appStringsFor(settings.language) }
@@ -554,7 +563,7 @@ fun AppRoot(repository: HostRepository) {
                     // 而非直接回主页——与 tab 栏切换同一返回链）
                     (currentTab as? SessionTab.Terminal)?.let { tabHistory.add(it.id) }
                     currentTab = SessionTab.Sftp(host, session, entry.uiState)
-                    screen = Screen.Terminal
+                    navigate(Screen.Terminal)
                 }
             } catch (e: Exception) {
                 snackbarHostState.showSnackbar(appStrings.sftpConnectFailed(e.message ?: ""))
@@ -569,7 +578,7 @@ fun AppRoot(repository: HostRepository) {
         // （纯 shell 预连无此问题——resize 只是把提示符换行）
         if (target.host.launchHerdr || target.host.startupCommand.isNotBlank()) {
             currentTab = SessionTab.Terminal(target)
-            screen = Screen.Terminal
+            navigate(Screen.Terminal)
             pendingNavigate = null
             return@LaunchedEffect
         }
@@ -585,7 +594,7 @@ fun AppRoot(repository: HostRepository) {
         pendingNavigate = null
         if (target.status == ConnStatus.CONNECTED) {
             currentTab = SessionTab.Terminal(target)
-            screen = Screen.Terminal
+            navigate(Screen.Terminal)
         } else if (target.status == ConnStatus.ERROR) {
             // 连接失败（IP 不可达 / 认证失败等）：留在列表并提示原因
             snackbarHostState.showSnackbar(target.errorMessage ?: appStrings.hostsConnectFailed)
@@ -632,7 +641,9 @@ fun AppRoot(repository: HostRepository) {
                 TermLog.d("life") { "foreground=$foreground" }
                 NotificationCenter.foreground = foreground
                 if (foreground) {
-                    sessionManager.reconnectDroppedSessions()
+                    sessionManager.reconnectDroppedSessions(
+                        forceSshReconnect = SessionKeepAlive.requiresSshReconnectOnForeground(),
+                    )
                     // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
                     // 回前台立即重新拉起，避免 wakelock 缺失导致锁屏断连。
                     // 只对【已连接】会话拉起：disconnect 的会话保留在列表里，误拉起会
@@ -652,16 +663,16 @@ fun AppRoot(repository: HostRepository) {
         }
     }
 
-    // 全局返回栈：非主页 → 回主页；设置二级页 → 关二级页回设置；主页非主机 tab → 回主机 tab
-    // （二级页状态必须提升到这里：此前藏在 SettingsScreen 内部，系统返回键/手势
-    // 直接跳回主机 tab——二级页开着却无处返回）
+    // 全局返回栈：一级页面弹栈回到真实来源；设置二级页回设置；主页非主机 tab 回主机 tab。
+    // 子页面若漏拦截返回，根层也只弹一层，不再把目标写死成首页。
     var homeTab by remember { mutableStateOf(HomeTab.HOSTS) }
     var settingsSubPage by remember { mutableStateOf<SettingsSubPage?>(null) }
-    PlatformBackHandler(enabled = screen != Screen.Home || settingsSubPage != null || homeTab != HomeTab.HOSTS) {
+    val homeHasBackTarget = screen == Screen.Home && (settingsSubPage != null || homeTab != HomeTab.HOSTS)
+    PlatformBackHandler(enabled = navigation.canPop || homeHasBackTarget) {
         when {
-            screen != Screen.Home -> screen = Screen.Home
+            navigation.canPop -> navigateBack()
             settingsSubPage != null -> settingsSubPage = null
-            else -> homeTab = HomeTab.HOSTS
+            homeTab != HomeTab.HOSTS -> homeTab = HomeTab.HOSTS
         }
     }
 
@@ -772,8 +783,8 @@ fun AppRoot(repository: HostRepository) {
                                                             )
                                                         }
                                                 ).groupBy { it.hostId },
-                                            onAdd = { screen = Screen.Edit(null) },
-                                            onEdit = { screen = Screen.Edit(it.id) },
+                                            onAdd = { navigate(Screen.Edit(null)) },
+                                            onEdit = { navigate(Screen.Edit(it.id)) },
                                             onConnect = { host ->
                                                 // 防重复：已有「连接中」会话（转圈期间再点卡片）直接进入，不新建；
                                                 // 但配置/凭据已变更的旧会话不复用（用当前配置新建）
@@ -788,7 +799,7 @@ fun AppRoot(repository: HostRepository) {
                                                     }
                                                 if (connecting != null) {
                                                     currentTab = SessionTab.Terminal(connecting)
-                                                    screen = Screen.Terminal
+                                                    navigate(Screen.Terminal)
                                                 } else {
                                                     val controller =
                                                         sessionManager.open(host, settings.autoReconnect) {
@@ -823,7 +834,7 @@ fun AppRoot(repository: HostRepository) {
                                                     pendingNavigate = fresh
                                                 } else {
                                                     currentTab = SessionTab.Terminal(controller)
-                                                    screen = Screen.Terminal
+                                                    navigate(Screen.Terminal)
                                                 }
                                             },
                                             onOpenSftp = { host, session ->
@@ -835,7 +846,7 @@ fun AppRoot(repository: HostRepository) {
                                                     }
                                                 currentTab =
                                                     SessionTab.Sftp(host, session, entry?.uiState ?: SftpUiState())
-                                                screen = Screen.Terminal
+                                                navigate(Screen.Terminal)
                                             },
                                             onCloseAllSessions = { host ->
                                                 // 关闭该主机全部会话：终端断开保留 + SFTP 释放
@@ -854,7 +865,7 @@ fun AppRoot(repository: HostRepository) {
                                                 repository.deleteHost(host.id)
                                                 refreshHosts()
                                             },
-                                            onAgents = { host -> screen = Screen.Agents(host.id) },
+                                            onAgents = { host -> navigate(Screen.Agents(host.id)) },
                                         )
 
                                     HomeTab.CONNECTIONS ->
@@ -871,7 +882,7 @@ fun AppRoot(repository: HostRepository) {
                                                 when (item) {
                                                     is HostSessionItem.Terminal -> {
                                                         currentTab = SessionTab.Terminal(item.controller)
-                                                        screen = Screen.Terminal
+                                                        navigate(Screen.Terminal)
                                                     }
                                                     is HostSessionItem.Sftp -> {
                                                         // 连接页重入：用 entry 的 uiState（浏览状态/路径保留）
@@ -886,7 +897,7 @@ fun AppRoot(repository: HostRepository) {
                                                                 item.session,
                                                                 entry?.uiState ?: SftpUiState(),
                                                             )
-                                                        screen = Screen.Terminal
+                                                        navigate(Screen.Terminal)
                                                     }
                                                 }
                                             },
@@ -962,21 +973,21 @@ fun AppRoot(repository: HostRepository) {
                                 }
                                 repository.upsertHost(host)
                                 refreshHosts()
-                                screen = Screen.Home
+                                navigateBack()
                             },
-                            onCancel = { screen = Screen.Home },
+                            onCancel = ::navigateBack,
                         )
                     }
 
                     is Screen.Agents -> {
                         val host = hosts.firstOrNull { it.id == s.hostId }
                         if (host == null) {
-                            screen = Screen.Home
+                            navigateBack()
                         } else {
                             AgentScreen(
                                 host = host,
                                 repository = repository,
-                                onBack = { screen = Screen.Home },
+                                onBack = ::navigateBack,
                                 // 屏幕远控（复用终端页推流基础设施）：会话条目/回调
                                 // 由 AppRoot 持有，Agent 页内全屏播放、关闭/重连/安装/档位
                                 // 走同一套 establishScreen 流程（Agent 连接不因切页而断）
@@ -1038,7 +1049,7 @@ fun AppRoot(repository: HostRepository) {
                                     } else {
                                         currentTab = null
                                         refreshHosts()
-                                        screen = Screen.Home
+                                        navigateBack()
                                     }
                                 },
                                 onSwitchTab = { it ->
@@ -1102,7 +1113,7 @@ fun AppRoot(repository: HostRepository) {
                                     currentTab = remaining
                                     if (remaining == null) {
                                         refreshHosts()
-                                        screen = Screen.Home
+                                        navigateBack()
                                     }
                                 },
                                 onOpenSftpPicker = { sftpPickerVisible = true },

@@ -1065,15 +1065,13 @@ internal class SessionConnector(
         // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
         // 的漫游能力）。只有客户端异常退出（onExit）才走自动重连。
         if (c.moshSession != null) return
-        // 网络完全丢失（飞行模式等）：TCP 悬挂时 keepalive 写缓冲吸收、读不到
-        // EOF，连接会长期显示绿色——主动断开让状态正确，并触发 onClosed 的
-        // 退避重连（网络未恢复时失败 → 灰点 + 后台通知；恢复后回前台自动重连）
+        // 单独收到 LOST 不主动拆 SSH：部分 Android ROM 在 App 退后台数秒后会
+        // 暂时撤销默认网络回调，但已有 TCP socket 和前台服务仍然有效。此时关
+        // session 会造成“切其他 App，回来必重新连接”。真正的网络切换由后续
+        // TRANSPORT_CHANGED 处理；socket 确实死亡则 reader/onClosed 自行重连。
+        // 这也允许短暂 Wi-Fi 中断后在 IP 未变化时沿用原 TCP 连接。
         if (kind == NetworkChangeKind.LOST) {
-            if (c.status == ConnStatus.CONNECTED) {
-                TermLog.w("net") { "LOST: force close ${c.host.name}（TCP 悬挂时主动断开）" }
-                c.reconnectAttempts = 0
-                c.session?.close()
-            }
+            TermLog.i("net") { "LOST: keep socket ${c.host.name}, wait for transport change or onClosed" }
             return
         }
         val now = c.nowMs()

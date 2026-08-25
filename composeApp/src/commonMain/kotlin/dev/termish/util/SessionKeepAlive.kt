@@ -16,4 +16,11 @@ expect object SessionKeepAlive {
      * iOS / desktop 无保活服务，恒为 true（保持原行为）。
      */
     fun isActive(): Boolean
+
+    /**
+     * 回到前台时是否应主动重建仍显示为已连接的 SSH socket。
+     * iOS 后台挂起后底层 socket 可能已经失效却尚未回调关闭；Android 仅在
+     * 前台服务确实被系统停止时需要这样做；desktop 始终不需要。
+     */
+    fun requiresSshReconnectOnForeground(): Boolean
 }

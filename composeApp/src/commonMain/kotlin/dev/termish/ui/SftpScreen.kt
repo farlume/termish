@@ -398,15 +398,32 @@ fun SftpContent(
         onPathChanged(newPath)
     }
 
-    // 返回键：搜索中先退出搜索；有浏览历史则弹栈回退；否则返回上一页
+    // SFTP 只注册一个页面级返回处理器，严格按视觉层级收起。
+    // 预览/多选若漏掉会穿透到终端页，表现为从文件页直接回首页。
     PlatformBackHandler(enabled = true) {
-        when {
-            searching -> {
+        when (
+            sftpBackTarget(
+                previewOpen = previewEntry != null,
+                selectionActive = state.selection.isNotEmpty(),
+                searchOpen = searching,
+                hasDirectoryHistory = state.history.isNotEmpty(),
+            )
+        ) {
+            SftpBackTarget.CLOSE_PREVIEW -> {
+                previewEntry = null
+                previewText = null
+                previewImage = null
+                previewError = null
+                previewTruncated = false
+                previewLoading = false
+            }
+            SftpBackTarget.CLEAR_SELECTION -> state.selection.clear()
+            SftpBackTarget.CLOSE_SEARCH -> {
                 searching = false
                 query = ""
             }
-            state.history.isNotEmpty() -> path = state.history.removeAt(state.history.lastIndex)
-            else -> onBack()
+            SftpBackTarget.PREVIOUS_DIRECTORY -> path = state.history.removeAt(state.history.lastIndex)
+            SftpBackTarget.EXIT -> onBack()
         }
     }
 
