@@ -142,6 +142,17 @@ class ScreenInstallScriptTest {
     }
 
     @Test
+    fun `Linux control reads live root geometry after display resize`() {
+        val script = ScreenSession.INSTALL_SCRIPT
+
+        assertContains(script, "def _x_root_size():")
+        assertContains(script, "_XDISPLAY.screen().root.get_geometry()")
+        assertContains(script, "W, H = screen_size")
+        assertFalse(script.contains("_XDISPLAY.screen().width_in_pixels"))
+        assertFalse(script.contains("_XDISPLAY.screen().height_in_pixels"))
+    }
+
+    @Test
     fun `sudo password is requested only when Linux dependency needs it`() {
         fun needs(
             os: String? = "Linux",

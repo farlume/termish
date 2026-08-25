@@ -139,15 +139,15 @@ internal fun VirtualMousePanel(
                                 down.consume()
                                 var lastPosition = down.position
                                 var released = false
-                                var cancelled = false
                                 var pointerGone = false
-                                val longPressed =
+                                var initialDrag = Offset.Zero
+                                var dragRequested = false
+                                val resolvedBeforeLongPress =
                                     withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
-                                        while (true) {
+                                        while (!released && !pointerGone && !dragRequested) {
                                             val event = awaitPointerEvent()
                                             val change = event.changes.firstOrNull { it.id == down.id }
                                             if (change == null) {
-                                                cancelled = true
                                                 pointerGone = true
                                                 break
                                             }
@@ -155,21 +155,31 @@ internal fun VirtualMousePanel(
                                                 released = true
                                                 break
                                             }
-                                            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                            val fromDown = change.position - down.position
+                                            if (fromDown.getDistance() > viewConfiguration.touchSlop) {
+                                                // 左键区本身就是“按住并拖”的入口：用户按下后
+                                                // 直接移动应立即进入拖态，不能在长按超时前因
+                                                // 越过 slop 反而取消整次手势。
                                                 change.consume()
-                                                cancelled = true
+                                                initialDrag = fromDown
+                                                lastPosition = change.position
+                                                dragRequested = true
                                                 break
                                             }
                                             lastPosition = change.position
                                         }
-                                        false
-                                    } ?: true
+                                        true
+                                    }
+                                if (resolvedBeforeLongPress == null) dragRequested = true
 
                                 when {
                                     released -> currentOnLeftClick()
-                                    longPressed && !cancelled -> {
+                                    dragRequested && !pointerGone -> {
                                         currentOnLeftDragStart()
                                         try {
+                                            if (initialDrag != Offset.Zero) {
+                                                currentOnLeftDrag(initialDrag)
+                                            }
                                             while (true) {
                                                 val event = awaitPointerEvent()
                                                 val change =
@@ -188,7 +198,7 @@ internal fun VirtualMousePanel(
                                         }
                                     }
                                     else -> {
-                                        // 长按前就滑出触摸阈值：取消点击，并把本次手势消费到抬手。
+                                        // 指针流被系统取消时消费到抬手，避免残留点击。
                                         if (!pointerGone) {
                                             while (true) {
                                                 val event = awaitPointerEvent()

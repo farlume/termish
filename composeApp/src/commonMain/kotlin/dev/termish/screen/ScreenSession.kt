@@ -613,7 +613,7 @@ class ScreenSession internal constructor(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 41
+        const val RELAY_VERSION = 42
 
         /**
          * 读流前置脚本：只做 relay/版本/ffmpeg/显示状态探测，成功时回报
@@ -1029,13 +1029,25 @@ class ScreenSession internal constructor(
                 except Exception:
                     return None
 
+            def _x_root_size():
+                # screen().width/height 来自 Xlib 建连时的 Setup Reply，会在
+                # RandR 改分辨率后继续保留旧值。根窗口 geometry 是实时查询；
+                # 手指和虚拟鼠标必须按它换算，否则虚拟机动态缩放后会整体点偏。
+                if not _ensure_xtest():
+                    return None
+                try:
+                    geometry = _XDISPLAY.screen().root.get_geometry()
+                    return max(1, int(geometry.width)), max(1, int(geometry.height))
+                except Exception:
+                    return None
+
             def _x_inject_control(typ, x, y, extra, payload):
                 # 与 macOS handle_control 相同的控制包语义，Linux 用 XTEST 注入
-                if not _ensure_xtest():
+                screen_size = _x_root_size()
+                if screen_size is None:
                     return
                 try:
-                    W = _XDISPLAY.screen().width_in_pixels
-                    H = _XDISPLAY.screen().height_in_pixels
+                    W, H = screen_size
                     px = int(x * W)
                     py = int(y * H)
                     if typ == 0:  # 移动
