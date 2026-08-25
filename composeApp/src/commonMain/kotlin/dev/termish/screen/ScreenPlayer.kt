@@ -24,7 +24,8 @@ sealed interface ScreenPlayerFailure {
 /**
  * 平台视频播放器（远程画面渲染层）：
  * - Android：MediaCodec 直解 + SurfaceView 直上屏（ToDesk 式直通管线）。
- * - iOS/桌面：未实现（stub；屏幕功能当前仅 Android 可用）。
+ * - iOS：AVSampleBufferDisplayLayer + VideoToolbox 硬解直上屏。
+ * - desktop：未实现（stub）。
  *
  * 用法：TCP 协议切出的完整 H.264 帧 [feed]；首帧渲染回调 [onReady]；
  * 播放错误回调 [onError]；UI 用 [ScreenVideoSurface] 渲染画面。
@@ -36,7 +37,7 @@ expect class ScreenPlayer(
     /** 启动解码与渲染管线（幂等；重复调用忽略）。 */
     fun start()
 
-    /** 喂入流数据（阻塞式背压：消费慢时调用方挂起）。 */
+    /** 喂入一个完整帧；平台播放器使用有界队列，消费慢时丢旧保新。 */
     fun feed(data: ByteArray)
 
     /** 释放播放器与服务。 */
@@ -46,7 +47,7 @@ expect class ScreenPlayer(
     val videoDims: MutableState<Pair<Int, Int>?>
 }
 
-/** 视频渲染面（Android = MediaCodec + SurfaceView；其余平台黑底占位）。 */
+/** 视频渲染面（Android = SurfaceView；iOS = AVSampleBufferDisplayLayer）。 */
 @Composable
 expect fun ScreenVideoSurface(
     player: ScreenPlayer?,

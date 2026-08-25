@@ -270,6 +270,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
+					AVFoundation,
+					"-framework",
+					CoreMedia,
+					"-framework",
 					Termish,
 					"-lssh2",
 					"-lssl",
@@ -277,6 +281,8 @@
 					"-lz",
 					"-framework",
 					Security,
+					"-framework",
+					VideoToolbox,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.termish.app;
 				/* Swift target 模块名须与 Kotlin framework（Termish）不同：Xcode 26 显式模块
@@ -323,6 +329,10 @@
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-framework",
+					AVFoundation,
+					"-framework",
+					CoreMedia,
+					"-framework",
 					Termish,
 					"-lssh2",
 					"-lssl",
@@ -330,6 +340,8 @@
 					"-lz",
 					"-framework",
 					Security,
+					"-framework",
+					VideoToolbox,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = dev.termish.app;
 				/* Swift target 模块名须与 Kotlin framework（Termish）不同：Xcode 26 显式模块

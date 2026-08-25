@@ -252,8 +252,9 @@ browser for desktop workflows while the phone stays native.
 
 **Screen mirroring (remote desktop, macOS)**
 - **Watch your Mac's screen live**: SSH transport carries an H.264 stream
-  (avfoundation capture → libx264 → MPEG-TS), decoded by ExoPlayer with Fit
-  scaling and a live FPS / resolution badge
+  (avfoundation capture → VideoToolbox/libx264 → framed Annex-B), decoded
+  directly by MediaCodec on Android or VideoToolbox-backed AVFoundation on iOS,
+  with Fit scaling and a live FPS / resolution badge
 - **PiP window** on the terminal page: drag anywhere, resize with a corner
   handle or **pinch with two fingers**, close with ✕ — position & size
   survive fullscreen round-trips

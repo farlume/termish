@@ -110,6 +110,44 @@ class H264StreamTest {
     }
 
     @Test
+    fun `toAvccSample replaces mixed start codes with lengths`() {
+        val annexB =
+            byteArrayOf(0, 0, 0, 1, 0x67, 0x42, 0x1e) +
+                byteArrayOf(0, 0, 1, 0x68, 0xce.toByte()) +
+                byteArrayOf(0, 0, 0, 1, 0x65, 0x88.toByte(), 0x84.toByte())
+
+        val avcc = H264Stream.toAvccSample(annexB)
+
+        assertNotNull(avcc)
+        assertTrue(
+            avcc.contentEquals(
+                byteArrayOf(0, 0, 0, 3, 0x67, 0x42, 0x1e) +
+                    byteArrayOf(0, 0, 0, 2, 0x68, 0xce.toByte()) +
+                    byteArrayOf(0, 0, 0, 3, 0x65, 0x88.toByte(), 0x84.toByte()),
+            ),
+        )
+    }
+
+    @Test
+    fun `toAvccSample rejects data without start code`() {
+        assertNull(H264Stream.toAvccSample(byteArrayOf(0x65, 0x01, 0x02)))
+    }
+
+    @Test
+    fun `stripStartCode returns raw parameter set`() {
+        assertTrue(
+            H264Stream
+                .stripStartCode(byteArrayOf(0, 0, 0, 1, 0x67, 0x42))
+                .contentEquals(byteArrayOf(0x67, 0x42)),
+        )
+        assertTrue(
+            H264Stream
+                .stripStartCode(byteArrayOf(0, 0, 1, 0x68, 0x01))
+                .contentEquals(byteArrayOf(0x68, 0x01)),
+        )
+    }
+
+    @Test
     fun `parseSpsDimensions extracts real 720p sps`() {
         // 真实 libx264 输出（1280x720）：6742c01fda014016ec0440000003004000000f23c60ca8
         val sps =

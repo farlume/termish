@@ -32,6 +32,7 @@ kotlin {
 
     val nativeRoot = rootProject.file("iosApp/native")
     val libssh2Def = project.file("src/nativeInterop/cinterop/libssh2.def")
+    val screenPlayerDef = project.file("src/nativeInterop/cinterop/screen_player.def")
     val zlibDef = project.file("src/nativeInterop/cinterop/zlib.def")
 
     val iosArm64 = iosArm64()
@@ -48,7 +49,10 @@ kotlin {
             linkerOpts(
                 "-L$libDir",
                 "-lssh2", "-lssl", "-lcrypto", "-lz",
+                "-framework", "AVFoundation",
+                "-framework", "CoreMedia",
                 "-framework", "Security",
+                "-framework", "VideoToolbox",
             )
         }
         target.compilations.getByName("main").cinterops.create("libssh2") {
@@ -64,6 +68,10 @@ kotlin {
                 "-I${nativeRoot.resolve("include")}",
                 "-I${project.file("src/nativeInterop/cinterop")}",
             )
+        }
+        target.compilations.getByName("main").cinterops.create("screenPlayer") {
+            defFile(screenPlayerDef)
+            compilerOpts("-I${project.file("src/nativeInterop/cinterop")}")
         }
     }
 

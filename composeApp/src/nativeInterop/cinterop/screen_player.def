@@ -1,0 +1,4 @@
+headers = screen_player.h
+headerFilter = screen_player.h
+compilerOpts = -fmodules
+linkerOpts = -framework AVFoundation -framework CoreMedia -framework VideoToolbox

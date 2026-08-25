@@ -179,6 +179,69 @@ object H264Stream {
     }
 
     /**
+     * 将一个完整 Annex-B access unit 转成 Apple/AVCC 使用的 length-prefixed sample。
+     * 每个 NAL 前的 00 00 01 / 00 00 00 01 会替换为 4 字节大端长度；空 NAL
+     * 会被忽略。输入不含 start code 或长度溢出时返回 null，避免把损坏帧交给
+     * 平台解码器。
+     */
+    fun toAvccSample(annexB: ByteArray): ByteArray? {
+        if (annexB.size < 4) return null
+        val ranges = ArrayList<Pair<Int, Int>>(4)
+        var searchFrom = 0
+        while (true) {
+            val start = findStartCode(annexB, searchFrom) ?: break
+            val nalStart = start.first + start.second
+            val next = findStartCode(annexB, nalStart)
+            val nalEnd = next?.first ?: annexB.size
+            if (nalEnd > nalStart) ranges += nalStart to nalEnd
+            if (next == null) break
+            searchFrom = next.first
+        }
+        if (ranges.isEmpty()) return null
+
+        var outputSize = 0L
+        for ((start, end) in ranges) outputSize += 4L + (end - start)
+        if (outputSize <= 0L || outputSize > Int.MAX_VALUE) return null
+
+        val output = ByteArray(outputSize.toInt())
+        var out = 0
+        for ((start, end) in ranges) {
+            val size = end - start
+            output[out] = (size ushr 24).toByte()
+            output[out + 1] = (size ushr 16).toByte()
+            output[out + 2] = (size ushr 8).toByte()
+            output[out + 3] = size.toByte()
+            annexB.copyInto(output, out + 4, start, end)
+            out += 4 + size
+        }
+        return output
+    }
+
+    /** 去掉参数集的 Annex-B start code，供 CoreMedia format description 使用。 */
+    fun stripStartCode(nal: ByteArray): ByteArray {
+        val start = findStartCode(nal, 0)
+        return if (start?.first == 0) nal.copyOfRange(start.second, nal.size) else nal.copyOf()
+    }
+
+    /** 返回 start code 的位置与长度；优先识别 4 字节形式。 */
+    private fun findStartCode(
+        bytes: ByteArray,
+        from: Int,
+    ): Pair<Int, Int>? {
+        var i = from.coerceAtLeast(0)
+        while (i + 2 < bytes.size) {
+            if (bytes[i] == 0.toByte() && bytes[i + 1] == 0.toByte()) {
+                if (i + 3 < bytes.size && bytes[i + 2] == 0.toByte() && bytes[i + 3] == 1.toByte()) {
+                    return i to 4
+                }
+                if (bytes[i + 2] == 1.toByte()) return i to 3
+            }
+            i++
+        }
+        return null
+    }
+
+    /**
      * 从 SPS NAL 解析裁剪后宽高（H.264 exp-golomb；失败返回 null）。
      *
      * 同时接受裸 NAL 和 MediaCodec CSD 使用的 Annex-B 形式；读位前移除
