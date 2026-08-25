@@ -2,15 +2,14 @@ package dev.termish.ui
 
 import androidx.compose.runtime.mutableStateListOf
 import dev.termish.crypto.Sha256
+import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
+import dev.termish.data.resolveCredentials
 import dev.termish.ssh.SftpSession
 import dev.termish.util.TermLog
 import dev.termish.util.base64Encode
-import dev.termish.util.ioDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 
 /** SFTP 会话条目（与终端会话平级管理，跨页面存活）。
  *  [session] 可空：进程重启后恢复的条目未连接（session=null），
@@ -27,6 +26,30 @@ data class SftpSessionEntry(
     val connectionToken: Any = Any(),
 )
 
+internal enum class BackgroundReconnectAction {
+    NONE,
+    RECONNECT,
+    REBUILD,
+}
+
+/** 纯决策层，避免生命周期回调里把同主机的其他会话误当成后台活跃会话。 */
+internal fun backgroundReconnectAction(
+    sessionId: String,
+    activeSessionIds: Set<String>,
+    autoReconnect: Boolean,
+    status: ConnStatus,
+    connectionMode: ConnectionMode,
+    forceSshReconnect: Boolean,
+): BackgroundReconnectAction =
+    when {
+        sessionId !in activeSessionIds || !autoReconnect -> BackgroundReconnectAction.NONE
+        forceSshReconnect &&
+            connectionMode == ConnectionMode.SSH &&
+            (status == ConnStatus.CONNECTED || status == ConnStatus.AUTH) -> BackgroundReconnectAction.REBUILD
+        status == ConnStatus.CLOSED || status == ConnStatus.ERROR -> BackgroundReconnectAction.RECONNECT
+        else -> BackgroundReconnectAction.NONE
+    }
+
 /**
  * 会话管理器：持有所有活跃 [TerminalController]，跨页面存活。
  * 同一主机已有活跃会话时复用（终端缓冲保留，重新进入即"继续上次"）；
@@ -42,9 +65,7 @@ class SessionManager(
     /** SFTP 会话（与终端会话同源管理：连接页可见、卡片 Close 可关、删除主机连带释放）。 */
     val sftpSessions = mutableStateListOf<SftpSessionEntry>()
 
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
-
-    /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
+    /** 退到后台时仍活跃的 session id（回前台据此自动重连，iOS 场景）。 */
     private val activeAtBackground = HashSet<String>()
 
     /** 退到后台：记录当前活跃会话，供回前台恢复。 */
@@ -53,22 +74,43 @@ class SessionManager(
         sessions.forEach { controller ->
             val st = controller.status
             if (st == ConnStatus.CONNECTED || st == ConnStatus.AUTH || st == ConnStatus.CONNECTING) {
-                activeAtBackground.add(controller.host.id)
+                activeAtBackground.add(controller.sessionId)
             }
         }
     }
 
-    /** 回前台：把退后台期间掉线的活跃会话自动重连（保留缓冲）。 */
-    fun reconnectDroppedSessions() {
+    /**
+     * 回前台：把退后台期间掉线的活跃会话自动重连（保留缓冲）。
+     *
+     * [forceSshReconnect] 用于 iOS 挂起或 Android 保活服务被系统停止的场景：
+     * socket 可能已失效，但 reader 尚未恢复到足以触发 onClosed，状态仍假装
+     * CONNECTED。主动关旧代再重连可避免回前台后第一次输入才发现连接已死。
+     */
+    fun reconnectDroppedSessions(forceSshReconnect: Boolean = false) {
         if (activeAtBackground.isEmpty()) return
-        val ids = activeAtBackground.toList()
+        val ids = activeAtBackground.toSet()
         activeAtBackground.clear()
-        sessions
-            .filter {
-                it.host.id in ids &&
-                    it.autoReconnectEnabled &&
-                    (it.status == ConnStatus.CLOSED || it.status == ConnStatus.ERROR)
-            }.forEach { it.reconnect() }
+        sessions.forEach { controller ->
+            when (
+                backgroundReconnectAction(
+                    sessionId = controller.sessionId,
+                    activeSessionIds = ids,
+                    autoReconnect = controller.autoReconnectEnabled,
+                    status = controller.status,
+                    connectionMode = controller.host.connectionMode,
+                    forceSshReconnect = forceSshReconnect,
+                )
+            ) {
+                BackgroundReconnectAction.REBUILD -> {
+                    TermLog.i("session") { "foreground rebuild ${controller.host.name} session=${controller.sessionId}" }
+                    controller.close()
+                    controller.reconnect()
+                }
+
+                BackgroundReconnectAction.RECONNECT -> controller.reconnect()
+                BackgroundReconnectAction.NONE -> Unit
+            }
+        }
     }
 
     /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。

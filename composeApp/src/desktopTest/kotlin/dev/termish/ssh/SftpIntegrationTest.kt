@@ -15,7 +15,7 @@ class SftpIntegrationTest {
     /** 护栏：任何用例挂死 90s 必失败而非拖死 CI（曾因 sshj 无限等回包挂死）。 */
     @get:Rule
     @JvmField
-    val timeout = Timeout(90_000)
+    val timeout: Timeout = Timeout.seconds(90)
 
     private fun env(
         key: String,

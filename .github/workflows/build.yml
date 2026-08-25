@@ -76,6 +76,7 @@ jobs:
       - name: Run checks (unit tests + lint)
         run: |
           ./gradlew \
+            agentBridgeTest \
             ktlintCheck \
             :composeApp:testDebugUnitTest \
             :composeApp:lintRelease
@@ -189,7 +190,7 @@ jobs:
 
       - name: Run desktop tests
         # 集成测试按 sshd(22222) 可用性自我探测，无需 TERMISH_TEST_RUN
-        run: ./gradlew :composeApp:desktopTest
+        run: ./gradlew agentBridgeTest :composeApp:desktopTest
 
       - name: Package (Linux)
         if: github.event_name != 'pull_request'

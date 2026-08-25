@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class SessionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
     private val handler = Handler(Looper.getMainLooper())
 
     /**
@@ -63,7 +65,7 @@ class SessionService : Service() {
             val n = activeSessions.updateAndGet { it.coerceAtLeast(1) - 1 }
             Log.i(TAG, "stop: activeSessions=$n")
             if (n == 0) {
-                releaseWakeLock()
+                releaseKeepAliveLocks()
                 handler.removeCallbacks(renewWakeLock)
                 stopSelf()
             }
@@ -84,6 +86,7 @@ class SessionService : Service() {
         startForegroundCompat()
         isRunning = true
         acquireWakeLock()
+        acquireWifiLock()
         scheduleRenew()
         return START_STICKY
     }
@@ -95,14 +98,14 @@ class SessionService : Service() {
         // Android 15：dataSync 前台服务有 6 小时上限，超时后系统调用这里。
         // 保活到此为止，释放锁并退出；用户回前台时由生命周期钩子自动重连。
         Log.w(TAG, "foreground service timed out (Android 15 dataSync 6h limit)")
-        releaseWakeLock()
+        releaseKeepAliveLocks()
         handler.removeCallbacks(renewWakeLock)
         stopSelf()
     }
 
     override fun onDestroy() {
         handler.removeCallbacks(renewWakeLock)
-        releaseWakeLock()
+        releaseKeepAliveLocks()
         nextRenewAt = 0
         activeSessions.set(0)
         isRunning = false
@@ -132,6 +135,32 @@ class SessionService : Service() {
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
+    }
+
+    /**
+     * SSH 是持续、低流量的长连接：CPU 唤醒锁不能阻止部分 ROM 在 App 退后台后
+     * 让 Wi-Fi 射频休眠。会话存在期间同时持有 WifiLock，避免 socket 因打开其他
+     * App 数秒就被底层网络回收；前台服务通知让这项电量开销对用户可见。
+     */
+    @Suppress("DEPRECATION")
+    private fun acquireWifiLock() {
+        if (wifiLock?.isHeld == true) return
+        val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+        wifiLock =
+            wifiManager.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "termish:ssh-wifi").apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+    }
+
+    private fun releaseWifiLock() {
+        wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
+    }
+
+    private fun releaseKeepAliveLocks() {
+        releaseWakeLock()
+        releaseWifiLock()
     }
 
     private fun buildNotification(): Notification {

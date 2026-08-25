@@ -89,6 +89,33 @@ tasks.register<RunDebugTask>("runDebug") {
     dependsOn(":composeApp:installDebug")
 }
 
+/** 构建随 App 分发的标准库 Python Agent Bridge zipapp。 */
+val agentBridgeBuild = tasks.register<ExecTask>("agentBridgeBuild") {
+    group = "build"
+    description = "构建 composeResources/files/termish-agent.pyz"
+    inputs.dir(layout.projectDirectory.dir("agentBridge/termish_agent"))
+    inputs.file(layout.projectDirectory.file("agentBridge/build.py"))
+    outputs.file(layout.projectDirectory.file("composeApp/src/commonMain/composeResources/files/termish-agent.pyz"))
+    doLast {
+        run("python3", "agentBridge/build.py")
+    }
+}
+
+// Bridge 产物是 commonMain Compose 资源：所有平台复制资源前先生成，既消除
+// Gradle 隐式依赖告警，也保证 APK/framework/桌面包携带的 pyz 与源码一致。
+project(":composeApp").tasks.configureEach {
+    if (name.startsWith("copyNonXmlValueResourcesFor")) dependsOn(agentBridgeBuild)
+}
+
+/** Agent Bridge 协议/Adapter 纯 Python 单测（无第三方依赖）。 */
+tasks.register<ExecTask>("agentBridgeTest") {
+    group = "verification"
+    description = "运行 Agent Bridge Python 单元测试"
+    doLast {
+        run("python3", "-m", "unittest", "discover", "-s", "agentBridge/tests", "-v")
+    }
+}
+
 /** 卸载后重装：解决设备上旧签名/旧版本冲突（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。 */
 abstract class ReinstallDebugTask @Inject constructor() : ExecTask() {
     @TaskAction

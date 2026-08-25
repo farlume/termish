@@ -1,6 +1,11 @@
 package dev.termish.data
 
 import com.russhwolf.settings.Settings
+import dev.termish.util.TermLog
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,6 +26,13 @@ class HostRepository(
     private val settingsKey = "termish.settings.v1"
     private val tagGroupsKey = "termish.tag_groups.v1"
     private val snippetsKey = "termish.snippets.v1"
+    private val mutableAppSettings = MutableStateFlow(readSettings())
+
+    /**
+     * 进程内设置的单一事实来源。设置页、Agent 页和连接层都从这里读取，避免各自
+     * 长期持有整份 [AppSettings] 快照后互相覆盖字段。
+     */
+    val appSettings: StateFlow<AppSettings> = mutableAppSettings.asStateFlow()
 
     // ---------- 主机 ----------
 
@@ -31,6 +43,7 @@ class HostRepository(
         } catch (e: Exception) {
             // 解析失败不清空数据：备份原始串供恢复/排查，避免后续 upsert 把全部主机覆盖丢失
             backupCorrupt(hostsKey, raw)
+            TermLog.w("data") { "corrupt hosts backed up: ${e.message}" }
             emptyList()
         }
     }
@@ -143,18 +156,48 @@ class HostRepository(
 
     // ---------- 设置 ----------
 
-    fun loadSettings(): AppSettings {
+    private fun readSettings(): AppSettings {
         val raw = settings.getStringOrNull(settingsKey) ?: return AppSettings()
         return try {
             json.decodeFromString<AppSettings>(raw)
         } catch (e: Exception) {
             backupCorrupt(settingsKey, raw)
+            TermLog.w("data") { "corrupt app settings backed up: ${e.message}" }
             AppSettings()
         }
     }
 
+    fun loadSettings(): AppSettings = mutableAppSettings.value
+
     fun saveSettings(s: AppSettings) {
+        mutableAppSettings.value = s
         settings.putString(settingsKey, json.encodeToString(s))
+    }
+
+    /**
+     * 基于最新值做字段级更新。持久化后若并发更新已经推进状态，会继续写入最新值，
+     * 防止较早调用最后落盘、把较新的字段修改覆盖掉。
+     */
+    fun updateSettings(transform: (AppSettings) -> AppSettings): AppSettings {
+        mutableAppSettings.update(transform)
+        while (true) {
+            val snapshot = mutableAppSettings.value
+            settings.putString(settingsKey, json.encodeToString(snapshot))
+            if (mutableAppSettings.value == snapshot) return snapshot
+        }
+    }
+
+    fun loadAgentPreferences(hostId: String): AgentWorkspacePreferences {
+        val key = "termish.agent.preferences.$hostId"
+        val raw = settings.getStringOrNull(key) ?: return AgentWorkspacePreferences()
+        return runCatching { json.decodeFromString<AgentWorkspacePreferences>(raw) }.getOrDefault(AgentWorkspacePreferences())
+    }
+
+    fun saveAgentPreferences(
+        hostId: String,
+        preferences: AgentWorkspacePreferences,
+    ) {
+        settings.putString("termish.agent.preferences.$hostId", json.encodeToString(preferences))
     }
 
     // ---------- 目录收藏（SFTP 文件管理器，按主机持久化） ----------

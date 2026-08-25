@@ -5,8 +5,7 @@ composeMultiplatform = "1.8.1"
 androidx-activityCompose = "1.10.1"
 androidx-documentfile = "1.0.1"
 androidx-lifecycle = "2.9.0"
-media3 = "1.6.1"
-nanohttpd = "2.3.1"
+markdown-renderer = "0.33.0"
 kotlinx-coroutines = "1.10.2"
 kotlinx-coroutines-test = "1.10.2"
 kotlinx-serialization = "1.8.1"
@@ -19,7 +18,7 @@ junit = "4.13.2"
 # JVM SSH transport (Android + desktop)
 sshj = "0.40.0"
 slf4j = "2.0.17"
-bouncycastle = "1.80"
+bouncycastle = "1.80.2"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
@@ -31,9 +30,9 @@ multiplatform-settings-noarg = { module = "com.russhwolf:multiplatform-settings-
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }
 androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "androidx-documentfile" }
 androidx-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
-androidx-media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
-androidx-media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
-nanohttpd = { module = "org.nanohttpd:nanohttpd", version.ref = "nanohttpd" }
+markdown-renderer = { module = "com.mikepenz:multiplatform-markdown-renderer", version.ref = "markdown-renderer" }
+markdown-renderer-code = { module = "com.mikepenz:multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
+markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 junit = { module = "junit:junit", version.ref = "junit" }
 
 # JVM SSH transport

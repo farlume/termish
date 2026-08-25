@@ -60,6 +60,16 @@ data class HostKeyRequest(
     internal val deferred = CompletableDeferred<Boolean>()
 }
 
+/** 所有 SSH UI 确认共用同一超时语义，避免终端/SFTP/Agent 各自无限等待。 */
+internal const val SSH_PROMPT_TIMEOUT_MS = 120_000L
+
+internal suspend fun awaitAuthPromptAnswer(deferred: CompletableDeferred<List<String>?>): List<String>? = withTimeoutOrNull(SSH_PROMPT_TIMEOUT_MS) { deferred.await() }
+
+internal fun awaitHostKeyPromptAnswer(deferred: CompletableDeferred<Boolean>): Boolean =
+    runBlocking {
+        withTimeoutOrNull(SSH_PROMPT_TIMEOUT_MS) { deferred.await() } ?: false
+    }
+
 /**
  * 终端会话控制器：持有终端状态（buffer / emulator / 连接状态）供 UI 观察，
  * 并把键盘输入路由到当前传输（SSH shell / mosh）。
@@ -170,10 +180,6 @@ class TerminalController(
         /** 主线程批量消费单帧预算：抽干同帧到达的输出后一次性触发重绘，
          *  避免小包洪泛时每包一次 frame 抖动；到预算即让出主线程。 */
         private const val OUTPUT_BATCH_BUDGET_MS = 8
-
-        /** 认证/主机密钥弹窗等待上限：页面销毁或用户长期不响应时按拒绝处理，
-         *  防止连接线程永久阻塞（sshd 自身也有登录宽限，超时连接本就会被掐断）。 */
-        private const val PROMPT_TIMEOUT_MS = 120_000L
     }
 
     // ---- 传输通道（connector 读写；close 时统一释放）----
@@ -212,6 +218,14 @@ class TerminalController(
     /** 会话唯一标识（同主机多会话区分；Compose key() 重组用）。 */
     val sessionId: String = "${host.id}:${Random.nextLong()}"
     internal var reconnectAttempts = 0
+
+    /**
+     * 连接代次：每次建连或主动断开都递增。阻塞在 SSH 引擎内的旧建连
+     * 返回后必须核对代次，不得覆盖新会话或回写新会话状态。
+     */
+    @Volatile
+    internal var connectionGeneration = 0
+
     private var keepAliveActive = false
 
     /** 自动重连的延迟任务：close() 时取消，防止关闭后仍被延迟协程拉起。 */
@@ -379,7 +393,7 @@ class TerminalController(
                 val req = AuthPromptRequest(prompt)
                 authPrompt = req
                 // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
-                val r = withTimeoutOrNull(PROMPT_TIMEOUT_MS) { req.deferred.await() }
+                val r = awaitAuthPromptAnswer(req.deferred)
                 if (authPrompt === req && r == null) authPrompt = null
                 return r
             }
@@ -425,16 +439,10 @@ class TerminalController(
 
     /** 等待主机密钥确认并兜底清弹窗状态（正常应答已被 respondToHostKey 清过，超时按拒绝）。 */
     private fun awaitHostKeyAnswer(req: HostKeyRequest): Boolean {
-        val r = runBlockingAwait(req.deferred)
+        val r = awaitHostKeyPromptAnswer(req.deferred)
         if (hostKeyPrompt === req) hostKeyPrompt = null
         return r
     }
-
-    private fun runBlockingAwait(d: CompletableDeferred<Boolean>): Boolean =
-        runBlocking {
-            // 与 onPrompt 同理：超时按拒绝处理，防止连接线程永久阻塞
-            withTimeoutOrNull(PROMPT_TIMEOUT_MS) { d.await() } ?: false
-        }
 
     /** reader 协程投递输出：队列满则挂起施加背压（TCP 窗口收敛），不丢字节。
      * mosh 接管后丢弃（引导通道使命完结，迟到字节只会污染 mosh 会话画面）。 */
@@ -510,6 +518,9 @@ class TerminalController(
     }
 
     fun close() {
+        // 先使所有在途建连失效；它们即使在底层阻塞调用返回，
+        // 也只会释放自己的资源，不会复活会话。
+        connectionGeneration++
         status = ConnStatus.CLOSED
         linkLostSeconds = 0
         // herdr agent 监控随会话停止（重连成功后再由 finishConnected 启动）
@@ -527,16 +538,26 @@ class TerminalController(
             it.deferred.complete(false)
         }
         stopKeepAlive()
-        moshSession?.close()
+        val closingMosh = moshSession
         moshSession = null
+        try {
+            closingMosh?.close()
+        } catch (e: Exception) {
+            TermLog.w("mosh") { "close failed ${host.name}: ${e.message}" }
+        }
         // 引导安装状态不跨会话残留（重连后重新探测决定）；
         // moshDegradedToSsh / herdrBin 有意保留：降级决策跨重连生效
         moshNeedsInstall = false
         moshInstalling = false
         moshInstallLog = ""
         moshNeedsSudoPassword = false
-        session?.close()
+        val closingSession = session
         session = null
+        try {
+            closingSession?.close()
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "close failed ${host.name}: ${e.message}" }
+        }
     }
 
     /**

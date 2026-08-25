@@ -6,4 +6,6 @@ actual object SessionKeepAlive {
     actual fun onSessionEnd() {}
 
     actual fun isActive(): Boolean = true
+
+    actual fun requiresSshReconnectOnForeground(): Boolean = false
 }

@@ -97,7 +97,7 @@ data class AppSettings(
     val notificationEnabled: Boolean = true,
     /** 被关闭的通知事件 id（见 NotificationEvent）；空 = 全部开启。 */
     val notificationDisabledEvents: Set<String> = emptySet(),
-    /** 语音输入总开关（终端工具栏麦克风键）。 */
+    /** 语音输入总开关（终端工具栏与 Agent 输入框麦克风键）。 */
     val voiceInputEnabled: Boolean = false,
     /**
      * 语音识别服务列表（可插拔：火山引擎等，未来可加阿里云/讯飞等）；
@@ -105,8 +105,62 @@ data class AppSettings(
      * 已被列表取代，读取时自动迁移（见 AppRoot）。
      */
     val asrProviders: List<AsrProvider> = emptyList(),
+    /** Agent 模型供应商配置；密钥按 provider id 单独存 SecretStore。 */
+    val agentProviders: List<AgentProvider> = emptyList(),
     /** @deprecated 旧版单实例配置：已被 [asrProviders] 取代（迁移用）。 */
     val asrResourceId: String = "",
+)
+
+/** 每台主机独立保存的 Agent 工作区偏好，避免污染全局终端设置。 */
+@Serializable
+data class AgentWorkspacePreferences(
+    val defaultAgent: String = "",
+    val defaultModel: String = "",
+    val defaultDirectory: String = "",
+    val showThinking: Boolean = true,
+    /** 旧版“默认展开工具”设置，仅保留用于反序列化；时间线现在始终默认收起。 */
+    val expandTools: Boolean = false,
+    /** Agent id -> provider id；缺失/空字符串表示使用 CLI 自带登录。 */
+    val providerByAgent: Map<String, String> = emptyMap(),
+)
+
+/** Agent 模型供应商类型：wire 协议分类（openai 兼容 / anthropic 兼容）。
+ *  [DEEPSEEK] 为旧版单一供应商枚举值，仅用于迁移兼容（等价 openai 类型 +
+ *  anthropic 兼容端点）；新配置一律使用 [OPENAI] / [ANTHROPIC]。
+ */
+@Serializable
+enum class AgentProviderType {
+    /** 旧版 DeepSeek 单一供应商（迁移兼容）。 */
+    DEEPSEEK,
+
+    /** OpenAI 兼容协议（chat/completions；claude 需另配 [AgentProvider.anthropicBaseUrl]）。 */
+    OPENAI,
+
+    /** Anthropic 兼容协议（/v1/messages）。 */
+    ANTHROPIC,
+}
+
+/** Agent 模型供应商的非敏感配置；API key 不进入 Settings 序列化（存 SecretStore）。
+ *  参考 tuiniverse 的 Provider 模型：type = wire 协议、baseUrl + anthropicBaseUrl
+ *  双端点（claude 走 anthropic 兼容端点，其余走 openai 兼容端点）、models 预设列表。
+ */
+@Serializable
+data class AgentProvider(
+    val id: String,
+    val type: AgentProviderType = AgentProviderType.OPENAI,
+    val name: String = "DeepSeek",
+    val baseUrl: String = "https://api.deepseek.com",
+    /**
+     * claude 专用 Anthropic 兼容端点（如 DeepSeek → https://api.deepseek.com/anthropic）。
+     * 缺省时 claude 只在 type=ANTHROPIC 时可用（用 [baseUrl]）；
+     * openai 类型供应商若不提供此字段，claude 无法使用。
+     */
+    val anthropicBaseUrl: String = "",
+    /** Pi CLI 使用的供应商标识；协议类型与 Pi 的 provider id 不能混用。 */
+    val piProvider: String = "",
+    /** 预设/手动填写的模型列表（新建会话可快速选；可从 /models 拉取）。 */
+    val models: List<String> = emptyList(),
+    val enabled: Boolean = true,
 )
 
 /** 语音识别服务类型（可插拔 provider）。 */

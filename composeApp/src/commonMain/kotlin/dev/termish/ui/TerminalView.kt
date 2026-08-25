@@ -91,11 +91,10 @@ private fun cellColors(
 private fun runFontWeight(attrs: Int): FontWeight? = if (attrs and CellAttr.BOLD != 0) FontWeight.Bold else null
 
 /**
- * 仅可作语句调用（追加语义两端一致）：JVM 上被 java.lang.StringBuilder 同名
- * 成员遮蔽（死代码），Kotlin/Native 上才真正生效。严禁用于表达式求值——
- * 本函数返回 Unit，iOS 上会拿到 "kotlin.Unit"（见 codePointToString 注释）。
+ * 跨平台追加 Unicode 码点。使用项目专属名称，避免 JVM StringBuilder 的同名成员
+ * 遮蔽扩展、造成 JVM 与 Kotlin/Native 解析到不同实现。
  */
-private fun StringBuilder.appendCodePoint(cp: Int) {
+private fun StringBuilder.appendUnicodeCodePoint(cp: Int) {
     if (cp <= 0xFFFF) {
         append(cp.toChar())
     } else {
@@ -106,7 +105,7 @@ private fun StringBuilder.appendCodePoint(cp: Int) {
 }
 
 /**
- * 码点 → String。不能写成 StringBuilder().appendCodePoint(cp).toString()：
+ * 码点 → String。不能依赖 JVM 专有的 StringBuilder.appendCodePoint(cp)：
  * Kotlin/Native 的 StringBuilder 没有公开的 appendCodePoint 成员（stdlib 里仅有
  * internal 实现），会解析到本文件返回 Unit 的私有扩展 → Unit.toString()，
  * iOS 上每个宽字符都渲染成字面串 "kotlin.Unit"（中文乱码根因）；JVM 则因
@@ -323,7 +322,7 @@ fun TerminalView(
                 if (c2.isWideTail || c2.fg != cell.fg || c2.attrs != cell.attrs) break
                 if (c2.width != 1) break
                 if (c2.codePoint == ' '.code && c2.attrs and (CellAttr.UNDERLINE or CellAttr.INVERSE) == 0) break
-                sb.appendCodePoint(c2.codePoint)
+                sb.appendUnicodeCodePoint(c2.codePoint)
                 j++
             }
             if (sb.isNotEmpty()) {

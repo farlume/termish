@@ -5,6 +5,28 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **Agent 产物卡片**：对话会将本轮生成的 Markdown、PPT、Excel、Word、PDF 和图片等文件展示为可打开所在目录的卡片
+- **Agent 原生历史导入**：可发现并导入远端 Codex、Claude Code、Gemini CLI、OpenCode 与 Pi 的本地会话，复用原生 session ID 继续上下文且不改写 Agent 自己的历史文件
+
+## [1.7.0] - 2026-08-25
+
+### 新增
+
+- **原生 Agent 对话**：在主机卡片直接进入 Codex、Claude Code、Gemini CLI、OpenCode 与 Pi 的手机原生工作区；内置纯标准库 Python Bridge 经 SFTP 自动部署，通过 SSH 内的私有 Unix socket 流式传输对话、思考与工具事件，并支持历史会话恢复、取消和 Agent CLI 引导安装
+- **Agent 供应商配置**：设置页可添加 DeepSeek（API Key 仅存平台安全存储），每个 Agent 可独立选择内置登录或指定供应商；首批适配 Claude Code、OpenCode 与 Pi
+- **Agent 输入效率**：输入区支持手机附件、远端目录选择，以及输入 `/` 唤起当前 Agent 的内置命令补全；长附件名限制预览宽度并以省略号展示
+- **Linux 屏幕远控**：远端画面服务支持 Linux X11/XTEST 鼠标注入，并补齐状态上报与点击坐标换算
+
+### 修复
+
+- **Agent 失败不再吞消息或永久 loading**：发送失败保留草稿与附件，登录/供应商错误直接显示；Bridge adapter 退出或异常时保证结束 turn，断连后不再幽灵重连
+- **保留 Agent 自身审批策略**：不再强制覆盖 Codex、Claude Code 与 Gemini CLI 的权限/审批参数；当前尚未桥接手机交互审批，无头协议无法上报时安全失败并显示错误
+- **虚拟鼠标左右推对称**：拖到左缘也可持续推动放大画面，鼠标热点钳制在可见视频区域内，不再滑出屏幕
+- **Agent 过程卡片**：恢复最初的卡片样式，思考与工具过程无论运行中或完成后都默认收起，并压低折叠态高度
+- **Agent 消息顺序与并发保护**：发送请求交接期间暂存实时事件，避免助手增量早于用户消息或终态动画状态回写；Bridge 按会话串行化启动窗口，阻止多客户端同时覆盖同一 turn
+
 ## [1.6.4] - 2026-08-24
 
 ### 修复
@@ -486,7 +508,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.6.4...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/ttermish/termish/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2

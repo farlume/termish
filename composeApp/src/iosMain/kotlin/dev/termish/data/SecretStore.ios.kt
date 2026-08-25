@@ -1,5 +1,7 @@
 package dev.termish.data
 
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.Platform
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.MemScope
@@ -53,7 +55,7 @@ import platform.Security.kSecValueData
  * 整个 app 触摸失效（表现为点保存后卡死）。字符串用 CFBridgingRetain 桥接，
  * 用完 CFBridgingRelease 释放，与 Apple Security API 的 CF 内存约定一致。
  */
-@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class, ExperimentalNativeApi::class)
 actual object SecretStore {
     /** errSecMissingEntitlement：app 未签名/未配置 keychain-access-groups 时 Keychain 不可用。 */
     private const val ERR_SEC_MISSING_ENTITLEMENT = -34018
@@ -77,7 +79,7 @@ actual object SecretStore {
             // 只记状态不记 service/account：避免把 host id 与凭据类型的映射写进系统日志
             NSLog("Termish-KEYCHAIN get status=$status")
             if (status != errSecSuccess) {
-                if (status == ERR_SEC_MISSING_ENTITLEMENT) {
+                if (status == ERR_SEC_MISSING_ENTITLEMENT && Platform.isDebugBinary) {
                     NSLog("Termish-KEYCHAIN get fallback to file (missing entitlement)")
                     return@withCfRetain fallbackRead(account)
                 }
@@ -115,7 +117,7 @@ actual object SecretStore {
             val add = SecItemAdd(attrs, null)
             CFBridgingRelease(attrs)
             NSLog("Termish-KEYCHAIN set add=$add")
-            if (add == ERR_SEC_MISSING_ENTITLEMENT) {
+            if (add == ERR_SEC_MISSING_ENTITLEMENT && Platform.isDebugBinary) {
                 NSLog("Termish-KEYCHAIN set fallback to file (missing entitlement)")
                 fallbackWrite(account, value)
             }
@@ -136,7 +138,7 @@ actual object SecretStore {
             val del = SecItemDelete(query)
             CFBridgingRelease(query)
             NSLog("Termish-KEYCHAIN delete status=$del")
-            if (del == ERR_SEC_MISSING_ENTITLEMENT) {
+            if (del == ERR_SEC_MISSING_ENTITLEMENT && Platform.isDebugBinary) {
                 fallbackDelete(account)
             }
         }
@@ -144,8 +146,8 @@ actual object SecretStore {
 
     // ---------- 沙盒文件兜底 ----------
     // Keychain 需要 keychain-access-groups entitlement；CLI 构建/未签名的模拟器包
-    // 会返回 -34018（errSecMissingEntitlement）。此时退到 app 私有目录存储，
-    // 便于开发调试；正式签名（Xcode/真机）后自动走 Keychain，不会用到这段。
+    // 会返回 -34018（errSecMissingEntitlement）。仅 debug 退到 app 私有目录存储，
+    // 便于开发调试；release 严格 fail-closed，不会把凭据明文落盘。
 
     private fun fallbackDir(): String {
         val docs =

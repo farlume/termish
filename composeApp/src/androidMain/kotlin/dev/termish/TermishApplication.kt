@@ -1,18 +1,29 @@
 package dev.termish
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.Application
 import android.content.Context
+import java.lang.ref.WeakReference
 import java.security.Security
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 /** 进程级 Application Context（用于无参 expect 存储）。 */
+@SuppressLint("StaticFieldLeak") // 字段只保存 c.applicationContext，与进程同生命周期。
 object AppContext {
-    @Volatile private var context: Context? = null
+    // 只持有 applicationContext；生命周期与进程一致，不会泄漏 Activity。
+    @Volatile
+    private var context: Context? = null
 
     /** 当前前台 Activity（haptic/权限请求等需要 Activity 上下文时使用；null = 无）。 */
-    @Volatile
-    var currentActivity: Activity? = null
+    @Volatile private var activityRef = WeakReference<Activity>(null)
+
+    val currentActivity: Activity?
+        get() = activityRef.get()
+
+    fun setCurrentActivity(activity: Activity?) {
+        activityRef = WeakReference(activity)
+    }
 
     fun init(c: Context) {
         context = c.applicationContext

@@ -18,6 +18,10 @@ compose.resources {
 }
 
 kotlin {
+    compilerOptions {
+        // expect/actual class declarations are intentional KMP seams in this project.
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_17)
@@ -98,6 +102,9 @@ kotlin {
             implementation(libs.multiplatform.settings)
             implementation(libs.multiplatform.settings.noarg)
             implementation(libs.androidx.lifecycle.viewmodel)
+            implementation(libs.markdown.renderer)
+            implementation(libs.markdown.renderer.code)
+            implementation(libs.markdown.renderer.m3)
         }
 
         androidMain.dependencies {
@@ -107,9 +114,6 @@ kotlin {
             implementation(libs.bouncycastle.prov)
             implementation(libs.bouncycastle.pkix)
             implementation(libs.okhttp)
-            implementation(libs.androidx.media3.exoplayer)
-            implementation(libs.androidx.media3.ui)
-            implementation(libs.nanohttpd)
         }
 
         commonTest.dependencies {
@@ -136,7 +140,7 @@ compose.desktop.application {
     nativeDistributions {
         targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
         packageName = "Termish"
-        packageVersion = "1.6.4"
+        packageVersion = "1.7.0"
         macOS {
             iconFile.set(project.file("src/desktopMain/resources/icon.icns"))
         }
@@ -217,8 +221,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 33
-        versionName = "1.6.4"
+        versionCode = 34
+        versionName = "1.7.0"
     }
     packaging {
         resources {
@@ -228,6 +232,9 @@ android {
             excludes += "/META-INF/*.SF"
             excludes += "/META-INF/*.RSA"
             excludes += "/META-INF/DEPENDENCIES"
+            // SSH 仅使用 BC 的经典密钥/证书算法；Picnic 后量子参数资源约 1.2MB，
+            // R8 不会自动移除 jar resource，显式排除可缩小 APK 且不影响 SSH。
+            excludes += "/org/bouncycastle/pqc/crypto/picnic/*.properties"
         }
     }
     buildTypes {

@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PhoneIphone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -152,6 +153,7 @@ fun HostListScreen(
     onConnectBatch: (List<Host>) -> Unit,
     onDisconnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
+    onAgents: (Host) -> Unit,
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: (Host) -> Unit,
@@ -334,6 +336,7 @@ fun HostListScreen(
                                 if (!selectionMode) enterSelection(host)
                             },
                             onNewSession = { onConnect(host) },
+                            onAgents = { onAgents(host) },
                             onOpenSession = onOpenSession,
                             onOpenSftp = onOpenSftp,
                             onCloseAllSessions = { onCloseAllSessions(host) },
@@ -451,6 +454,7 @@ private fun HostCard(
     onAvatarClick: () -> Unit,
     onLongClick: () -> Unit,
     onNewSession: () -> Unit,
+    onAgents: () -> Unit,
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
     onCloseAllSessions: () -> Unit,
@@ -610,15 +614,24 @@ private fun HostCard(
                         )
                     }
                 }
-            } else if (sessions.isNotEmpty()) {
-                // 全部会话数 + 下拉：新建连接 / 重入会话（含断开，带状态标注）/ 全部关闭
-                SessionCountMenu(
-                    sessions = sessions,
-                    onConnect = onNewSession,
-                    onOpenTerminal = onOpenSession,
-                    onOpenSftp = onOpenSftp,
-                    onCloseAll = onCloseAllSessions,
-                )
+            } else {
+                if (sessions.isNotEmpty()) {
+                    // 会话数放在 Agent 入口左侧，让机器人图标始终对齐卡片右边界。
+                    SessionCountMenu(
+                        sessions = sessions,
+                        onConnect = onNewSession,
+                        onOpenTerminal = onOpenSession,
+                        onOpenSftp = onOpenSftp,
+                        onCloseAll = onCloseAllSessions,
+                    )
+                }
+                IconButton(onClick = onAgents) {
+                    Icon(
+                        Icons.Default.SmartToy,
+                        contentDescription = s.nativeAgents.menuLabel,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
     }

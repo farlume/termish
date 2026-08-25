@@ -120,21 +120,41 @@ internal class SessionConnector(
         connect(c.lastCols, c.lastRows)
     }
 
-    private fun newConnection() =
-        SshConnection(
+    private fun newConnection(): SshConnection {
+        val settings = c.repository.loadSettings()
+        return SshConnection(
             host = c.host.hostname,
             port = c.host.port,
             username = c.host.username,
             password = c.password,
             privateKeyPem = c.privateKeyPem,
-            keepAliveSeconds = c.repository.loadSettings().keepaliveSeconds,
-            terminalType = c.repository.loadSettings().terminalType,
+            keepAliveSeconds = settings.keepaliveSeconds,
+            terminalType = settings.terminalType,
             // 重连场景网络多半已断：TCP 超时从 15s 缩短到 5s——
             // 否则 3 次重连 × 15s ≈ 1 分钟「连接中」（用户感知卡死）
             connectTimeoutMillis = if (c.reconnectAttempts > 0) 5_000 else 15_000,
         )
+    }
+
+    private fun isCurrentGeneration(generation: Int): Boolean = c.connectionGeneration == generation && c.status != ConnStatus.CLOSED
+
+    private fun isCurrentSession(
+        generation: Int,
+        session: SshSession,
+    ): Boolean = isCurrentGeneration(generation) && c.session === session
+
+    /** 释放已被断开/新建连取代的会话，不影响当前代的 session 引用。 */
+    private fun closeStaleSession(session: SshSession) {
+        if (c.session === session) c.session = null
+        try {
+            session.close()
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "stale session close failed ${c.host.name}: ${e.message}" }
+        }
+    }
 
     private fun doConnect() {
+        val generation = ++c.connectionGeneration
         val t0 = c.nowMs()
         TermLog.i("ssh") {
             "connect start ${c.host.name} ${c.host.hostname}:${c.host.port} mode=${c.host.connectionMode} attempt=${c.reconnectAttempts} timeout=${newConnection().connectTimeoutMillis}ms"
@@ -151,23 +171,29 @@ internal class SessionConnector(
         c.status = ConnStatus.CONNECTING
         c.scope.launch {
             try {
+                if (!isCurrentGeneration(generation)) return@launch
                 when (c.host.connectionMode) {
                     ConnectionMode.MOSH -> {
-                        doConnectMosh()
+                        doConnectMosh(generation = generation)
                         return@launch
                     }
                     ConnectionMode.SSH -> {}
                 }
                 val s = c.sessionFactory(newConnection(), c.callbacks(trace))
+                if (!isCurrentGeneration(generation)) {
+                    closeStaleSession(s)
+                    return@launch
+                }
                 c.session = s
+                // sessionFactory 返回与登记之间也可能发生断开/重连。
+                if (!isCurrentSession(generation, s)) {
+                    closeStaleSession(s)
+                    return@launch
+                }
                 val info = s.connectAndStart(c.lastCols, c.lastRows)
-                // 连接期间用户可能已关闭会话：不能置 CONNECTED，且必须释放刚建好的连接
-                if (c.status == ConnStatus.CLOSED) {
-                    c.session = null
-                    try {
-                        s.close()
-                    } catch (_: Exception) {
-                    }
+                // 连接期间可能已断开或开始了新一代：旧代不能置 CONNECTED。
+                if (!isCurrentSession(generation, s)) {
+                    closeStaleSession(s)
                     return@launch
                 }
                 // TOFU：记录主机指纹
@@ -182,17 +208,17 @@ internal class SessionConnector(
                     if (probed == null) {
                         TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
                         c.herdrNeedsInstall = true
-                        finishConnected(s, sendStartup = false)
+                        finishConnected(s, generation, sendStartup = false)
                         return@launch
                     }
                     c.herdrBin = probed.bin
                     TermLog.i("herdr") { "herdr probe ok ${c.host.name} bin=${probed.bin}" }
                 }
-                finishConnected(s)
+                finishConnected(s, generation)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e // 协程取消不是连接失败：不置 ERROR、不停保活
             } catch (e: Exception) {
-                if (c.status != ConnStatus.CLOSED) {
+                if (isCurrentGeneration(generation)) {
                     val elapsed = c.nowMs() - t0
                     trace.fail(e.message)
                     if (elapsed > 10_000) {
@@ -254,23 +280,33 @@ internal class SessionConnector(
      *
      * @param existingSession 复用已认证连接（安装引导后续连；null = 自建）
      */
-    private suspend fun doConnectMosh(existingSession: SshSession? = null) {
+    private suspend fun doConnectMosh(
+        existingSession: SshSession? = null,
+        generation: Int = c.connectionGeneration,
+    ) {
         val t0 = c.nowMs()
         try {
+            if (!isCurrentGeneration(generation)) return
             // 1. SSH 连接 + shell（引导通道；降级时变显示通道，Mosh 成功时关闭）
             val s = existingSession ?: c.sessionFactory(newConnection(), c.callbacks())
             if (existingSession == null) {
+                if (!isCurrentGeneration(generation)) {
+                    closeStaleSession(s)
+                    return
+                }
                 c.session = s
+                if (!isCurrentSession(generation, s)) {
+                    closeStaleSession(s)
+                    return
+                }
                 val info = s.connectAndStart(c.lastCols, c.lastRows)
-                if (c.status == ConnStatus.CLOSED) {
-                    c.session = null
-                    try {
-                        s.close()
-                    } catch (_: Exception) {
-                    }
+                if (!isCurrentSession(generation, s)) {
+                    closeStaleSession(s)
                     return
                 }
                 info.hostKey?.let { c.repository.touchConnected(c.host.id, it.fingerprintSha256) }
+            } else if (!isCurrentSession(generation, s)) {
+                return
             }
 
             // UDP 不通降级过的会话条目（moshDegradedToSsh）：不再重试 mosh 引导
@@ -279,12 +315,16 @@ internal class SessionConnector(
             if (c.moshDegradedToSsh) {
                 TermLog.i("mosh") { "mosh degraded earlier ${c.host.name}——重连直走 ssh（跳过 mosh 引导）" }
                 if (!ensureHerdrProbed(s)) return // 缺失 → 安装卡片（finishConnected 已置 CONNECTED）
-                finishConnected(s)
+                finishConnected(s, generation)
                 return
             }
 
             // herdr 工作台：引导前探测（缺失 → 安装卡片，SSH 显示通道保留）
             if (!ensureHerdrProbed(s)) return
+            if (!isCurrentSession(generation, s)) {
+                closeStaleSession(s)
+                return
+            }
             val bootstrapExtra =
                 if (c.host.launchHerdr) {
                     " -- ${shSingleQuote(c.herdrBin ?: "herdr")}"
@@ -304,6 +344,10 @@ internal class SessionConnector(
             val bootstrap = "$baseBootstrap 2>&1; $SYSTEM_PROBE_COMMAND"
             TermLog.i("mosh") { "bootstrap ${c.host.name}: $baseBootstrap" }
             val raw = s.runCommand(bootstrap, 5_000)
+            if (!isCurrentSession(generation, s)) {
+                closeStaleSession(s)
+                return
+            }
             val parsed = raw?.let { parseMoshConnect(it) }
             detectSystemFromOutput(raw ?: "")?.takeIf { it.isNotBlank() }?.let { detected ->
                 if (c.host.system.isBlank()) {
@@ -337,7 +381,7 @@ internal class SessionConnector(
                 // 立即断言 moshNeedsInstall 的测试不会看到中间帧）
                 c.moshNeedsInstall = true
                 c.moshInstallReason = if (missing) null else reason
-                finishConnected(s, sendStartup = false)
+                finishConnected(s, generation, sendStartup = false)
                 return
             }
             val (moshPort, moshKey) = parsed
@@ -359,31 +403,46 @@ internal class SessionConnector(
                     rows = c.lastRows,
                     scope = c.scope,
                     uiBuffer = c.buffer,
-                    onTitle = { t -> c.title = t },
+                    onTitle = { t -> if (isCurrentGeneration(generation)) c.title = t },
                     onClipboard = { text ->
-                        if (c.repository.loadSettings().osc52Clipboard) c.onRemoteClipboard?.invoke(text)
+                        if (isCurrentGeneration(generation) && c.repository.loadSettings().osc52Clipboard) {
+                            c.onRemoteClipboard?.invoke(text)
+                        }
                     },
-                    onExit = { reason -> handleMoshExit(reason) },
-                    onFrame = { c.frame++ },
+                    onExit = { reason -> handleMoshExit(reason, generation) },
+                    onFrame = { if (isCurrentGeneration(generation)) c.frame++ },
                     onPeerConnected = {
                         peerReady.complete(Unit)
-                        c.moshSession?.let { onMoshConnected(it) }
+                        c.moshSession?.let { onMoshConnected(it, generation) }
                     },
                     onLinkStatus = { secs ->
-                        if (secs >= LINK_LOST_THRESHOLD_SECONDS && c.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
-                            TermLog.w("mosh") { "link lost ${c.host.name} ${secs}s" }
+                        if (isCurrentGeneration(generation)) {
+                            if (secs >= LINK_LOST_THRESHOLD_SECONDS && c.linkLostSeconds < LINK_LOST_THRESHOLD_SECONDS) {
+                                TermLog.w("mosh") { "link lost ${c.host.name} ${secs}s" }
+                            }
+                            c.linkLostSeconds = secs
                         }
-                        c.linkLostSeconds = secs
                     },
                 )
+            if (!isCurrentSession(generation, s)) {
+                client.close()
+                closeStaleSession(s)
+                return
+            }
             c.moshSession = client
             TermLog.i("mosh") { "mosh client started ${c.host.name} cols=${c.lastCols}x${c.lastRows}" }
-            if (c.status == ConnStatus.CLOSED) {
+            if (!isCurrentSession(generation, s)) {
                 c.moshSession = null
                 client.close()
                 return
             }
             val udpOk = withTimeoutOrNull(MOSH_UDP_CONFIRM_MS) { peerReady.await() }
+            if (!isCurrentSession(generation, s)) {
+                if (c.moshSession === client) c.moshSession = null
+                client.close()
+                closeStaleSession(s)
+                return
+            }
             if (udpOk == null && c.status != ConnStatus.CONNECTED) {
                 // 3c. 引导成功但 UDP 首包超时 = mosh 连接失败：降级到 SSH
                 // （SSH 引导通道还活着，直接当显示通道；UDP 不通是真实故障但
@@ -395,7 +454,7 @@ internal class SessionConnector(
                 // UDP 不通是环境性阻断：标记本会话条目后续重连直走 SSH，
                 // 不再重试 mosh（新开会话才会重新尝试）
                 c.moshDegradedToSsh = true
-                finishConnected(s)
+                finishConnected(s, generation)
                 showDegradeNotice(strings().moshUdpDegraded)
                 TermLog.i("mosh") { "mosh degraded-to-ssh ${c.host.name} in ${c.nowMs() - t0}ms" }
                 return
@@ -415,7 +474,7 @@ internal class SessionConnector(
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            if (c.status != ConnStatus.CLOSED) {
+            if (isCurrentGeneration(generation)) {
                 TermLog.e("mosh") { "mosh connect failed ${c.host.name}: ${e.message}" }
                 c.status = ConnStatus.ERROR
                 c.errorMessage = e.message
@@ -465,7 +524,7 @@ internal class SessionConnector(
         if (probed == null) {
             TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
             c.herdrNeedsInstall = true
-            finishConnected(s, sendStartup = false)
+            finishConnected(s, c.connectionGeneration, sendStartup = false)
             return false
         }
         c.herdrBin = probed.bin
@@ -752,8 +811,13 @@ internal class SessionConnector(
     /** 连接收尾（Mosh 降级 / SSH 共用）：CONNECTED + 保活 + 免疫期 + 系统探测。 */
     private fun finishConnected(
         s: SshSession,
+        generation: Int,
         sendStartup: Boolean = true,
     ) {
+        if (!isCurrentSession(generation, s)) {
+            closeStaleSession(s)
+            return
+        }
         c.status = ConnStatus.CONNECTED
         // 静默检测起点：从连接完成算起。MOTD 已打完 → 250ms 后注入 herdr；
         // 还在打 → lastOutputAtMs 被消费循环持续刷新，等它打完再注入。
@@ -841,7 +905,11 @@ internal class SessionConnector(
         }
     }
 
-    fun handleMoshExit(reason: MoshExitReason) {
+    fun handleMoshExit(
+        reason: MoshExitReason,
+        generation: Int = c.connectionGeneration,
+    ) {
+        if (generation != c.connectionGeneration) return
         TermLog.w("mosh") { "mosh exit ${c.host.name} reason=$reason status=${c.status}" }
         if (c.status == ConnStatus.CONNECTED) {
             c.moshSession = null
@@ -879,8 +947,11 @@ internal class SessionConnector(
         }
 
     /** mosh 会话真正建立后的统一收尾（收到对端首包时回调）。 */
-    private fun onMoshConnected(client: MoshSession) {
-        if (c.status == ConnStatus.CLOSED) { // 等待首包期间用户已关闭
+    private fun onMoshConnected(
+        client: MoshSession,
+        generation: Int,
+    ) {
+        if (!isCurrentGeneration(generation) || c.moshSession !== client) { // 已关闭或被新代取代
             client.close()
             return
         }
@@ -994,15 +1065,13 @@ internal class SessionConnector(
         // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
         // 的漫游能力）。只有客户端异常退出（onExit）才走自动重连。
         if (c.moshSession != null) return
-        // 网络完全丢失（飞行模式等）：TCP 悬挂时 keepalive 写缓冲吸收、读不到
-        // EOF，连接会长期显示绿色——主动断开让状态正确，并触发 onClosed 的
-        // 退避重连（网络未恢复时失败 → 灰点 + 后台通知；恢复后回前台自动重连）
+        // 单独收到 LOST 不主动拆 SSH：部分 Android ROM 在 App 退后台数秒后会
+        // 暂时撤销默认网络回调，但已有 TCP socket 和前台服务仍然有效。此时关
+        // session 会造成“切其他 App，回来必重新连接”。真正的网络切换由后续
+        // TRANSPORT_CHANGED 处理；socket 确实死亡则 reader/onClosed 自行重连。
+        // 这也允许短暂 Wi-Fi 中断后在 IP 未变化时沿用原 TCP 连接。
         if (kind == NetworkChangeKind.LOST) {
-            if (c.status == ConnStatus.CONNECTED) {
-                TermLog.w("net") { "LOST: force close ${c.host.name}（TCP 悬挂时主动断开）" }
-                c.reconnectAttempts = 0
-                c.session?.close()
-            }
+            TermLog.i("net") { "LOST: keep socket ${c.host.name}, wait for transport change or onClosed" }
             return
         }
         val now = c.nowMs()

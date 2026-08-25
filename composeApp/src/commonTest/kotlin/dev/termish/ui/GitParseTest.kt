@@ -196,6 +196,14 @@ class GitParseTest {
     }
 
     @Test
+    fun chainedGitCommandsStayInSelectedDirectory() {
+        assertEquals(
+            "cd '/work/my repo' && git add -A && git commit -m 'done'",
+            gitCommandInDirectory("/work/my repo", "git add -A && git commit -m 'done'"),
+        )
+    }
+
+    @Test
     fun unescapePorcelain() {
         assertEquals("plain", unescapePorcelainPath("plain"))
         assertEquals("a b.txt", unescapePorcelainPath("\"a b.txt\""))
