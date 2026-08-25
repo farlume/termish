@@ -144,6 +144,27 @@ private object AuxCallbacks : SshCallbacks {
 }
 
 /**
+ * Git 命令执行器抽象：面板只依赖该契约，不绑定具体会话形态。
+ * 两种实现：
+ * - [TerminalGitCommandRunner]：终端页（SSH 复用已认证连接 / mosh 控制面连接）
+ * - [AgentGitCommandRunner]：Agent 对话页（复用 Agent Bridge 控制连接，
+ *   工作目录直接取 Agent 会话 cwd——agent 正在操作的项目目录）
+ */
+internal interface GitCommandRunner {
+    /** 工作目录（执行前 `cd` 定位；refresh 时探测/设置）。 */
+    var workdir: String?
+
+    /** 探测工作目录；不可得返回 null（命令不执行，面板内报错）。 */
+    suspend fun fetchWorkdir(): String?
+
+    /** 执行 git 命令并返回完整输出（已 strip ANSI）；失败抛 [GitCommandException] / [GitWorkdirUnknownException] / [GitTimeoutException]。 */
+    suspend fun run(
+        command: String,
+        timeoutMs: Long = GIT_TIMEOUT_MS,
+    ): String
+}
+
+/**
  * 终端 git 命令执行器——**绝不向交互终端注入命令**，按会话模式选独立通道：
  *
  * - **SSH/herdr**：`SshSession.runCommand` 独立 exec 通道（复用已认证连接、
@@ -155,22 +176,22 @@ private object AuxCallbacks : SshCallbacks {
  * 工作目录由 [fetchWorkdir] 探测；探测不到时抛 [GitWorkdirUnknownException]
  * （面板内报错，终端画面零污染）。
  */
-internal class GitCommandRunner(
+internal class TerminalGitCommandRunner(
     private val controller: TerminalController,
-) {
+) : GitCommandRunner {
     /** herdr 工作台开关开启：cwd 优先走 herdr snapshot（焦点 pane 的工作区）。
      *  herdr 重构后不再是独立连接模式（Host.launchHerdr），探测路径不变。 */
     val herdrMode: Boolean get() = controller.host.launchHerdr && controller.herdrBin != null
 
-    /** 工作目录（独立 exec 通道用 `git -C` 定位；refresh 时探测，见 [fetchWorkdir]）。 */
-    var workdir: String? = null
+    /** 工作目录（独立 exec 通道先 `cd` 定位；refresh 时探测，见 [fetchWorkdir]）。 */
+    override var workdir: String? = null
 
     /** 复用已认证连接的 exec 通道（SSH/herdr 模式）。 */
     private val execSession: SshSession?
         get() = controller.session?.takeIf { it.isActive() }
 
     /**
-     * 探测 Git 工作目录（独立通道的 `git -C` 定位），按模式分层：
+     * 探测 Git 工作目录（独立通道执行前 `cd` 定位），按模式分层：
      * 1. herdr：`herdr api snapshot` 焦点 pane 的 cwd（agent 正在改代码的目录）
      * 2. tmux：`tmux display-message -p '#{pane_current_path}'`（tmux 守护进程
      *    可从任意进程查询焦点 pane 路径——agent 工作流标准做法）
@@ -183,7 +204,7 @@ internal class GitCommandRunner(
      * 拿不到返回 null（调用方报错——**不回退到交互终端注入命令**）。
      * mosh 模式（SSH 引导通道已关）：探测走控制面连接（connectAndRun）。
      */
-    suspend fun fetchWorkdir(): String? {
+    override suspend fun fetchWorkdir(): String? {
         if (herdrMode) {
             return withContext(ioDispatcher()) {
                 val bin = controller.herdrBin?.let { shellQuote(it) } ?: "herdr"
@@ -312,7 +333,7 @@ internal class GitCommandRunner(
 
     /**
      * 执行 [command] 并返回完整输出（已 strip ANSI）——**绝不注入交互终端**：
-     * 1. **独立 exec 通道**：复用已认证连接（SSH/herdr）跑 `git -C <cwd>`——
+     * 1. **独立 exec 通道**：复用已认证连接（SSH/herdr）先切到 `<cwd>`——
      *    命令不进交互终端，画面零污染（业界标准：VS Code Remote-SSH 的 git
      *    操作同样走独立 exec channel）。
      * 2. **mosh 控制面连接**（mosh 的 SSH 引导通道已关）：懒建独立 SSH 连接
@@ -320,9 +341,9 @@ internal class GitCommandRunner(
      * 工作目录未知时抛 [GitWorkdirUnknownException]（面板内报错；herdr 模式
      * 抛 [GitCommandException]，禁止注入 herdr/pi 输入框）。
      */
-    suspend fun run(
+    override suspend fun run(
         command: String,
-        timeoutMs: Long = GIT_TIMEOUT_MS,
+        timeoutMs: Long,
     ): String {
         val dir =
             workdir ?: run {
@@ -330,14 +351,14 @@ internal class GitCommandRunner(
                 if (herdrMode) throw GitCommandException("无法获取 herdr 工作区（snapshot 失败）")
                 throw GitWorkdirUnknownException()
             }
-        val full = "git -C ${shellQuote(dir)} ${command.removePrefix("git ")}"
+        val full = gitCommandInDirectory(dir, command)
         // 1) 独立 exec 通道：复用已认证连接（SSH/herdr）
         val session = execSession
         if (session != null) {
             TermLog.d("git") { "run exec cwd=$dir cmd=$full" }
             return withContext(ioDispatcher()) {
                 session.runCommand(full, timeoutMs) ?: throw GitTimeoutException()
-            }.let { stripAnsi(it) }
+            }.let { stripAnsiOutput(it) }
         }
         // 2) mosh 控制面连接：SSH 引导通道已关，懒建独立连接（mosh 官方架构）
         if (controller.moshSession != null) {
@@ -355,7 +376,7 @@ internal class GitCommandRunner(
                     } catch (_: Exception) {
                     }
                 }
-            }.let { stripAnsi(it) }
+            }.let { stripAnsiOutput(it) }
         }
         // 断连竞态等极端情况：exec/mosh 通道都不可用
         throw GitWorkdirUnknownException()
@@ -371,18 +392,49 @@ internal class GitCommandRunner(
         while (end > 0 && sb[end - 1] == ' ') end--
         return sb.substring(0, end)
     }
+}
 
-    /** 清除输出中残留的 ANSI 转义（git color.ui 已强制关闭，双保险）。 */
-    private fun stripAnsi(s: String): String {
-        if ('\u001b' !in s) return s
-        return ANSI_ESCAPE_REGEX.replace(s, "")
+/**
+ * Agent 对话页的 git 执行器：复用 Agent Bridge 的控制连接跑独立 exec 通道
+ * （不注入、不干扰正在运行的 agent），工作目录 = Agent 会话 cwd
+ * （agent 正在操作的项目目录，比提示符探测更准）。
+ */
+internal class AgentGitCommandRunner(
+    private val controller: dev.termish.agent.AgentBridgeController,
+) : GitCommandRunner {
+    override var workdir: String? = null
+
+    override suspend fun fetchWorkdir(): String? {
+        val cwd = controller.currentSession?.cwd?.takeIf { it.isNotBlank() }
+        workdir = cwd
+        return cwd
     }
 
-    companion object {
-        // SGR/CSI 与 OSC 序列（双保险：终端渲染前可能未完全消费的残片）
-        private val ANSI_ESCAPE_REGEX = Regex("\u001b\\[[0-9;?]*[a-zA-Z]|\u001b\\][^\u0007]*\u0007")
+    override suspend fun run(
+        command: String,
+        timeoutMs: Long,
+    ): String {
+        val dir = workdir ?: throw GitWorkdirUnknownException()
+        val full = gitCommandInDirectory(dir, command)
+        val out = controller.runRemoteCommand(full, timeoutMs) ?: throw GitTimeoutException()
+        return stripAnsiOutput(out)
     }
 }
+
+/** 整条命令链都在仓库目录执行；`git -C` 只能约束第一个 `git`，无法覆盖 `&& git …`。 */
+internal fun gitCommandInDirectory(
+    directory: String,
+    command: String,
+): String = "cd ${shellQuote(directory)} && $command"
+
+/** 清除输出中残留的 ANSI 转义（git color.ui 已强制关闭，双保险）。 */
+private fun stripAnsiOutput(s: String): String {
+    if ('\u001b' !in s) return s
+    return ANSI_ESCAPE_REGEX.replace(s, "")
+}
+
+// SGR/CSI 与 OSC 序列（双保险：终端渲染前可能未完全消费的残片）
+private val ANSI_ESCAPE_REGEX = Regex("\u001b\\[[0-9;?]*[a-zA-Z]|\u001b\\][^\u0007]*\u0007")
 
 /** Git 状态徽章配色：贴合终端 ANSI 语义（修改=黄，新增=绿，删除=红…）。 */
 private fun statusColor(
@@ -410,8 +462,12 @@ private fun statusColor(
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun GitOverlay(
-    controller: TerminalController,
+internal fun GitOverlay(
+    /** 会话是否已连接（终端页：SSH/Mosh CONNECTED；Agent 页：Bridge READY）。 */
+    connected: Boolean,
+    /** 终端是否处于全屏程序（vim/tmux）备用屏（面板不注入 TUI）；Agent 页恒为 false。 */
+    inAltScreen: Boolean,
+    runner: GitCommandRunner,
     theme: TerminalTheme,
     /** 面板打开状态（由调用方持有，供 FAB 与工具栏溢出面板共用）。 */
     open: Boolean,
@@ -423,7 +479,7 @@ fun GitOverlay(
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
-    val runner = remember(controller) { GitCommandRunner(controller) }
+    if (!connected) return
 
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -440,9 +496,6 @@ fun GitOverlay(
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
-    val connected = controller.status == ConnStatus.CONNECTED
-    if (!connected) return
-
     // 面板打开时拦截系统返回：先关面板，不直接退回首页。
     // 注意：ModalBottomSheet 是 Dialog 窗口，BACK 由 Dialog 消费（关闭面板），
     // 不会到这里；diff 页返回由页内 ← 按钮处理（回状态页）
@@ -451,8 +504,6 @@ fun GitOverlay(
     // Git 命令走独立 exec 通道（复用已认证连接 / mosh 控制面连接），不注入
     // 交互终端——vim/tmux 全屏程序下也可用（命令不进 TUI）。探测不到工作
     // 目录时面板内报错（全屏程序中提示先退出）。
-    val inAltScreen = controller.buffer.altScreen
-
     fun friendly(raw: String): String =
         when {
             raw.contains("not a git repository") -> s.git.notRepo

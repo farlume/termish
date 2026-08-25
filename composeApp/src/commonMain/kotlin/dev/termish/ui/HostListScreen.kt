@@ -614,23 +614,17 @@ private fun HostCard(
                         )
                     }
                 }
-            } else if (sessions.isNotEmpty()) {
-                IconButton(onClick = onAgents) {
-                    Icon(
-                        Icons.Default.SmartToy,
-                        contentDescription = s.nativeAgents.menuLabel,
-                        tint = MaterialTheme.colorScheme.primary,
+            } else {
+                if (sessions.isNotEmpty()) {
+                    // 会话数放在 Agent 入口左侧，让机器人图标始终对齐卡片右边界。
+                    SessionCountMenu(
+                        sessions = sessions,
+                        onConnect = onNewSession,
+                        onOpenTerminal = onOpenSession,
+                        onOpenSftp = onOpenSftp,
+                        onCloseAll = onCloseAllSessions,
                     )
                 }
-                // 全部会话数 + 下拉：新建连接 / 重入会话（含断开，带状态标注）/ 全部关闭
-                SessionCountMenu(
-                    sessions = sessions,
-                    onConnect = onNewSession,
-                    onOpenTerminal = onOpenSession,
-                    onOpenSftp = onOpenSftp,
-                    onCloseAll = onCloseAllSessions,
-                )
-            } else {
                 IconButton(onClick = onAgents) {
                     Icon(
                         Icons.Default.SmartToy,

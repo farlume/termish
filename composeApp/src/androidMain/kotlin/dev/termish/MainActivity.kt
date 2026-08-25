@@ -17,7 +17,6 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
-        AppContext.currentActivity = this
         // 通知「重新连接」动作（singleTop：App 存活时走 onNewIntent）
         dev.termish.notify.handleNotificationIntent(intent)
         setContent {
@@ -30,8 +29,18 @@ class MainActivity : ComponentActivity() {
         dev.termish.notify.handleNotificationIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        AppContext.setCurrentActivity(this)
+    }
+
+    override fun onPause() {
+        if (AppContext.currentActivity === this) AppContext.setCurrentActivity(null)
+        super.onPause()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        if (AppContext.currentActivity === this) AppContext.currentActivity = null
+        if (AppContext.currentActivity === this) AppContext.setCurrentActivity(null)
     }
 }

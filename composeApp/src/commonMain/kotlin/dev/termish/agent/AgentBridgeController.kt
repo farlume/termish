@@ -36,10 +36,58 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-private const val BRIDGE_PROTOCOL_VERSION = 2
-private const val MINIMUM_BRIDGE_VERSION = "0.4.0"
+private const val BRIDGE_PROTOCOL_VERSION = 3
+private const val MINIMUM_BRIDGE_VERSION = "0.7.7"
 private const val REMOTE_BRIDGE = "\$HOME/.local/share/termish-agent/current/termish-agent.pyz"
 private const val REQUEST_TIMEOUT_MS = 20_000L
+
+internal data class AgentEventCursor(
+    val epoch: String,
+    val sequence: Long,
+)
+
+internal enum class AgentEventDecision { APPLY, DUPLICATE, GAP, RESET }
+
+internal fun classifyAgentEvent(
+    cursor: AgentEventCursor?,
+    epoch: String,
+    sequence: Long,
+): AgentEventDecision =
+    when {
+        epoch.isBlank() || sequence <= 0L -> AgentEventDecision.APPLY
+        cursor == null || cursor.epoch != epoch -> AgentEventDecision.RESET
+        sequence <= cursor.sequence -> AgentEventDecision.DUPLICATE
+        sequence != cursor.sequence + 1L -> AgentEventDecision.GAP
+        else -> AgentEventDecision.APPLY
+    }
+
+/** prompt.send 的响应交接闸门；同一 SSH reader 内保持事件原始到达顺序。 */
+internal class AgentPromptEventBuffer {
+    private val queues = mutableMapOf<String, MutableList<JsonObject>>()
+
+    fun begin(sessionId: String) {
+        queues.getOrPut(sessionId, ::mutableListOf)
+    }
+
+    fun enqueue(
+        sessionId: String?,
+        envelope: JsonObject,
+    ): Boolean {
+        val queue = sessionId?.let(queues::get) ?: return false
+        queue += envelope
+        return true
+    }
+
+    fun drain(sessionId: String): List<JsonObject> = queues.remove(sessionId).orEmpty()
+
+    fun discard(sessionId: String) {
+        queues.remove(sessionId)
+    }
+
+    fun clear() {
+        queues.clear()
+    }
+}
 
 /**
  * 主机级原生 Agent 控制器。
@@ -65,11 +113,28 @@ class AgentBridgeController(
         private set
     var sessions by mutableStateOf<List<AgentBridgeSessionInfo>>(emptyList())
         private set
+    var nativeSessions by mutableStateOf<List<AgentNativeSessionInfo>>(emptyList())
+        private set
+    var nativeHistoryLoading by mutableStateOf(false)
+        private set
+    var nativeHistoryImportingId by mutableStateOf<String?>(null)
+        private set
     var currentSession by mutableStateOf<AgentBridgeSessionInfo?>(null)
         private set
     var messages by mutableStateOf<List<AgentChatMessage>>(emptyList())
         private set
+    var pendingApprovals by mutableStateOf<List<AgentApprovalRequest>>(emptyList())
+        private set
     var busy by mutableStateOf(false)
+        private set
+
+    /**
+     * 仅标记由当前页面本次发送启动的 turn。
+     *
+     * 它与 [busy] 分离：历史会话可能仍处于远端运行/恢复状态，但加载已有消息时
+     * 不应重新播放打字机动画。
+     */
+    var activeLocalTurnId by mutableStateOf<String?>(null)
         private set
     var installStatus by mutableStateOf(AgentInstallStatus())
         private set
@@ -86,6 +151,18 @@ class AgentBridgeController(
     private var readBuffer = ByteArray(0)
     private var nextRequestId = 1
     private val pending = mutableMapOf<Int, CompletableDeferred<JsonObject>>()
+    private val eventCursors = mutableMapOf<String, AgentEventCursor>()
+    private val recoveringEventSessions = mutableSetOf<String>()
+    private val recoveryEventQueues = mutableMapOf<String, MutableList<JsonObject>>()
+
+    /**
+     * prompt.send 响应交给发送协程前，reader 仍可能继续消费同一批 NDJSON 事件。
+     * 以 session 为粒度暂存这些事件，等用户消息/快照就位后再按序应用。
+     */
+    private val promptEventBuffer = AgentPromptEventBuffer()
+    private var loadingSessionId: String? = null
+    private var sessionLoadToken = 0
+    private val sessionLoadEvents = mutableListOf<JsonObject>()
 
     fun connect() {
         if (state == AgentBridgeState.CONNECTING || state == AgentBridgeState.INSTALLING) return
@@ -150,14 +227,26 @@ class AgentBridgeController(
     }
 
     fun selectSession(id: String) {
+        activeLocalTurnId = null
+        val loadToken = ++sessionLoadToken
+        loadingSessionId = id
+        sessionLoadEvents.clear()
         scope.launch {
             try {
                 val result = request("sessions.get", buildJsonObject { put("sessionId", id) })
-                currentSession = parseSession(result)
-                busy = result.boolean("busy")
-                messages = result.array("messages").mapNotNull(::parseMessage)
+                if (loadToken != sessionLoadToken) return@launch
+                applySessionSnapshot(result)
+                val queued = sessionLoadEvents.toList()
+                loadingSessionId = null
+                sessionLoadEvents.clear()
+                queued.forEach { handleSequencedEnvelope(it) }
             } catch (e: Exception) {
-                errorMessage = e.message
+                if (loadToken == sessionLoadToken) errorMessage = e.message
+            } finally {
+                if (loadToken == sessionLoadToken) {
+                    loadingSessionId = null
+                    sessionLoadEvents.clear()
+                }
             }
         }
     }
@@ -198,6 +287,8 @@ class AgentBridgeController(
         if (busy || text.isBlank()) return
         busy = true
         scope.launch {
+            var sessionId: String? = null
+            var accepted = false
             try {
                 val params =
                     buildJsonObject {
@@ -207,17 +298,58 @@ class AgentBridgeController(
                         put("provider", provider.toJson())
                     }
                 val created = request("sessions.create", params)
-                val sessionId = created.string("sessionId")
-                refreshSessions()
+                sessionId = created.string("sessionId")
+                val session = parseSession(created)
+                beginPromptEventBuffer(sessionId)
+                request(
+                    "agents.check",
+                    buildJsonObject {
+                        put("sessionId", sessionId)
+                        put("provider", provider.toJson())
+                    },
+                )
+                val uploadedAttachments = uploadAttachments(session, attachments)
+                val result =
+                    request(
+                        "prompt.send",
+                        buildJsonObject {
+                            put("sessionId", sessionId)
+                            put("message", text)
+                            put("attachments", uploadedAttachments.toJson())
+                            put("provider", provider.toJson())
+                        },
+                    )
+                accepted = true
+                val turnId = result.string("turnId")
+                onAccepted()
                 val selected = request("sessions.get", buildJsonObject { put("sessionId", sessionId) })
-                currentSession = parseSession(selected)
-                messages = selected.array("messages").mapNotNull(::parseMessage)
-                busy = false
-                sendPromptInternal(text, attachments, provider, onAccepted)
+                applySessionSnapshot(selected)
+                activeLocalTurnId = turnId.takeIf { selected.boolean("busy") }
+                drainPromptEventBuffer(sessionId)
+                errorMessage = null
+                refreshSessions()
             } catch (e: Exception) {
                 busy = false
-                errorMessage = e.message
+                activeLocalTurnId = null
                 attachmentProgress = null
+                val message = e.message ?: "Prompt failed"
+                errorMessage = message
+                if (!accepted) {
+                    sessionId?.let { rejectedSessionId ->
+                        runCatching {
+                            request("sessions.delete", buildJsonObject { put("sessionId", rejectedSessionId) })
+                        }
+                        eventCursors.remove(rejectedSessionId)
+                        recoveringEventSessions.remove(rejectedSessionId)
+                        recoveryEventQueues.remove(rejectedSessionId)
+                        discardPromptEventBuffer(rejectedSessionId)
+                    }
+                    refreshSessions()
+                } else {
+                    sessionId?.let(::discardPromptEventBuffer)
+                    messages = messages + AgentChatMessage(role = "error", text = message, isError = true)
+                    sessionId?.let(::selectSession)
+                }
             }
         }
     }
@@ -237,11 +369,19 @@ class AgentBridgeController(
         pendingAttachments: List<AgentPendingAttachment>,
         provider: AgentProviderRuntime?,
         onAccepted: () -> Unit,
-    ) {
-        val selected = currentSession ?: return
-        if (busy || text.isBlank()) return
+    ): Boolean {
+        val selected = currentSession ?: return false
+        if (busy || text.isBlank()) return false
         busy = true
+        beginPromptEventBuffer(selected.id)
         try {
+            request(
+                "agents.check",
+                buildJsonObject {
+                    put("sessionId", selected.id)
+                    put("provider", provider.toJson())
+                },
+            )
             val attachments = uploadAttachments(selected, pendingAttachments)
             val result =
                 request(
@@ -254,6 +394,7 @@ class AgentBridgeController(
                     },
                 )
             val turnId = result.string("turnId")
+            activeLocalTurnId = turnId
             messages =
                 messages +
                 AgentChatMessage(
@@ -264,14 +405,46 @@ class AgentBridgeController(
                     createdAt = Clock.System.now().toEpochMilliseconds(),
                     attachments = attachments,
                 )
+            drainPromptEventBuffer(selected.id)
             errorMessage = null
             onAccepted()
+            return true
         } catch (e: Exception) {
             busy = false
+            activeLocalTurnId = null
+            drainPromptEventBuffer(selected.id)
             attachmentProgress = null
             val message = e.message ?: "Prompt failed"
             errorMessage = message
             messages = messages + AgentChatMessage(role = "error", text = message, isError = true)
+            return false
+        }
+    }
+
+    fun respondApproval(
+        approval: AgentApprovalRequest,
+        decision: String,
+        value: String? = null,
+    ) {
+        pendingApprovals = pendingApprovals.filterNot { it.id == approval.id }
+        scope.launch {
+            try {
+                request(
+                    "approval.respond",
+                    buildJsonObject {
+                        put("sessionId", approval.sessionId)
+                        put("approvalId", approval.id)
+                        put("decision", decision)
+                        if (value != null) put("value", value)
+                    },
+                )
+                errorMessage = null
+            } catch (e: Exception) {
+                if (approval.sessionId == currentSession?.id && pendingApprovals.none { it.id == approval.id }) {
+                    pendingApprovals = pendingApprovals + approval
+                }
+                errorMessage = e.message
+            }
         }
     }
 
@@ -317,14 +490,112 @@ class AgentBridgeController(
         }
     }
 
+    fun updateSessionModel(model: String?) {
+        val selected = currentSession ?: return
+        if (busy) return
+        scope.launch {
+            try {
+                val result =
+                    request(
+                        "sessions.model",
+                        buildJsonObject {
+                            put("sessionId", selected.id)
+                            put("model", model.orEmpty())
+                        },
+                    )
+                currentSession = parseSession(result)
+                refreshSessions()
+                errorMessage = null
+            } catch (e: Exception) {
+                errorMessage = e.message
+            }
+        }
+    }
+
     fun deleteSession(id: String) {
         scope.launch {
             try {
                 request("sessions.delete", buildJsonObject { put("sessionId", id) })
+                eventCursors.remove(id)
+                recoveringEventSessions.remove(id)
+                recoveryEventQueues.remove(id)
                 if (currentSession?.id == id) newChat()
                 refreshSessions()
             } catch (e: Exception) {
                 errorMessage = e.message
+            }
+        }
+    }
+
+    fun loadNativeHistory() {
+        if (nativeHistoryLoading) return
+        nativeHistoryLoading = true
+        scope.launch {
+            try {
+                val result = request("sessions.nativeList")
+                nativeSessions =
+                    result.array("sessions").mapNotNull { element ->
+                        val value = element as? JsonObject ?: return@mapNotNull null
+                        val nativeId = value.string("nativeId")
+                        val agent = value.string("agent")
+                        if (nativeId.isBlank() || agent.isBlank()) return@mapNotNull null
+                        AgentNativeSessionInfo(
+                            nativeId = nativeId,
+                            agent = agent,
+                            title = value.string("title"),
+                            cwd = value.string("cwd"),
+                            messageCount = value.int("messageCount"),
+                            updatedAt = value.long("updatedAt"),
+                            importedSessionId = value.stringOrNull("importedSessionId"),
+                        )
+                    }
+                errorMessage = null
+            } catch (e: Exception) {
+                errorMessage = e.message
+            } finally {
+                nativeHistoryLoading = false
+            }
+        }
+    }
+
+    fun importNativeHistory(
+        native: AgentNativeSessionInfo,
+        onComplete: (Boolean) -> Unit,
+    ) {
+        if (nativeHistoryImportingId != null) return
+        nativeHistoryImportingId = native.nativeId
+        scope.launch {
+            try {
+                val imported =
+                    request(
+                        "sessions.nativeImport",
+                        buildJsonObject {
+                            put("agent", native.agent)
+                            put("nativeId", native.nativeId)
+                        },
+                    )
+                refreshSessions()
+                val selected =
+                    request(
+                        "sessions.get",
+                        buildJsonObject { put("sessionId", imported.string("sessionId")) },
+                    )
+                applySessionSnapshot(selected)
+                nativeSessions =
+                    nativeSessions.map {
+                        if (it.agent == native.agent && it.nativeId == native.nativeId) {
+                            it.copy(importedSessionId = imported.string("sessionId"))
+                        } else {
+                            it
+                        }
+                    }
+                errorMessage = null
+                onComplete(true)
+            } catch (e: Exception) {
+                errorMessage = e.message
+                onComplete(false)
+            } finally {
+                nativeHistoryImportingId = null
             }
         }
     }
@@ -359,10 +630,65 @@ class AgentBridgeController(
         }
     }
 
+    /**
+     * 为 Agent 页面打开一个独立的 SFTP 会话（文件管理 / 上传用）。
+     * 认证 / 主机密钥确认复用本控制器的回调（弹窗由 Agent 页面全局处理）；
+     * 调用方负责在结束时 close（与 [browseDirectories] 同模式）。
+     */
+    suspend fun openSftp(): SftpSession =
+        withContext(ioDispatcher()) {
+            createSftpSession(connection(), callbacks)
+        }
+
+    /**
+     * 在已认证的控制连接上执行一次性远端命令（Agent Git 面板等用）。
+     * 与 Agent 对话互不干扰（独立 exec 通道）；失败/未连接返回 null。
+     */
+    suspend fun runRemoteCommand(
+        command: String,
+        timeoutMs: Long = 20_000,
+    ): String? =
+        runCatching {
+            withContext(ioDispatcher()) {
+                ensureSsh().runCommandDetailed(command, timeoutMs)?.stdout
+            }
+        }.getOrNull()
+
     fun newChat() {
+        sessionLoadToken += 1
+        loadingSessionId = null
+        sessionLoadEvents.clear()
         currentSession = null
         messages = emptyList()
+        pendingApprovals = emptyList()
         busy = false
+        activeLocalTurnId = null
+    }
+
+    /**
+     * 拉取供应商模型列表（GET /models）。经远端 Bridge 转发：手机侧无需 CORS，
+     * 也不暴露 key 给第三方服务。结果经 [onResult] 回传（失败含原因）。
+     */
+    fun fetchProviderModels(
+        baseUrl: String,
+        apiKey: String,
+        type: String,
+        onResult: (Result<List<String>>) -> Unit,
+    ) {
+        scope.launch {
+            val result =
+                runCatching {
+                    request(
+                        "providers.fetchModels",
+                        buildJsonObject {
+                            put("baseUrl", baseUrl)
+                            put("apiKey", apiKey)
+                            put("type", type)
+                        },
+                    ).array("models").mapNotNull { it.jsonPrimitive.contentOrNull }
+                }
+            onResult(result)
+        }
     }
 
     fun close() {
@@ -373,6 +699,13 @@ class AgentBridgeController(
         reconnectJob?.cancel()
         reconnectJob = null
         reconnecting = false
+        activeLocalTurnId = null
+        sessionLoadToken += 1
+        loadingSessionId = null
+        sessionLoadEvents.clear()
+        recoveringEventSessions.clear()
+        recoveryEventQueues.clear()
+        promptEventBuffer.clear()
         readerJob?.cancel()
         readerJob = null
         val activeChannel = channel
@@ -538,7 +871,7 @@ class AgentBridgeController(
                         }
                         bridgeVersion = probe.version
                         openProtocol()
-                        selectedSessionId?.let(::selectSession)
+                        selectedSessionId?.let { recoverSessionEvents(it) }
                         errorMessage = null
                         reconnectJob = null
                         return@launch
@@ -573,6 +906,90 @@ class AgentBridgeController(
     private suspend fun refreshSessions() {
         val result = request("sessions.list")
         sessions = result.array("sessions").map { parseSession(it.jsonObject) }
+    }
+
+    private fun applySessionSnapshot(result: JsonObject) {
+        val session = parseSession(result)
+        currentSession = session
+        busy = result.boolean("busy")
+        messages = result.array("messages").mapNotNull(::parseMessage)
+        pendingApprovals = result.array("approvals").mapNotNull(::parseApproval)
+        val epoch = result.stringOrNull("eventEpoch").orEmpty()
+        val sequence = result.long("eventCursor")
+        if (epoch.isBlank()) {
+            eventCursors.remove(session.id)
+        } else {
+            eventCursors[session.id] = AgentEventCursor(epoch, sequence)
+        }
+    }
+
+    private fun scheduleEventRecovery(sessionId: String) {
+        if (sessionId != currentSession?.id || !recoveringEventSessions.add(sessionId)) return
+        recoveryEventQueues[sessionId] = mutableListOf()
+        scope.launch {
+            runCatching { recoverMarkedSessionEvents(sessionId) }
+                .onFailure { errorMessage = it.message }
+        }
+    }
+
+    private suspend fun recoverSessionEvents(sessionId: String) {
+        if (sessionId != currentSession?.id || !recoveringEventSessions.add(sessionId)) return
+        recoveryEventQueues[sessionId] = mutableListOf()
+        recoverMarkedSessionEvents(sessionId)
+    }
+
+    private suspend fun recoverMarkedSessionEvents(sessionId: String) {
+        try {
+            val cursor = eventCursors[sessionId]
+            if (cursor == null) {
+                reloadSessionSnapshot(sessionId)
+                return
+            }
+            val result =
+                request(
+                    "events.replay",
+                    buildJsonObject {
+                        put("sessionId", sessionId)
+                        put("eventEpoch", cursor.epoch)
+                        put("after", cursor.sequence)
+                    },
+                )
+            if (sessionId != currentSession?.id) return
+            val reset = result.boolean("reset")
+            val replayEpoch = result.stringOrNull("eventEpoch").orEmpty()
+            val replayCursor = result.long("eventCursor")
+            val replayApplied =
+                !reset &&
+                    result.array("events").all { element ->
+                        val envelope = element as? JsonObject ?: return@all false
+                        handleSequencedEnvelope(envelope, recoverOnGap = false)
+                    }
+            val caughtUp = eventCursors[sessionId] == AgentEventCursor(replayEpoch, replayCursor)
+            if (!replayApplied || !caughtUp) reloadSessionSnapshot(sessionId)
+        } finally {
+            val queued = recoveryEventQueues.remove(sessionId).orEmpty()
+            recoveringEventSessions.remove(sessionId)
+            queued
+                .sortedBy { it.long("eventSeq") }
+                .forEach { handleSequencedEnvelope(it) }
+        }
+    }
+
+    private suspend fun reloadSessionSnapshot(sessionId: String) {
+        val result = request("sessions.get", buildJsonObject { put("sessionId", sessionId) })
+        if (sessionId == currentSession?.id) applySessionSnapshot(result)
+    }
+
+    private fun beginPromptEventBuffer(sessionId: String) {
+        promptEventBuffer.begin(sessionId)
+    }
+
+    private fun drainPromptEventBuffer(sessionId: String) {
+        promptEventBuffer.drain(sessionId).forEach(::handleSequencedEnvelope)
+    }
+
+    private fun discardPromptEventBuffer(sessionId: String) {
+        promptEventBuffer.discard(sessionId)
     }
 
     private suspend fun request(
@@ -625,14 +1042,51 @@ class AgentBridgeController(
             return
         }
         when (value.stringOrNull("type")) {
-            "busy" -> {
-                if (value.stringOrNull("sessionId") == currentSession?.id) {
-                    busy = value.boolean("busy")
+            "busy", "event" -> {
+                val sessionId = value.stringOrNull("sessionId")
+                when {
+                    promptEventBuffer.enqueue(sessionId, value) -> Unit
+                    sessionId != null && sessionId == loadingSessionId -> sessionLoadEvents += value
+                    sessionId != null && sessionId in recoveringEventSessions ->
+                        recoveryEventQueues.getOrPut(sessionId, ::mutableListOf) += value
+                    else -> handleSequencedEnvelope(value)
                 }
             }
-            "event" -> handleEvent(value)
             "session_deleted" -> scope.launch { refreshSessions() }
         }
+    }
+
+    private fun handleSequencedEnvelope(
+        envelope: JsonObject,
+        recoverOnGap: Boolean = true,
+    ): Boolean {
+        val sessionId = envelope.stringOrNull("sessionId")
+        val epoch = envelope.stringOrNull("eventEpoch").orEmpty()
+        val sequence = envelope.long("eventSeq")
+        if (sessionId != null && sessionId == currentSession?.id) {
+            when (classifyAgentEvent(eventCursors[sessionId], epoch, sequence)) {
+                AgentEventDecision.DUPLICATE -> return true
+                AgentEventDecision.GAP, AgentEventDecision.RESET -> {
+                    if (recoverOnGap) scheduleEventRecovery(sessionId)
+                    return false
+                }
+                AgentEventDecision.APPLY -> {
+                    if (epoch.isNotBlank() && sequence > 0L) {
+                        eventCursors[sessionId] = AgentEventCursor(epoch, sequence)
+                    }
+                }
+            }
+        }
+        when (envelope.stringOrNull("type")) {
+            "busy" -> {
+                if (sessionId == currentSession?.id) {
+                    busy = envelope.boolean("busy")
+                    if (!busy) activeLocalTurnId = null
+                }
+            }
+            "event" -> handleEvent(envelope)
+        }
+        return true
     }
 
     private fun handleEvent(envelope: JsonObject) {
@@ -642,12 +1096,21 @@ class AgentBridgeController(
         if (sessionId != null && sessionId != currentSession?.id) return
         when (type) {
             "delta" -> appendStream("assistant", event.string("text"), event)
-            "thinking_start" -> startThinking(event)
+            // Do not render a card until the agent provides actual reasoning text.
+            "thinking_start" -> Unit
             "thinking_delta" -> appendStream("thinking", event.string("text"), event)
             "thinking" -> replaceOrAppend("thinking", event.string("text"), event)
             "assistant_message" -> replaceOrAppend("assistant", event.string("text"), event)
             "tool_start" -> startTool(event)
             "tool_end" -> finishTool(event)
+            "approval_request" -> {
+                val approval = parseApproval(event) ?: return
+                pendingApprovals = pendingApprovals.filterNot { it.id == approval.id } + approval
+            }
+            "approval_resolved" -> {
+                val approvalId = event.string("approvalId")
+                pendingApprovals = pendingApprovals.filterNot { it.id == approvalId }
+            }
             "error" ->
                 messages =
                     messages +
@@ -659,9 +1122,13 @@ class AgentBridgeController(
                         isError = true,
                         createdAt = event.long("ts"),
                     )
-            "cancelled" -> busy = false
+            "cancelled" -> {
+                busy = false
+                activeLocalTurnId = null
+            }
             "settled" -> {
                 busy = false
+                activeLocalTurnId = null
                 val completedAt = Clock.System.now().toEpochMilliseconds()
                 messages =
                     messages.map {
@@ -747,22 +1214,6 @@ class AgentBridgeController(
             }
     }
 
-    private fun startThinking(event: JsonObject) {
-        val activityId = event.stringOrNull("activityId")
-        if (messages.any { it.role == "thinking" && it.activityId == activityId }) return
-        messages =
-            messages +
-            AgentChatMessage(
-                role = "thinking",
-                text = "",
-                id = activityId.orEmpty(),
-                turnId = event.string("turnId"),
-                activityId = activityId,
-                running = true,
-                createdAt = event.long("ts"),
-            )
-    }
-
     private fun startTool(event: JsonObject) {
         val turnId = event.string("turnId")
         finishRunningThinking(turnId, event.long("ts"))
@@ -815,6 +1266,7 @@ class AgentBridgeController(
                 isError = event.boolean("isError"),
                 createdAt = started?.createdAt ?: event.long("startedAt"),
                 completedAt = event.long("completedAt").takeIf { it > 0L } ?: event.long("ts"),
+                artifacts = parseArtifacts(event),
             )
         messages =
             if (index >= 0) {
@@ -834,7 +1286,32 @@ class AgentBridgeController(
             messageCount = value.int("messageCount"),
             model = value.stringOrNull("model"),
             provider = value.stringOrNull("provider"),
+            waitingApproval = value.boolean("waitingApproval"),
         )
+
+    private fun parseApproval(element: JsonElement): AgentApprovalRequest? {
+        val value = element as? JsonObject ?: return null
+        val id = value.string("approvalId").ifBlank { value.string("id") }
+        if (id.isBlank()) return null
+        return AgentApprovalRequest(
+            id = id,
+            sessionId = value.string("sessionId"),
+            turnId = value.string("turnId"),
+            agent = value.string("agent"),
+            kind = value.string("kind"),
+            title = value.string("title"),
+            message = value.string("message"),
+            command = value.string("command"),
+            cwd = value.string("cwd"),
+            details = value.string("details"),
+            placeholder = value.string("placeholder"),
+            prefill = value.string("prefill"),
+            options = value.array("options").mapNotNull { it.jsonPrimitive.contentOrNull },
+            secret = value.boolean("secret"),
+            allowCustom = value.boolean("allowCustom"),
+            timeoutMs = value.long("timeoutMs"),
+        )
+    }
 
     private fun parseMessage(element: JsonElement): AgentChatMessage? {
         val value = element as? JsonObject ?: return null
@@ -848,6 +1325,7 @@ class AgentBridgeController(
             toolName = value.stringOrNull("toolName"),
             toolInput = value.stringOrNull("toolInput"),
             isError = value.boolean("isError"),
+            running = value.boolean("running"),
             createdAt = value.long("startedAt").takeIf { it > 0L } ?: value.long("ts"),
             completedAt = value.long("completedAt").takeIf { it > 0L },
             attachments =
@@ -859,8 +1337,22 @@ class AgentBridgeController(
                         size = item.long("size"),
                     )
                 },
+            artifacts = parseArtifacts(value),
         )
     }
+
+    private fun parseArtifacts(value: JsonObject): List<AgentArtifact> =
+        value.array("artifacts").mapNotNull { artifact ->
+            val item = artifact as? JsonObject ?: return@mapNotNull null
+            val path = item.string("path")
+            if (path.isBlank()) return@mapNotNull null
+            AgentArtifact(
+                name = item.string("name").ifBlank { path.substringAfterLast('/') },
+                remotePath = path,
+                size = item.long("size"),
+                kind = item.string("kind"),
+            )
+        }
 
     private suspend fun uploadAttachments(
         session: AgentBridgeSessionInfo,
@@ -906,6 +1398,7 @@ class AgentBridgeController(
         TermLog.e("agent") { "bridge ${host.name}: ${error.message}" }
         errorMessage = error.message ?: "Agent Bridge failed"
         reconnecting = false
+        activeLocalTurnId = null
         state = AgentBridgeState.ERROR
     }
 
@@ -977,6 +1470,8 @@ private fun AgentProviderRuntime?.toJson(): JsonObject =
         put("type", type)
         put("apiKey", apiKey)
         put("baseUrl", baseUrl)
+        put("anthropicBaseUrl", anthropicBaseUrl)
+        put("piProvider", piProvider)
     }
 
 private fun joinRemotePath(

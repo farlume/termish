@@ -46,12 +46,12 @@ socket and SQLite database are mode `0600`, and the daemon sets `umask 077`.
 ## Protocol
 
 `connect` relays NDJSON between SSH stdin/stdout and the private Unix socket.
-Protocol version 2 provides:
+Protocol version 3 provides:
 
 - `system.hello`
 - `agents.list`, `agents.installPlan`, `agents.install`
 - `sessions.list`, `sessions.create`, `sessions.get`, `sessions.rename`,
-  `sessions.delete`
+  `sessions.delete`, `sessions.nativeList`, `sessions.nativeImport`
 - `prompt.send` (including uploaded attachment references), `prompt.abort`
 - turn-scoped normalized events for text/thinking deltas, tool start/end,
   errors, cancellation, settlement, installation output, and busy state;
@@ -59,6 +59,9 @@ Protocol version 2 provides:
 
 Sessions, turn IDs, normalized activities, and messages are persisted in SQLite. The daemon owns the
 Agent subprocess, so closing the SSH relay does not cancel an active turn.
+Agent-owned histories can be discovered and copied into this normalized store;
+their original files remain untouched and their native resume IDs continue the
+underlying Agent context.
 Attachments are uploaded by Termish over SFTP into the selected workspace's
 private `.termish/attachments/` directory; the Bridge persists their metadata
 and adds relative paths to the Agent prompt.
@@ -70,7 +73,9 @@ endpoint), OpenCode, and Pi.
 
 Adapters cover Codex, Claude Code, Gemini CLI, OpenCode, and Pi RPC. They retain
 each Agent's existing permission configuration and never add an auto-approval
-flag. Interactive approval requests are not yet part of protocol version 2;
-headless Agent modes that cannot surface them must fail closed instead of being
-silently approved. The resolver supports common user installs, including NVM,
-and in-app npm installs never use `sudo`.
+flag. Protocol version 3 forwards Codex App Server command, file-change, and
+permission approvals, together with Pi RPC confirm/select/input/editor requests,
+to the connected Termish client. Pending requests survive SSH relay reconnects;
+abort, timeout, and disconnect paths fail closed. Headless Agent modes without a
+native approval channel are never silently approved. The resolver supports common
+user installs, including NVM, and in-app npm installs never use `sudo`.

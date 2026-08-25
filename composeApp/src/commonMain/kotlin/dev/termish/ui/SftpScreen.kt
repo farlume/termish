@@ -31,11 +31,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Archive
-import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
@@ -52,7 +53,6 @@ import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -312,6 +312,7 @@ internal fun downloadFilesToSink(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("DEPRECATION") // Compose 1.8 新 Clipboard 尚无稳定的跨平台纯文本构造 API。
 @Composable
 fun SftpContent(
     host: Host,
@@ -2192,11 +2193,11 @@ private fun fileKindIcon(kind: SftpFileKind): ImageVector =
         SftpFileKind.DB -> Icons.Filled.Storage
         SftpFileKind.DISK -> Icons.Filled.Album
         SftpFileKind.KEY -> Icons.Filled.Key
-        SftpFileKind.MD -> Icons.Filled.Notes
+        SftpFileKind.MD -> Icons.AutoMirrored.Filled.Notes
         SftpFileKind.TORRENT -> Icons.Filled.Download
         SftpFileKind.CONFIG -> Icons.Filled.Tune
         SftpFileKind.CODE -> Icons.Filled.Code
-        SftpFileKind.TEXT -> Icons.Filled.Article
+        SftpFileKind.TEXT -> Icons.AutoMirrored.Filled.Article
         SftpFileKind.PDF -> Icons.Filled.PictureAsPdf
         SftpFileKind.OTHER -> Icons.AutoMirrored.Filled.InsertDriveFile
     }

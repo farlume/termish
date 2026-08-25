@@ -23,11 +23,9 @@ actual fun showPlatformNotification(
 ) {
     val context = AppContext.get()
     val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    if (Build.VERSION.SDK_INT >= 26) {
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "会话事件", NotificationManager.IMPORTANCE_DEFAULT),
-        )
-    }
+    nm.createNotificationChannel(
+        NotificationChannel(CHANNEL_ID, "会话事件", NotificationManager.IMPORTANCE_DEFAULT),
+    )
     // Android 13+ 未授权时静默放弃（设置页开关会引导授权）
     if (Build.VERSION.SDK_INT >= 33 &&
         context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -75,17 +73,12 @@ actual fun showPlatformNotification(
     nm.notify(id, builder.build())
 }
 
-/** 跳系统 App 通知设置页（Android 13+；低版本跳应用详情页）。 */
+/** 跳系统 App 通知设置页（minSdk 26 全部支持）。 */
 actual fun openNotificationSettings() {
     val context = AppContext.get()
     val intent =
-        if (Build.VERSION.SDK_INT >= 26) {
-            Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-        } else {
-            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                .setData(android.net.Uri.parse("package:${context.packageName}"))
-        }
+        Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
     intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     context.startActivity(intent)
 }

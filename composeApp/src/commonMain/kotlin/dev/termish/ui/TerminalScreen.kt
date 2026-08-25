@@ -416,6 +416,7 @@ fun TerminalScreen(
 }
 
 /** 终端主体：banner + 画布 + 工具栏 + 输入框（切换 tab 按会话 id 重组）。 */
+@Suppress("DEPRECATION") // Compose 1.8 新 Clipboard 尚无稳定的跨平台纯文本构造 API。
 @Composable
 private fun TerminalBody(
     controller: TerminalController,
@@ -988,7 +989,9 @@ private fun TerminalBody(
                 // git 命令走独立 exec 通道（SSH 复用已认证连接 / mosh 控制面连接），
                 // 不注入交互终端；工具栏「⎇」键可展开面板。
                 GitOverlay(
-                    controller = controller,
+                    connected = controller.status == ConnStatus.CONNECTED,
+                    inAltScreen = controller.buffer.altScreen,
+                    runner = remember(controller) { TerminalGitCommandRunner(controller) },
                     theme = theme,
                     open = gitPanelOpen,
                     onOpenChange = { gitPanelOpen = it },
@@ -1048,7 +1051,7 @@ private fun TerminalBody(
                                         scope.launch {
                                             val wd =
                                                 runCatching {
-                                                    GitCommandRunner(
+                                                    TerminalGitCommandRunner(
                                                         controller,
                                                     ).fetchWorkdir()
                                                 }.getOrNull()
@@ -1090,7 +1093,7 @@ private fun TerminalBody(
                                         scope.launch {
                                             val wd =
                                                 runCatching {
-                                                    GitCommandRunner(
+                                                    TerminalGitCommandRunner(
                                                         controller,
                                                     ).fetchWorkdir()
                                                 }.getOrNull()

@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.dp
  * 间距基于 4dp 网格：xs=4 sm=8 md=12 lg=16 xl=24 xxl=32。
  */
 object Spacing {
+    val None = 0.dp
     val Xs = 4.dp
     val Sm = 8.dp
     val Md = 12.dp
@@ -58,6 +59,14 @@ object Sizes {
 
     /** Agent 输入区附件 Chip 最大宽度，超长文件名在内部省略。 */
     val AgentAttachmentChipMaxWidth = 240.dp
+
+    /** Agent 输入框斜杠命令候选区最大高度。 */
+    val AgentSlashMenuMaxHeight = 224.dp
+
+    /** Agent 工具时间线轨道宽度与线宽。 */
+    val AgentTimelineRailWidth = 20.dp
+    val AgentTimelineLineWidth = 2.dp
+    val AgentTimelineDot = 8.dp
 
     /** Agent 时间线条目的统一图标容器。 */
     val AgentActivityIconContainer = 36.dp

@@ -35,7 +35,7 @@ class RelayTest(unittest.TestCase):
                 self.assertTrue(readable, "relay waited for stdin EOF instead of forwarding the request")
                 response = json.loads(process.stdout.readline())
                 self.assertEqual(1, response["id"])
-                self.assertEqual(2, response["result"]["protocolVersion"])
+                self.assertEqual(3, response["result"]["protocolVersion"])
             finally:
                 process.terminate()
                 process.wait(timeout=5)

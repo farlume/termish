@@ -17,7 +17,7 @@ from typing import Any, Dict, Optional, Set
 from __init__ import PROTOCOL_VERSION, VERSION
 from adapters import bridge_home
 from protocol import ProtocolError, decode_line, encode_line, error_response, response
-from store import SessionStore
+from store import SessionStore, redact_sensitive_payload, redact_sensitive_text, sensitive_values
 
 try:
     import fcntl
@@ -77,7 +77,7 @@ class BridgeServer:
         self.store = SessionStore(self.broadcast)
 
     async def broadcast(self, message: Dict[str, Any]) -> None:
-        raw = encode_line(message)
+        raw = encode_line(redact_sensitive_payload(message))
         stale = []
         for writer in list(self.clients):
             try:
@@ -96,6 +96,7 @@ class BridgeServer:
                 if not raw:
                     break
                 request_id: Any = None
+                params: Dict[str, Any] = {}
                 try:
                     request = decode_line(raw)
                     request_id = request.get("id")
@@ -115,7 +116,8 @@ class BridgeServer:
                 except ProtocolError as exc:
                     writer.write(encode_line(error_response(request_id, str(exc), "invalid_request")))
                 except Exception as exc:
-                    writer.write(encode_line(error_response(request_id, str(exc))))
+                    message = redact_sensitive_text(str(exc), sensitive_values(params))
+                    writer.write(encode_line(error_response(request_id, message)))
                 await writer.drain()
         except (BrokenPipeError, ConnectionError):
             pass

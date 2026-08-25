@@ -6,6 +6,7 @@ import androidx.compose.runtime.DisposableEffect
 import dev.termish.AppContext
 
 @Composable
+@Suppress("DEPRECATION") // adjustResize 仍是这里跨 OEM 可恢复输入区高度的兼容路径。
 actual fun AgentImeResizeEffect() {
     val window = AppContext.currentActivity?.window
     DisposableEffect(window) {

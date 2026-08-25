@@ -9,9 +9,6 @@ import dev.termish.data.resolveCredentials
 import dev.termish.ssh.SftpSession
 import dev.termish.util.TermLog
 import dev.termish.util.base64Encode
-import dev.termish.util.ioDispatcher
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 
 /** SFTP 会话条目（与终端会话平级管理，跨页面存活）。
  *  [session] 可空：进程重启后恢复的条目未连接（session=null），
@@ -42,8 +39,6 @@ class SessionManager(
 
     /** SFTP 会话（与终端会话同源管理：连接页可见、卡片 Close 可关、删除主机连带释放）。 */
     val sftpSessions = mutableStateListOf<SftpSessionEntry>()
-
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher())
 
     /** 退到后台时仍活跃的会话 id（回前台据此自动重连，iOS 场景）。 */
     private val activeAtBackground = HashSet<String>()

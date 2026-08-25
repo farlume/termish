@@ -236,13 +236,13 @@ browser for desktop workflows while the phone stays native.
   installed from the same screen into the remote user's npm prefix
 - A dedicated workspace drawer provides new chat, recent history, Agent
   management, per-host defaults, rename/delete, and a route back to Termish;
-  the composer supports phone attachments, saved quick commands, and a browsable
-  remote directory picker, with upload/install progress kept visible
+  the composer supports phone attachments, Agent-native slash-command completion,
+  and a browsable remote directory picker, with upload/install progress kept visible
 - Add a DeepSeek provider whose API key stays in the platform vault, then select
   either that provider or the Agent's built-in login independently per Agent;
   the first compatibility set covers Claude Code, OpenCode, and Pi
-- Every prompt is rendered as a turn: reasoning and tool calls share an ordered
-  execution timeline that expands while running and folds when complete; final
+- Every prompt is rendered as a turn: reasoning and tool calls use compact process
+  cards that stay collapsed by default while running and after completion; final
   answers use CommonMark/GFM with syntax-highlighted code
 - The Bridge daemon listens on a mode-`0600` Unix socket and the app reaches it
   only through the already authenticated SSH connection; an Agent keeps running
@@ -414,8 +414,9 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
   not yet bridged to the phone: auto-approved actions run, while headless modes
   that cannot surface a request fail closed or return an explicit error
 - **iOS builds** run on the maintainer's private Xcode Cloud (see
-  `iosApp/ci_scripts/ci_post_clone.sh`); the public GitHub Actions CI only
-  covers Android + desktop. Contributors verify iOS changes locally:
+  `iosApp/ci_scripts/ci_post_clone.sh`). GitHub Actions also runs an iOS
+  framework smoke build for shared/iOS pull requests and release tags.
+  Contributors verify UI behavior locally:
   `make ios-native && make ios-framework`, then build & run from Xcode
 
 ## Roadmap

@@ -12,14 +12,19 @@ import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
 import java.util.Properties
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -61,6 +66,26 @@ class TerminalControllerTest {
 
     // herdr --version 输出（探测判「已安装」用；snapshot 判 daemon 运行用）
     private val versionOutput = "herdr 0.8.0"
+
+    @Test
+    fun sharedHostKeyWaiterIsReleasedWhenOwnerRejectsOnDispose() {
+        val answer = CompletableDeferred<Boolean>()
+        val started = CountDownLatch(1)
+        var accepted = true
+        val waiter =
+            Thread {
+                started.countDown()
+                accepted = awaitHostKeyPromptAnswer(answer)
+            }
+
+        waiter.start()
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+        answer.complete(false)
+        waiter.join(1_000)
+
+        assertFalse(waiter.isAlive)
+        assertFalse(accepted)
+    }
 
     private class FakeExec(
         val onWrite: (ByteArray) -> Unit = {},
@@ -400,6 +425,47 @@ class TerminalControllerTest {
 
         fake.callbacks.onClosed(null)
         assertEquals(ConnStatus.CLOSED, c.status)
+    }
+
+    @Test
+    fun staleSessionFactoryCannotOverwriteReconnectAfterClose() {
+        val factoryEntered = CountDownLatch(1)
+        val releaseFactory = CountDownLatch(1)
+        val factoryCalls = AtomicInteger()
+        val first = FakeSsh()
+        val second = FakeSsh()
+        val c =
+            TerminalController(host(startup = "echo ready"), "pw", null, repo(), false) { _, callbacks ->
+                when (factoryCalls.getAndIncrement()) {
+                    0 -> {
+                        factoryEntered.countDown()
+                        releaseFactory.await(5, TimeUnit.SECONDS)
+                        first.callbacks = callbacks
+                        first
+                    }
+                    else -> {
+                        second.callbacks = callbacks
+                        second
+                    }
+                }
+            }
+
+        c.connect(80, 24)
+        assertTrue(factoryEntered.await(5, TimeUnit.SECONDS))
+        c.close()
+        c.reconnect()
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        releaseFactory.countDown()
+        runBlocking {
+            withTimeout(5_000) {
+                while (!first.closed) delay(10)
+            }
+        }
+
+        assertTrue(c.session === second)
+        assertTrue(first.sent.isEmpty(), "旧连接不应在新会话建立后发送启动命令")
+        c.destroy()
     }
 
     @Test

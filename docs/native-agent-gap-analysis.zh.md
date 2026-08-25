@@ -1,8 +1,11 @@
 # 原生 Agent 功能差距评估
 
-评估基线：Bridge 协议 v2 / Bridge 0.4.0。当前已覆盖原生对话、流式消息、
-Thinking/工具时间线、会话恢复、停止、附件、快捷命令、Pi RPC，以及按 Agent
-选择内置登录或 DeepSeek（Claude Code / OpenCode / Pi）。
+评估基线：Bridge 协议 v3 / Bridge 0.7.7。当前已覆盖原生对话、流式消息、
+Thinking/工具过程卡、事件游标补发与运行中活动快照恢复、会话恢复、停止、附件、可执行快捷命令、Pi RPC，以及按 Agent
+选择内置登录或 DeepSeek（Claude Code / OpenCode / Pi）。Agent 输入框复用全局流式
+语音识别配置，支持实时转写、确认后发送以及错误/超时可见反馈。远端 Agent CLI
+自己的会话可搜索并导入 Bridge；导入只复制可展示消息，保留原生 session ID 续接
+上下文，不删除或改写 Agent 的历史文件。
 
 ## 审批语义
 
@@ -15,23 +18,28 @@ Termish 应继承 Agent 自己的权限策略，而不是另设一套默认策�
 4. 断线后审批仍属于远端会话；重连应恢复待审批列表。会话删除、终止或审批
    超时必须 fail closed，不能自动允许。
 
-当前一次性 CLI 适配器不能完整实现第 3 项。后续应按能力切换到 Codex
-app-server、Claude Agent SDK、OpenCode server API；Gemini 需评估 ACP，Pi 则需
-使用扩展级审批接口。普通 Gemini headless 的 `ask_user` 会按拒绝处理，Pi RPC
-也没有通用的内置工具审批回调。
+Codex 已切换到 app-server，命令、文件修改、网络访问和权限请求会进入统一审批队列；Pi RPC
+的 confirm/select/input/editor 也通过同一队列恢复。待审批项在 Bridge 进程存活时可
+跨 SSH 断线恢复，停止、超时与会话销毁均 fail closed。Claude、Gemini 与 OpenCode
+仍需分别接入它们的原生双向协议，且 Bridge 进程重启后的审批持久化与审计尚未完成。
 
 ## P0：可靠性与安全闭环
 
-- 登录就绪探测：区分“已安装”和“已登录/密钥有效”，提供登录指引、供应商
-  连通测试和可读的鉴权错误。
-- 手机审批与 Agent 提问：持久化待处理请求、重连恢复、超时拒绝、通知和审计；
-  不能把审批伪装成普通聊天消息。
-- 事件游标与补发：当前断线期间的实时 delta 不可回放；协议需给事件单调序号，
-  客户端按游标追平，避免重复或缺失。
-- 终态保证：每个 Turn 必须落到 completed / failed / cancelled / waiting-approval；
-  Bridge 或 Agent 异常退出后清除 busy，并保留草稿与附件。
-- 凭据边界：API Key 仅存系统安全存储、仅随当前 SSH 请求进入 Agent 环境；日志、
-  stderr、数据库和诊断包需要统一脱敏。
+已完成的可靠性基线：每个会话事件带 Bridge 代际与单调游标，短断线按游标从
+2048 条有界日志补发并严格去重；Bridge 重启、客户端游标异常或缓存窗口溢出时，
+自动降级为包含部分回答、真实思考和运行中工具的原子快照，不会把旧代际事件
+错误拼接到新会话状态。
+
+- 登录就绪探测：Codex、Claude（支持新版 auth status 的版本）、Gemini、OpenCode 与
+  Pi 均在附件上传和消息落库前区分“已安装”和“已登录/供应商密钥有效”；仍需提供
+  设置页的一键登录指引与供应商在线连通测试。
+- 手机审批与 Agent 提问：Codex 与 Pi 已有独立审批弹窗、断线恢复和超时/终止拒绝；
+  仍需补 Bridge 重启持久化、后台通知、审批历史，以及 Claude/Gemini/OpenCode 原生通道。
+- 终态保证：异常退出、启动超时与取消目前都会清除 busy，并保留发送失败时的草稿
+  与附件；后续协议仍需显式 completed / failed / cancelled / waiting-approval 状态。
+- 凭据边界：API Key 仅存系统安全存储、仅随当前 SSH 请求进入 Agent 环境；Bridge
+  会在事件、stderr、数据库消息和协议错误进入客户端前统一脱敏。诊断包仍需端侧
+  再做一次纵深脱敏审计。
 - 附件配额与回收：单文件/单轮/工作区上限、重复名处理、上传中断清理、会话删除
   后清理，以及图片/目录能力声明。
 

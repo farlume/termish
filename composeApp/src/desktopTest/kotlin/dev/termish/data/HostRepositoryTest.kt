@@ -101,6 +101,20 @@ class HostRepositoryTest {
     }
 
     @Test
+    fun fieldUpdatesUseLatestSettingsWithoutOverwritingOtherFeatures() {
+        val r = repo()
+        val provider = AgentProvider(id = "provider-1", name = "test")
+
+        r.updateSettings { it.copy(agentProviders = listOf(provider)) }
+        // 模拟设置页随后修改主题：必须基于仓库最新值，而不是 Agent 页打开前的快照。
+        r.updateSettings { it.copy(theme = ThemeMode.LIGHT) }
+
+        assertEquals(ThemeMode.LIGHT, r.loadSettings().theme)
+        assertEquals(listOf(provider), r.loadSettings().agentProviders)
+        assertEquals(r.loadSettings(), r.appSettings.value)
+    }
+
+    @Test
     fun recentSessionsRoundtrip() {
         val r = repo()
         assertTrue(r.loadRecentSessionHostIds().isEmpty())

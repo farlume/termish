@@ -31,6 +31,8 @@ import kotlinx.serialization.json.put
  * flags：0000 = 普通包；0010 = 最后一包（负包）。
  */
 object VolcAsrProtocol {
+    private val responseJson = Json { ignoreUnknownKeys = true }
+
     /** 双向流式（优化版）接口地址。 */
     const val WSS_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 
@@ -148,7 +150,7 @@ object VolcAsrProtocol {
         val payloadOffset = sizeOffset + 4
         val size = be32(bytes, sizeOffset).toInt().coerceAtMost(bytes.size - payloadOffset)
         val jsonStr = bytes.decodeToString(payloadOffset, payloadOffset + size)
-        val resp = Json { ignoreUnknownKeys = true }.decodeFromString<AsrResponse>(jsonStr)
+        val resp = responseJson.decodeFromString<AsrResponse>(jsonStr)
         return ParsedServerFrame(isLastPackage = flags == 3 || resp.isLastPackage, response = resp)
     }
 

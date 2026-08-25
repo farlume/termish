@@ -1,6 +1,7 @@
 package dev.termish.herdr
 
 import dev.termish.ssh.CommandOutput
+import kotlinx.serialization.json.Json
 
 /**
  * herdr CLI 命令构造与输出解析（V1 控制面）。
@@ -16,6 +17,7 @@ import dev.termish.ssh.CommandOutput
  */
 object HerdrApi {
     const val SNAPSHOT_CMD = "herdr api snapshot"
+    private val json = Json { ignoreUnknownKeys = true }
 
     /**
      * herdr 二进制路径候选（sshd 非交互 exec 的 PATH 常不含 ~/.local/bin、
@@ -73,10 +75,8 @@ object HerdrApi {
             // 只取 error 对象片段（CLI 包装尾部还有 id 字段，容错截断解析）
             val candidate = raw.substring(raw.indexOf("{\"error\""))
             return runCatching {
-                kotlinx.serialization.json
-                    .Json {
-                        ignoreUnknownKeys = true
-                    }.decodeFromString<HerdrCliResponse>(candidate)
+                json
+                    .decodeFromString<HerdrCliResponse>(candidate)
                     .error
             }.getOrNull() ?: HerdrApiError("unknown", "unparseable herdr error")
         }

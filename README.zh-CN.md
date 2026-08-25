@@ -207,13 +207,13 @@ flowchart TB
 - 对话、思考过程、工具调用、取消与可恢复会话统一为一个协议；缺少的受支持
   Agent CLI 可直接在页面内安装到远端用户自己的 npm 前缀
 - 独立工作区抽屉包含新对话、历史、Agent 管理、按主机保存的默认项、重命名/
-  删除及返回 Termish；底部输入区支持手机附件、已有快捷命令和远端目录浏览，
-  并持续显示上传/安装进度
+  删除及返回 Termish；底部输入区支持手机附件、输入 `/` 补全当前 Agent 的内置
+  命令和远端目录浏览，并持续显示上传/安装进度
 - 可添加 API Key 保存在平台安全存储中的 DeepSeek 供应商，并为每个 Agent
   分别选择 DeepSeek 或 Agent 已有的内置登录；首批兼容 Claude Code、OpenCode
   与 Pi
-- 每次请求作为一个 Turn 展示：推理摘要与工具调用进入同一条有序执行时间线，
-  运行时展开、完成后自动折叠；最终回答使用 CommonMark/GFM，并支持代码高亮
+- 每次请求作为一个 Turn 展示：推理摘要与工具调用使用简洁的过程卡片，运行中和
+  完成后都默认收起，按需展开查看；最终回答使用 CommonMark/GFM，并支持代码高亮
 - Bridge daemon 只监听权限为 `0600` 的 Unix socket，App 始终经已认证的 SSH
   连接访问；手机断开后 Agent 仍在远端执行，重连可打开已持久化的对话
 - 后续可靠性、审批与工作流缺口见
@@ -343,8 +343,9 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   交互式审批桥接到手机：无需审批或已自动放行的操作会直接执行；无头协议无法
   上报审批时会安全拒绝或返回明确错误
 - **iOS 构建**走维护者私有的 Xcode Cloud（见
-  `iosApp/ci_scripts/ci_post_clone.sh`）；公开 GitHub Actions CI 只覆盖
-  Android + desktop。贡献者本地验证：`make ios-native && make ios-framework`，
+  `iosApp/ci_scripts/ci_post_clone.sh`）；GitHub Actions 也会在共享/iOS 代码
+  PR 和发版 tag 上执行 framework 冒烟构建。贡献者本地验证 UI：
+  `make ios-native && make ios-framework`，
   再用 Xcode 构建运行
 
 ## 路线图

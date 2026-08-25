@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import dev.termish.AppContext
 import java.security.KeyStore
 import javax.crypto.Cipher
@@ -77,13 +78,13 @@ actual object SecretStore {
         account: String,
         value: String,
     ) {
-        prefs().edit().putString("$service/$account", encrypt(value)).apply()
+        prefs().edit { putString("$service/$account", encrypt(value)) }
     }
 
     actual fun delete(
         service: String,
         account: String,
     ) {
-        prefs().edit().remove("$service/$account").apply()
+        prefs().edit { remove("$service/$account") }
     }
 }

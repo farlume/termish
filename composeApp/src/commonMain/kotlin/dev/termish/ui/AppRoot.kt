@@ -13,25 +13,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,9 +40,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ASR_API_KEY_ACCOUNT
+import dev.termish.data.AgentProviderType
 import dev.termish.data.AppSettings
 import dev.termish.data.AsrProvider
 import dev.termish.data.AsrProviderType
@@ -81,7 +77,6 @@ import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 private enum class HomeTab { HOSTS, CONNECTIONS, SETTINGS }
@@ -162,8 +157,45 @@ enum class SettingsSubPage {
     VOICE,
 }
 
+/** 屏幕会话条目（远程画面推流）。 */
+data class ScreenSessionEntry(
+    val host: Host,
+    /** 创建该屏幕会话的终端 tab 会话 id：小窗只在该 tab 显示。 */
+    val ownerSessionId: String,
+    val session: ScreenSession?,
+    val uiState: ScreenUiState,
+)
+
 @Composable
 fun AppRoot(repository: HostRepository) {
+    // 旧版 Agent 供应商迁移：type=DEEPSEEK（单一 DeepSeek）→ OPENAI 类型 +
+    // anthropic 兼容端点（claude 可用 /anthropic，opencode/pi 走 openai 兼容），
+    // 参考 tuiniverse 的 Provider 模型。旧 id/名称/baseUrl 保持不变。
+    fun migrateLegacyProviders(s: AppSettings): AppSettings {
+        val providers = s.agentProviders
+        val needsMigration =
+            providers.any { provider ->
+                provider.type == AgentProviderType.DEEPSEEK ||
+                    provider.piProvider.isBlank() &&
+                    provider.baseUrl.contains("api.deepseek.com")
+            }
+        if (!needsMigration) return s
+        val migrated =
+            providers.map { p ->
+                val isDeepSeek = p.type == AgentProviderType.DEEPSEEK || p.baseUrl.contains("api.deepseek.com")
+                if (!isDeepSeek) {
+                    p
+                } else {
+                    p.copy(
+                        type = AgentProviderType.OPENAI,
+                        anthropicBaseUrl = p.anthropicBaseUrl.ifBlank { "${p.baseUrl.trimEnd('/')}/anthropic" },
+                        piProvider = p.piProvider.ifBlank { "deepseek" },
+                    )
+                }
+            }
+        return s.copy(agentProviders = migrated)
+    }
+
     // 语音识别服务旧配置（单实例 asrResourceId）迁移到 provider 列表：
     // 首次启动把旧资源 ID + 旧密钥搬进列表，避免用户重配
     fun migrateLegacyAsr(s: AppSettings): AppSettings {
@@ -182,7 +214,12 @@ fun AppRoot(repository: HostRepository) {
         return s.copy(asrProviders = listOf(p))
     }
 
-    var settings by remember { mutableStateOf(migrateLegacyAsr(repository.loadSettings())) }
+    remember(repository) {
+        val stored = repository.loadSettings()
+        val migrated = migrateLegacyProviders(migrateLegacyAsr(stored))
+        if (migrated != stored) repository.saveSettings(migrated)
+    }
+    val settings by repository.appSettings.collectAsState()
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     val scope = rememberCoroutineScope()
@@ -206,14 +243,6 @@ fun AppRoot(repository: HostRepository) {
     var favoritesDialog by remember { mutableStateOf<Pair<Host, List<String>>?>(null) }
 
     /** 屏幕会话条目（远程画面推流）。 */
-    data class ScreenSessionEntry(
-        val host: Host,
-        /** 创建该屏幕会话的终端 tab 会话 id：小窗只在该 tab 显示。 */
-        val ownerSessionId: String,
-        val session: ScreenSession?,
-        val uiState: ScreenUiState,
-    )
-
     val screenSessions = remember { mutableStateListOf<ScreenSessionEntry>() }
 
     /** SFTP：选主机覆盖层 / 当前会话 / 认证与主机密钥弹窗。 */
@@ -276,7 +305,7 @@ fun AppRoot(repository: HostRepository) {
                         // 指纹变更：弹窗让用户核对新旧指纹
                         val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                         sftpHostKey = req
-                        val accepted = runBlocking { req.deferred.await() }
+                        val accepted = awaitHostKeyPromptAnswer(req.deferred)
                         if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                         return accepted
                     }
@@ -284,7 +313,7 @@ fun AppRoot(repository: HostRepository) {
                     if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
                     val req = HostKeyRequest(hostKey)
                     sftpHostKey = req
-                    val accepted = runBlocking { req.deferred.await() }
+                    val accepted = awaitHostKeyPromptAnswer(req.deferred)
                     if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                     return accepted
                 }
@@ -336,14 +365,14 @@ fun AppRoot(repository: HostRepository) {
                         if (known == hostKey.fingerprintSha256) return true
                         val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                         sftpHostKey = req
-                        val accepted = runBlocking { req.deferred.await() }
+                        val accepted = awaitHostKeyPromptAnswer(req.deferred)
                         if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                         return accepted
                     }
                     if (!repository.loadSettings().verifyHostKeyOnFirstUse) return true
                     val req = HostKeyRequest(hostKey)
                     sftpHostKey = req
-                    val accepted = runBlocking { req.deferred.await() }
+                    val accepted = awaitHostKeyPromptAnswer(req.deferred)
                     if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
                     return accepted
                 }
@@ -462,6 +491,47 @@ fun AppRoot(repository: HostRepository) {
                 }
             } catch (e: Exception) {
                 snackbarHostState.showSnackbar(appStrings.screen.connecting + " " + (e.message ?: ""))
+            }
+        }
+    }
+
+    // 关闭屏幕会话并移除条目（全屏 ✕ / Agent 页关闭按钮）
+    val closeScreenForHost: (Host) -> Unit = { host ->
+        screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
+        screenSessions.removeAll { it.host.id == host.id }
+    }
+
+    // 全屏帧率/画质切换：SSH 写远端 relay 配置 → 重建会话生效。
+    // ⚠️ 档位必须设置在【重建后的新 uiState】上：重建（establishScreen）
+    // 会创建新 ScreenUiState（默认档位），设在旧对象上会被替换掉，
+    // 右上角数字永远不变（用户反馈）
+    val streamConfigChange: (Host, Int, String) -> Unit = { host, fps, scale ->
+        scope.launch {
+            val entry = screenSessions.firstOrNull { it.host.id == host.id }
+            // 旧条目 uiState 也同步档位：断流自动重连（onStreamLost）
+            // 用旧 uiState 重建时会保留新档位，不被 30 覆盖（用户反馈：
+            // 切帧率后右上角仍显示 30——自动重连与重建竞态）
+            entry?.uiState?.streamFps = fps
+            entry?.uiState?.streamQuality =
+                when (scale) {
+                    "960:-2" -> 0
+                    "1920:-2" -> 2
+                    else -> 1
+                }
+            entry?.session?.setStreamConfig(fps, scale)
+            establishScreen(host) { session, uiState ->
+                screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
+                screenSessions.removeAll { it.host.id == host.id }
+                uiState.streamFps = fps
+                uiState.streamQuality =
+                    when (scale) {
+                        "960:-2" -> 0
+                        "1920:-2" -> 2
+                        else -> 1
+                    }
+                screenSessions.add(
+                    ScreenSessionEntry(host, entry?.ownerSessionId ?: "", session, uiState),
+                )
             }
         }
     }
@@ -860,7 +930,6 @@ fun AppRoot(repository: HostRepository) {
                                             onChange = { new ->
                                                 // 即改即存
                                                 repository.saveSettings(new)
-                                                settings = new
                                             },
                                             repository = repository,
                                             subPage = settingsSubPage,
@@ -908,6 +977,15 @@ fun AppRoot(repository: HostRepository) {
                                 host = host,
                                 repository = repository,
                                 onBack = { screen = Screen.Home },
+                                // 屏幕远控（复用终端页推流基础设施）：会话条目/回调
+                                // 由 AppRoot 持有，Agent 页内全屏播放、关闭/重连/安装/档位
+                                // 走同一套 establishScreen 流程（Agent 连接不因切页而断）
+                                screenEntry = screenSessions.firstOrNull { it.host.id == host.id },
+                                onStartScreen = openScreen,
+                                onCloseScreen = closeScreenForHost,
+                                onReconnectScreen = reconnectScreenForHost,
+                                onInstallScreenService = installScreenService,
+                                onScreenConfigChange = streamConfigChange,
                             )
                         }
                     }
@@ -1054,36 +1132,7 @@ fun AppRoot(repository: HostRepository) {
                                 // ⚠️ 档位必须设置在【重建后的新 uiState】上：重建（establishScreen）
                                 // 会创建新 ScreenUiState（默认档位），设在旧对象上会被替换掉，
                                 // 右上角数字永远不变（用户反馈）
-                                onStreamConfigChange = { host, fps, scale ->
-                                    scope.launch {
-                                        val entry = screenSessions.firstOrNull { it.host.id == host.id }
-                                        // 旧条目 uiState 也同步档位：断流自动重连（onStreamLost）
-                                        // 用旧 uiState 重建时会保留新档位，不被 30 覆盖（用户反馈：
-                                        // 切帧率后右上角仍显示 30——自动重连与重建竞态）
-                                        entry?.uiState?.streamFps = fps
-                                        entry?.uiState?.streamQuality =
-                                            when (scale) {
-                                                "960:-2" -> 0
-                                                "1920:-2" -> 2
-                                                else -> 1
-                                            }
-                                        entry?.session?.setStreamConfig(fps, scale)
-                                        establishScreen(host) { session, uiState ->
-                                            screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
-                                            screenSessions.removeAll { it.host.id == host.id }
-                                            uiState.streamFps = fps
-                                            uiState.streamQuality =
-                                                when (scale) {
-                                                    "960:-2" -> 0
-                                                    "1920:-2" -> 2
-                                                    else -> 1
-                                                }
-                                            screenSessions.add(
-                                                ScreenSessionEntry(host, entry?.ownerSessionId ?: "", session, uiState),
-                                            )
-                                        }
-                                    }
-                                },
+                                onStreamConfigChange = streamConfigChange,
                                 // 屏幕断线重连：重建会话替换 tab
                                 onReconnectScreen = { tab ->
                                     scope.launch {
@@ -1166,57 +1215,18 @@ fun AppRoot(repository: HostRepository) {
 
                 // 收藏夹对话框（终端 + 菜单入口）：列收藏路径，点击直达
                 favoritesDialog?.let { (host, favs) ->
-                    AlertDialog(
-                        onDismissRequest = { favoritesDialog = null },
-                        title = { Text(appStrings.sftpExt.favoritesTitle) },
-                        text = {
-                            Column {
-                                favs.forEach { fav ->
-                                    Row(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clickable {
-                                                favoritesDialog = null
-                                                connectSftp(host, fav)
-                                            }.padding(vertical = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.FolderOpen,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                        Text(
-                                            fav,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
-                                        )
-                                        IconButton(
-                                            onClick = {
-                                                val remaining = favs - fav
-                                                favoritesDialog = host to remaining
-                                                repository.saveFavorites(host.id, remaining)
-                                            },
-                                            modifier = Modifier.size(28.dp),
-                                        ) {
-                                            Icon(
-                                                Icons.Filled.Close,
-                                                contentDescription = null,
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.size(14.dp),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                    SftpFavoritesDialog(
+                        favorites = favs,
+                        onOpen = { favorite ->
+                            favoritesDialog = null
+                            connectSftp(host, favorite)
                         },
-                        confirmButton = {
-                            TextButton(onClick = { favoritesDialog = null }) { Text(appStrings.terminalCancel) }
+                        onRemove = { favorite ->
+                            val remaining = favs - favorite
+                            favoritesDialog = host to remaining
+                            repository.saveFavorites(host.id, remaining)
                         },
+                        onDismiss = { favoritesDialog = null },
                     )
                 }
 
