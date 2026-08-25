@@ -45,6 +45,12 @@ expect class ScreenPlayer(
 
     /** 视频实际尺寸（解码器上报，UI 按宽高比布局 + 远程操作坐标映射）。 */
     val videoDims: MutableState<Pair<Int, Int>?>
+
+    /** 最近一帧成功提交到显示层的时间；用于区分网络有帧与解码渲染卡死。 */
+    val lastRenderedAtMillis: Long
+
+    /** 当前是否有实际渲染面；切到其它会话时无 Surface 不属于播放器卡死。 */
+    val renderSurfaceAttached: Boolean
 }
 
 /** 视频渲染面（Android = SurfaceView；iOS = AVSampleBufferDisplayLayer）。 */

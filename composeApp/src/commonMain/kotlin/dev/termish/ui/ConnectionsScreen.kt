@@ -71,6 +71,7 @@ fun ConnectionsScreen(
                 when (item) {
                     is HostSessionItem.Terminal -> item.controller.host
                     is HostSessionItem.Sftp -> item.host
+                    is HostSessionItem.Screen -> item.entry.host
                 }
             query.isBlank() ||
                 host.name.contains(query, ignoreCase = true) ||
@@ -133,13 +134,6 @@ fun ConnectionsScreen(
                         shape = RoundedCornerShape(14.dp),
                     )
                 }
-                // 分组标题（与首页「我的主机」同款样式，左距对齐卡片 8dp）
-                Text(
-                    s.connSectionTitle,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                    modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
-                )
             }
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -155,17 +149,20 @@ fun ConnectionsScreen(
                         when (it) {
                             is HostSessionItem.Terminal -> it.controller.sessionId
                             is HostSessionItem.Sftp -> "sftp:${it.host.id}:${it.session.hashCode()}"
+                            is HostSessionItem.Screen -> "screen:${it.entry.host.id}:${it.entry.uiState.hashCode()}"
                         }
                     }) { item ->
                         val host =
                             when (item) {
                                 is HostSessionItem.Terminal -> item.controller.host
                                 is HostSessionItem.Sftp -> item.host
+                                is HostSessionItem.Screen -> item.entry.host
                             }
                         val title =
                             when (item) {
                                 is HostSessionItem.Terminal -> item.controller.title
-                                is HostSessionItem.Sftp -> "${host.username}@${host.hostname}"
+                                is HostSessionItem.Sftp, is HostSessionItem.Screen ->
+                                    host.name.ifBlank { host.hostname }
                             }
                         val active = item.isActive
                         Card(
@@ -181,10 +178,20 @@ fun ConnectionsScreen(
                                 },
                                 supportingContent = {
                                     Text(
-                                        if (item is HostSessionItem.Sftp) {
-                                            "${host.username}@${host.hostname} · SFTP"
-                                        } else {
-                                            "${host.username}@${host.hostname}:${host.port}"
+                                        when (item) {
+                                            is HostSessionItem.Sftp ->
+                                                "${host.username}@${host.hostname} · SFTP"
+                                            is HostSessionItem.Screen ->
+                                                "${host.username}@${host.hostname} · ${s.hostsActionScreen}"
+                                            is HostSessionItem.Terminal -> {
+                                                val launchLabel =
+                                                    if (item.controller.launchMode == TerminalLaunchMode.HERDR) {
+                                                        s.hostsActionHerdr
+                                                    } else {
+                                                        s.hostsActionTerminal
+                                                    }
+                                                "${host.username}@${host.hostname}:${host.port} · $launchLabel"
+                                            }
                                         },
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -192,7 +199,8 @@ fun ConnectionsScreen(
                                 },
                                 leadingContent = {
                                     val isConnecting =
-                                        item is HostSessionItem.Terminal &&
+                                        item.isConnecting ||
+                                            item is HostSessionItem.Terminal &&
                                             (
                                                 item.controller.status == ConnStatus.CONNECTING ||
                                                     item.controller.status == ConnStatus.AUTH
@@ -208,13 +216,19 @@ fun ConnectionsScreen(
                                                 .size(10.dp)
                                                 .clip(CircleShape)
                                                 .background(
-                                                    if (item is HostSessionItem.Terminal) {
-                                                        statusColor(
-                                                            item.controller.status,
-                                                            item.controller.linkLostSeconds,
-                                                        )
-                                                    } else {
-                                                        StatusColors.Connected
+                                                    when (item) {
+                                                        is HostSessionItem.Terminal ->
+                                                            statusColor(
+                                                                item.controller.status,
+                                                                item.controller.linkLostSeconds,
+                                                            )
+                                                        is HostSessionItem.Sftp ->
+                                                            if (item.session != null) {
+                                                                StatusColors.Connected
+                                                            } else {
+                                                                StatusColors.Neutral
+                                                            }
+                                                        is HostSessionItem.Screen -> StatusColors.Connected
                                                     },
                                                 ),
                                         )

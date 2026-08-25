@@ -180,10 +180,7 @@ import dev.termish.generated.resources.agent_codex
 import dev.termish.generated.resources.agent_gemini
 import dev.termish.generated.resources.agent_opencode
 import dev.termish.generated.resources.agent_pi
-import dev.termish.ssh.AuthPrompt
-import dev.termish.ssh.HostKeyInfo
 import dev.termish.ssh.SftpSession
-import dev.termish.ssh.SshCallbacks
 import dev.termish.ui.theme.AgentBrandColors
 import dev.termish.ui.theme.Corners
 import dev.termish.ui.theme.Sizes
@@ -264,6 +261,9 @@ private enum class AgentSlashDialog { MODEL, STATUS, HELP, ERROR }
 fun AgentScreen(
     host: Host,
     repository: HostRepository,
+    controller: AgentBridgeController,
+    /** 离开页面后由 AppRoot 启动一分钟闲置计时；超时前再次进入会取消释放。 */
+    onRelease: () -> Unit,
     onBack: () -> Unit,
     /** 屏幕远控会话条目（AppRoot 持有；非空 = Agent 页内全屏播放远程画面）。 */
     screenEntry: ScreenSessionEntry? = null,
@@ -279,63 +279,11 @@ fun AgentScreen(
     onScreenConfigChange: (Host, Int, String) -> Unit = { _, _, _ -> },
 ) {
     val scope = rememberCoroutineScope()
-    var authRequest by remember { mutableStateOf<AuthPromptRequest?>(null) }
-    var hostKeyRequest by remember { mutableStateOf<HostKeyRequest?>(null) }
-    val callbacks =
-        remember(host.id) {
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-
-                override suspend fun onStderr(data: ByteArray) {}
-
-                override fun onExitStatus(status: Int) {}
-
-                override fun onClosed(reason: String?) {}
-
-                override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-                    val request = AuthPromptRequest(prompt)
-                    authRequest = request
-                    return awaitAuthPromptAnswer(request.deferred).also {
-                        if (authRequest === request) authRequest = null
-                    }
-                }
-
-                override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-                    val known = repository.getHost(host.id)?.knownHostFingerprint ?: host.knownHostFingerprint
-                    if (known == hostKey.fingerprintSha256) return true
-                    if (known == null && !repository.loadSettings().verifyHostKeyOnFirstUse) return true
-                    val request = HostKeyRequest(hostKey, known != null, known)
-                    hostKeyRequest = request
-                    val accepted = awaitHostKeyPromptAnswer(request.deferred)
-                    if (hostKeyRequest === request) hostKeyRequest = null
-                    if (accepted) repository.touchConnected(host.id, hostKey.fingerprintSha256)
-                    return accepted
-                }
-            }
-        }
-    val controller = remember(host.id) { AgentBridgeController(host, repository, callbacks, scope) }
-
-    LaunchedEffect(controller) { controller.connect() }
+    LaunchedEffect(controller) {
+        if (controller.state == AgentBridgeState.IDLE) controller.connect()
+    }
     DisposableEffect(controller) {
-        onDispose {
-            authRequest?.deferred?.complete(null)
-            authRequest = null
-            hostKeyRequest?.deferred?.complete(false)
-            hostKeyRequest = null
-            controller.close()
-        }
-    }
-    authRequest?.let { request ->
-        AuthPromptDialog(request.prompt) { answers ->
-            authRequest = null
-            request.deferred.complete(answers)
-        }
-    }
-    hostKeyRequest?.let { request ->
-        HostKeyDialog(request.key, request.changed, request.previousFingerprint) { accepted ->
-            hostKeyRequest = null
-            request.deferred.complete(accepted)
-        }
+        onDispose(onRelease)
     }
 
     AgentWorkspace(
@@ -411,7 +359,6 @@ private fun AgentWorkspace(
         rememberFilePicker { file ->
             uploader.enqueue(file, uploadTargetDir.orEmpty().ifBlank { "/tmp" })
         }
-    val canNavigateWithinWorkspace = page != AgentWorkspacePage.CHAT || controller.currentSession != null
     val density = LocalDensity.current
     val backGestureEdge = with(density) { Sizes.AgentBackGestureEdge.toPx() }
     val backGestureThreshold = with(density) { Sizes.AgentBackGestureThreshold.toPx() }
@@ -545,32 +492,33 @@ private fun AgentWorkspace(
     // 对话框和 BottomSheet 自己消费返回；即使漏掉，也不会穿透到 AppRoot 直接回首页。
     PlatformBackHandler(enabled = true, onBack = ::handleWorkspaceBack)
 
+    // Agent 页的左边缘始终代表返回：覆盖层 → 子页面 → 当前对话 → Termish。
+    // 之前首页禁用了此手势，ModalNavigationDrawer 会把它当成开抽屉，导致
+    // Android 用户从边缘滑动无法退出 Agent 页面。
     val backSwipeModifier =
-        if (canNavigateWithinWorkspace) {
-            Modifier.pointerInput(controller.currentSession?.id, page) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (down.position.x > backGestureEdge) return@awaitEachGesture
-                    val start = down.position
-                    while (true) {
-                        val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        val horizontal = change.position.x - start.x
-                        val vertical = change.position.y - start.y
-                        if (horizontal >= backGestureThreshold && horizontal > abs(vertical)) {
-                            change.consume()
-                            handleWorkspaceBack()
-                            break
-                        }
+        Modifier.pointerInput(controller.currentSession?.id, page) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                if (down.position.x > backGestureEdge) return@awaitEachGesture
+                val start = down.position
+                while (true) {
+                    val change = awaitPointerEvent().changes.firstOrNull { it.id == down.id } ?: break
+                    if (!change.pressed) break
+                    val horizontal = change.position.x - start.x
+                    val vertical = change.position.y - start.y
+                    if (horizontal >= backGestureThreshold && horizontal > abs(vertical)) {
+                        change.consume()
+                        handleWorkspaceBack()
+                        break
                     }
                 }
             }
-        } else {
-            Modifier
         }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        // 关闭态禁用边缘开抽屉，避免与页面返回冲突；抽屉打开后保留拖动关闭。
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             AgentDrawer(
                 controller = controller,

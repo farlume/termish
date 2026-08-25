@@ -6,10 +6,12 @@ import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
+import dev.termish.data.HostRepository.RecentTerminalEntry
 import dev.termish.data.resolveCredentials
 import dev.termish.ssh.SftpSession
 import dev.termish.util.TermLog
 import dev.termish.util.base64Encode
+import kotlinx.datetime.Clock
 
 /** SFTP 会话条目（与终端会话平级管理，跨页面存活）。
  *  [session] 可空：进程重启后恢复的条目未连接（session=null），
@@ -24,6 +26,8 @@ data class SftpSessionEntry(
      *  必须凭代次区分「本代连接意外断开」与「旧连接被主动关闭」，
      *  否则旧回调会把 uiState.disconnected 误标回 true（断开 banner 永不消失）。 */
     val connectionToken: Any = Any(),
+    /** 条目首次创建时间；重连替换底层连接时保持不变。 */
+    val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
 )
 
 internal enum class BackgroundReconnectAction {
@@ -122,13 +126,22 @@ class SessionManager(
     ) {
         if (sessions.isNotEmpty()) return
         TermLog.i("session") {
-            "restoreRecent terminals=${repository.loadRecentSessionHostIds().size} sftp=${repository.loadRecentSftpEntries().size}"
+            "restoreRecent terminals=${repository.loadRecentTerminalEntries().size} sftp=${repository.loadRecentSftpEntries().size}"
         }
         val byId = hosts.associateBy { it.id }
-        repository.loadRecentSessionHostIds().forEach { id ->
-            val host = byId[id] ?: return@forEach
+        repository.loadRecentTerminalEntries().forEach { entry ->
+            val host = byId[entry.hostId] ?: return@forEach
             val (pw, key) = resolveCredentials(host)
-            TerminalController(host, pw, key, repository, autoReconnect, strings = strings).also {
+            TerminalController(
+                host,
+                pw,
+                key,
+                repository,
+                autoReconnect,
+                launchMode = if (entry.launchHerdr) TerminalLaunchMode.HERDR else TerminalLaunchMode.SHELL,
+                strings = strings,
+                createdAt = entry.createdAt.takeIf { it > 0L } ?: Clock.System.now().toEpochMilliseconds(),
+            ).also {
                 it.onSystemDetected = onSystemDetected
                 sessions.add(it)
             }
@@ -138,15 +151,33 @@ class SessionManager(
         if (sftpSessions.isEmpty()) {
             repository.loadRecentSftpEntries().forEach { entry ->
                 val host = byId[entry.hostId] ?: return@forEach
-                sftpSessions.add(SftpSessionEntry(host, null, SftpUiState().also { it.path = entry.path }))
+                sftpSessions.add(
+                    SftpSessionEntry(
+                        host = host,
+                        session = null,
+                        uiState = SftpUiState().also { it.path = entry.path },
+                        createdAt = entry.createdAt.takeIf { it > 0L } ?: Clock.System.now().toEpochMilliseconds(),
+                    ),
+                )
             }
         }
+        // 旧条目没有 createdAt：上面已补当前时间，必须立即写回；否则每次进程
+        // 重启都会重新生成时间，菜单里的“创建时间”会看起来不断变化。
+        persist()
     }
 
     private fun persist() {
-        repository.saveRecentSessionHostIds(sessions.map { it.host.id })
+        repository.saveRecentTerminalEntries(
+            sessions.map {
+                RecentTerminalEntry(
+                    hostId = it.host.id,
+                    launchHerdr = it.launchMode == TerminalLaunchMode.HERDR,
+                    createdAt = it.createdAt,
+                )
+            },
+        )
         repository.saveRecentSftpEntries(
-            sftpSessions.map { RecentSftpEntry(it.host.id, it.uiState.path) },
+            sftpSessions.map { RecentSftpEntry(it.host.id, it.uiState.path, it.createdAt) },
         )
     }
 
@@ -157,13 +188,23 @@ class SessionManager(
     fun open(
         host: Host,
         autoReconnect: Boolean,
+        launchMode: TerminalLaunchMode = TerminalLaunchMode.SHELL,
         onSystemDetected: ((Host) -> Unit)? = null,
     ): TerminalController {
         TermLog.i("session") { "open ${host.name} (${sessions.count { it.host.id == host.id } + 1}th)" }
         // 同一主机支持多个会话（Termius 风格）：每次打开都新建，
         // 旧的保留在列表，可从卡片下拉/连接页重入。
         val (pw, key) = resolveCredentials(host)
-        val controller = TerminalController(host, pw, key, repository, autoReconnect, strings = strings)
+        val controller =
+            TerminalController(
+                host,
+                pw,
+                key,
+                repository,
+                autoReconnect,
+                launchMode = launchMode,
+                strings = strings,
+            )
         controller.onSystemDetected = onSystemDetected
         sessions.add(controller)
         persist()
@@ -203,7 +244,14 @@ class SessionManager(
         connectionToken: Any,
     ): SftpSessionEntry {
         val existing = sftpSessions.firstOrNull { it.host.id == host.id }
-        val entry = SftpSessionEntry(host, session, existing?.uiState ?: SftpUiState(), connectionToken)
+        val entry =
+            SftpSessionEntry(
+                host = host,
+                session = session,
+                uiState = existing?.uiState ?: SftpUiState(),
+                connectionToken = connectionToken,
+                createdAt = existing?.createdAt ?: Clock.System.now().toEpochMilliseconds(),
+            )
         // 先摘除旧条目（登记新代次）再 close 旧连接：close 同步触发旧连接的
         // onClosed，届时代次已不匹配，不会把共享 uiState 误标 disconnected
         if (existing != null) {
@@ -235,7 +283,14 @@ class SessionManager(
             val old = entry.session
             // 先替换（新代次立即生效）再关旧连接：旧连接 close 同步触发 onClosed，
             // 代次已不匹配 → 不误标 disconnected（否则重连成功 banner 也不消失）
-            sftpSessions[idx] = SftpSessionEntry(entry.host, newSession, entry.uiState, connectionToken)
+            sftpSessions[idx] =
+                SftpSessionEntry(
+                    entry.host,
+                    newSession,
+                    entry.uiState,
+                    connectionToken,
+                    entry.createdAt,
+                )
             old?.let {
                 try {
                     it.close()
@@ -251,7 +306,13 @@ class SessionManager(
         // 回调查不到可标记对象（disconnected 由这里主动置位，不受旧回调干扰）
         val idx = sftpSessions.indexOf(entry)
         if (idx >= 0) {
-            sftpSessions[idx] = SftpSessionEntry(entry.host, null, entry.uiState)
+            sftpSessions[idx] =
+                SftpSessionEntry(
+                    host = entry.host,
+                    session = null,
+                    uiState = entry.uiState,
+                    createdAt = entry.createdAt,
+                )
             entry.uiState.disconnected = true
             // 用户主动断开：不自动重连（进 tab 显示断开 banner，手动点重连）；
             // 意外断链（onClosed 路径）仍保留自动重连一次

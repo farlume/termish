@@ -1,6 +1,6 @@
 # 原生 Agent 功能差距评估
 
-评估基线：Bridge 协议 v3 / Bridge 0.7.7。当前已覆盖原生对话、流式消息、
+评估基线：Bridge 协议 v3 / Bridge 0.7.8。当前已覆盖原生对话、流式消息、
 Thinking/工具过程卡、事件游标补发与运行中活动快照恢复、会话恢复、停止、附件、可执行快捷命令、Pi RPC，以及按 Agent
 选择内置登录或 DeepSeek（Claude Code / OpenCode / Pi）。Agent 输入框复用全局流式
 语音识别配置，支持实时转写、确认后发送以及错误/超时可见反馈。远端 Agent CLI

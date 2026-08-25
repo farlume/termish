@@ -23,6 +23,10 @@ actual class ScreenPlayer actual constructor(
     }
 
     actual val videoDims: MutableState<Pair<Int, Int>?> = mutableStateOf(null)
+
+    actual val lastRenderedAtMillis: Long = 0L
+
+    actual val renderSurfaceAttached: Boolean = false
 }
 
 @Composable

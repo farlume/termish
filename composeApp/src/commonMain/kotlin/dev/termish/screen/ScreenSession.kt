@@ -21,6 +21,7 @@ internal data class ScreenSessionMessages(
     val tcpPortMissing: String,
     val tcpChannelFailed: (Int) -> String,
     val tcpDisconnected: String,
+    val screenInUse: String,
     val ffmpegMissing: String,
     val unsupportedOs: (String) -> String,
     val relayUpgradeRequired: String,
@@ -90,10 +91,21 @@ class ScreenSession internal constructor(
             try {
                 val session = withContext(ioDispatcher()) { createSshSession(connection, callbacks) }
                 ssh = session
+                // close() 可能发生在 create/connect 的阻塞阶段（快速切画质、连续点
+                // 重连）。旧实现只把 running 置 false，但启动协程仍会继续建立
+                // direct-tcpip，成为“幽灵连接”并踢掉新画面，形成数秒一次的循环。
+                if (!running) {
+                    session.close()
+                    return@launch
+                }
                 // 先建立连接 + 认证，后续控制面 exec 与视频 direct-tcpip
                 // 都复用这条 SSH 连接。
                 val connected = withContext(ioDispatcher()) { session.connectAuthOnly() }
                 TermLog.i("screen") { "connectAuthOnly=${connected != null}" }
+                if (!running) {
+                    session.close()
+                    return@launch
+                }
                 if (connected == null) {
                     uiState.error = messages.connectionFailed
                     running = false
@@ -106,6 +118,10 @@ class ScreenSession internal constructor(
                     withContext(ioDispatcher()) {
                         session.runCommandDetailed(READ_STREAM_SCRIPT, 15_000)
                     }
+                if (!running) {
+                    session.close()
+                    return@launch
+                }
                 if (result == null) {
                     uiState.error = messages.readChannelFailed
                     running = false
@@ -148,6 +164,11 @@ class ScreenSession internal constructor(
                     if (attempt < 5) delay(250)
                 }
                 val directChannel = videoChannel
+                if (!running) {
+                    directChannel?.close()
+                    session.close()
+                    return@launch
+                }
                 if (directChannel == null) {
                     uiState.error = messages.tcpChannelFailed(tcpPort)
                     running = false
@@ -159,11 +180,17 @@ class ScreenSession internal constructor(
                         onReady = {
                             firstFrameDeadline = 0
                             scope.launch {
+                                val readyAt = Clock.System.now().toEpochMilliseconds()
+                                uiState.videoReadyAtMillis = readyAt
                                 uiState.videoReady = true
                                 // 画面到达：清除超时与息屏/锁屏提示（可恢复状态）
                                 if (uiState.error == firstFrameError) uiState.error = null
                                 firstFrameError = null
                                 uiState.screenHint = null
+                                delay(SCREEN_STABLE_WINDOW_MS)
+                                if (running && uiState.videoReadyAtMillis == readyAt) {
+                                    uiState.streamReconnectAttempts = 0
+                                }
                             }
                         },
                         onError = { failure -> scope.launch { uiState.error = messages.playerFailure(failure) } },
@@ -179,10 +206,20 @@ class ScreenSession internal constructor(
                     when (capScale) {
                         0 -> 960
                         2 -> 1920
+                        3 -> 2560
                         else -> 1280
                     }
                 uiState.decoderMaxFps = probeDecoderMaxFps(capW, (capW * 9 / 16).coerceAtLeast(480))
                 TermLog.i("screen") { "decoder capability: ${uiState.decoderMaxFps}fps @ ${capW}p" }
+                // close() 也可能发生在播放器/解码能力初始化期间。必须在真正发送
+                // TCP 认证包前再核对一次，否则已被替换的旧会话仍会晚到远端，
+                // 抢占新会话并造成 3~6 秒一次的断开循环。
+                if (!running) {
+                    p.stop()
+                    directChannel.close()
+                    session.close()
+                    return@launch
+                }
                 firstFrameDeadline = Clock.System.now().toEpochMilliseconds() + 12_000
                 // 首帧超时监控：连接建立但迟迟无帧 → 提示（避免无限黑屏）。
                 // 首帧到达后 onReady 把 deadline 清零，本监控自然退出
@@ -207,10 +244,30 @@ class ScreenSession internal constructor(
                         authToken = authToken,
                         onVideoPacket = { data -> p.feed(data) },
                         onStatus = { status ->
-                            // 首包控制状态：0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
-                            scope.launch {
-                                uiState.controlPermissionMissing = status == 1
-                                uiState.controlUnsupported = status == 2
+                            // 首包状态：0=OK，1=macOS 缺辅助功能权限，2=不支持控制，
+                            // 3=已有另一台设备占用。占用是明确拒绝，不进入自动重连。
+                            if (status == SCREEN_TCP_STATUS_BUSY) {
+                                running = false
+                                firstFrameDeadline = 0
+                                TermLog.i("screen") { "screen stream is already in use by another device" }
+                                scope.launch {
+                                    runCatching { p.stop() }
+                                    if (player === p) player = null
+                                    uiState.player = null
+                                    uiState.controlSender = null
+                                    uiState.keySender = null
+                                    uiState.connected = false
+                                    uiState.videoReady = false
+                                    uiState.error = messages.screenInUse
+                                }
+                                scope.launch(ioDispatcher()) { session.close() }
+                                false
+                            } else {
+                                scope.launch {
+                                    uiState.controlPermissionMissing = status == 1
+                                    uiState.controlUnsupported = status == 2
+                                }
+                                true
                             }
                         },
                         onDisconnected = {
@@ -218,6 +275,11 @@ class ScreenSession internal constructor(
                             // AppRoot 的完整重连，重新认证并重建干净通道。
                             if (running) {
                                 running = false
+                                val readyFor =
+                                    uiState.videoReadyAtMillis
+                                        .takeIf { it > 0 }
+                                        ?.let { Clock.System.now().toEpochMilliseconds() - it }
+                                TermLog.w("screen") { "video channel disconnected readyForMs=$readyFor" }
                                 scope.launch {
                                     uiState.connected = false
                                     uiState.error = messages.tcpDisconnected
@@ -228,6 +290,36 @@ class ScreenSession internal constructor(
                     )
                 tcpSession = tcp
                 tcp.start()
+                if (!running) {
+                    tcp.close()
+                    p.stop()
+                    session.close()
+                    return@launch
+                }
+                // 视频包持续到达不代表画面仍在推进：部分 Android MediaCodec
+                // 驱动会在 native dequeue 中永久阻塞。检测显示层停滞后重建整条
+                // 播放链路，避免界面一直停在第一帧却仍显示“控制中”。
+                scope.launch {
+                    while (running && tcp.isActive()) {
+                        delay(1_000)
+                        val now = Clock.System.now().toEpochMilliseconds()
+                        val renderedAt = p.lastRenderedAtMillis
+                        if (
+                            isScreenRenderingStalled(
+                                now,
+                                renderedAt,
+                                uiState.videoReady,
+                                p.renderSurfaceAttached,
+                            )
+                        ) {
+                            TermLog.w("screen") {
+                                "视频渲染停滞：idle=${now - renderedAt}ms，主动重建播放链路"
+                            }
+                            tcp.fail("render-stalled")
+                            break
+                        }
+                    }
+                }
                 uiState.connected = true
                 // 远程操作发送器：控制包走 TCP 通道
                 uiState.controlSender = { type, x, y, extra ->
@@ -338,6 +430,14 @@ class ScreenSession internal constructor(
                     } else {
                         true
                     }
+                val xlibPresent =
+                    if (os == "Linux") {
+                        withContext(ioDispatcher()) {
+                            s.runCommand(XLIB_PROBE_SCRIPT, 3_000)?.contains("XLIB_OK") == true
+                        }
+                    } else {
+                        true
+                    }
                 val isRoot =
                     os == "Linux" &&
                         withContext(ioDispatcher()) { s.runCommand("id -u", 3_000)?.trim() == "0" }
@@ -348,7 +448,7 @@ class ScreenSession internal constructor(
                             s.runCommand("command -v sudo", 3_000)?.isNotBlank() == true
                         }
                 val sudoPasswordless =
-                    if (os == "Linux" && !ffmpegPresent && !isRoot && hasSudo) {
+                    if (os == "Linux" && (!ffmpegPresent || !xlibPresent) && !isRoot && hasSudo) {
                         withContext(ioDispatcher()) {
                             s
                                 .runCommand("sudo -n true 2>/dev/null && echo SUDO_OK", 3_000)
@@ -361,6 +461,7 @@ class ScreenSession internal constructor(
                     needsScreenSudoPassword(
                         os = os,
                         ffmpegPresent = ffmpegPresent,
+                        xlibPresent = xlibPresent,
                         isRoot = isRoot,
                         hasSudo = hasSudo,
                         sudoPasswordless = sudoPasswordless,
@@ -485,16 +586,23 @@ class ScreenSession internal constructor(
             done
             """.trimIndent()
 
+        /** Linux 远程控制依赖探测；缺失时与 ffmpeg 共用一次 sudo 授权安装。 */
+        internal val XLIB_PROBE_SCRIPT =
+            """
+            /usr/bin/python3 -c 'import Xlib' >/dev/null 2>&1 && echo XLIB_OK
+            """.trimIndent()
+
         /** Linux 缺依赖时是否需要弹出 sudo 密码输入；纯逻辑供各平台一致回归。 */
         internal fun needsScreenSudoPassword(
             os: String?,
             ffmpegPresent: Boolean,
+            xlibPresent: Boolean = true,
             isRoot: Boolean,
             hasSudo: Boolean,
             sudoPasswordless: Boolean,
         ): Boolean =
             os == "Linux" &&
-                !ffmpegPresent &&
+                (!ffmpegPresent || !xlibPresent) &&
                 !isRoot &&
                 hasSudo &&
                 !sudoPasswordless
@@ -505,7 +613,7 @@ class ScreenSession internal constructor(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 26
+        const val RELAY_VERSION = 41
 
         /**
          * 读流前置脚本：只做 relay/版本/ffmpeg/显示状态探测，成功时回报
@@ -533,11 +641,29 @@ class ScreenSession internal constructor(
                   echo "SCREEN_NO_DISPLAY" >&2
                   exit 1
                 fi
-                if ! pgrep -x Xorg >/dev/null 2>&1 && ! pgrep -x X >/dev/null 2>&1 && ! pgrep -x Xwayland >/dev/null 2>&1; then
+                # 不能把 GDM greeter 自己的 Xwayland 当成当前 SSH 用户桌面：
+                # 机器刚重启、用户尚未图形登录时它通常属于 gdm-greeter，当前
+                # 用户既读不到 Xauthority，也无法注入控制事件。
+                HAS_USER_DISPLAY=0
+                if pgrep -u "${'$'}(id -u)" -x Xorg >/dev/null 2>&1 \
+                  || pgrep -u "${'$'}(id -u)" -x X >/dev/null 2>&1 \
+                  || pgrep -u "${'$'}(id -u)" -x Xwayland >/dev/null 2>&1; then
+                  HAS_USER_DISPLAY=1
+                elif command -v loginctl >/dev/null 2>&1; then
+                  for sid in ${'$'}(loginctl list-sessions --no-legend 2>/dev/null | awk -v uid="${'$'}(id -u)" '${'$'}2 == uid { print ${'$'}1 }'); do
+                    SESSION_TYPE="${'$'}(loginctl show-session "${'$'}sid" -p Type --value 2>/dev/null)"
+                    SESSION_REMOTE="${'$'}(loginctl show-session "${'$'}sid" -p Remote --value 2>/dev/null)"
+                    case "${'$'}SESSION_TYPE:${'$'}SESSION_REMOTE" in
+                      x11:no) HAS_USER_DISPLAY=1; break ;;
+                    esac
+                  done
+                fi
+                if [ "${'$'}HAS_USER_DISPLAY" != "1" ]; then
                   echo "SCREEN_NO_DISPLAY" >&2
                   exit 1
                 fi
-                if ! pgrep -x Xorg >/dev/null 2>&1 && pgrep -x Xwayland >/dev/null 2>&1; then
+                if ! pgrep -u "${'$'}(id -u)" -x Xorg >/dev/null 2>&1 \
+                  && pgrep -u "${'$'}(id -u)" -x Xwayland >/dev/null 2>&1; then
                   echo "SCREEN_WAYLAND_ONLY" >&2
                 fi
                 ;;
@@ -628,6 +754,22 @@ class ScreenSession internal constructor(
             for cand in ${'$'}(command -v ffmpeg 2>/dev/null) "${'$'}HOME/bin/ffmpeg" /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg /usr/bin/ffmpeg; do
               if [ -n "${'$'}cand" ] && [ -x "${'$'}cand" ]; then FF="${'$'}cand"; break; fi
             done
+            # Linux 系统依赖共用同一授权入口。不能只在缺 ffmpeg 时定义，否则
+            # ffmpeg 已存在、python-xlib 缺失时会绕过 App 提供的 sudo 密码，
+            # 最终画面可看但被误报为“不支持远程控制”。
+            if [ "${'$'}OS" = "Linux" ]; then
+              ADMIN_AVAILABLE=1
+              if [ "${'$'}(id -u)" = "0" ]; then
+                run_admin() { "${'$'}@"; }
+              elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+                run_admin() { sudo -n "${'$'}@"; }
+              elif [ "${'$'}{TERMISH_SUDO_STDIN:-}" = "1" ] && command -v sudo >/dev/null 2>&1; then
+                run_admin() { sudo -S -p '' "${'$'}@"; }
+              else
+                ADMIN_AVAILABLE=0
+                run_admin() { return 1; }
+              fi
+            fi
             if [ -z "${'$'}FF" ]; then
               if [ "${'$'}OS" = "Darwin" ]; then
               if command -v brew >/dev/null 2>&1; then
@@ -650,13 +792,7 @@ class ScreenSession internal constructor(
               else
                 # Linux：root 或免密 sudo 时自动安装；App 已提供密码时走 sudo -S；
                 # 缺少可用授权方式时输出与发行版匹配的手动命令。
-                if [ "${'$'}(id -u)" = "0" ]; then
-                  run_admin() { "${'$'}@"; }
-                elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
-                  run_admin() { sudo -n "${'$'}@"; }
-                elif [ "${'$'}{TERMISH_SUDO_STDIN:-}" = "1" ] && command -v sudo >/dev/null 2>&1; then
-                  run_admin() { sudo -S -p '' "${'$'}@"; }
-                else
+                if [ "${'$'}ADMIN_AVAILABLE" != "1" ]; then
                   if command -v apt-get >/dev/null 2>&1; then
                     echo "==> Linux 需要管理员权限：请先在终端执行 sudo apt-get update && sudo apt-get install -y ffmpeg，然后重试" >&2
                   elif command -v dnf >/dev/null 2>&1; then
@@ -715,15 +851,19 @@ class ScreenSession internal constructor(
             fi
             # ---- 远程操作依赖：python3-xlib（XTEST 注入）+ xclip（文本粘贴，仅 Linux）----
             if [ "${'$'}OS" = "Linux" ]; then
-              # python3-xlib：优先系统包（免密 sudo），失败退 pip --user（python-xlib）
+              # python3-xlib：优先系统包（复用 App 提供的 sudo 密码），失败再退
+              # pip --user。Ubuntu 的 externally-managed Python 常会拒绝 pip，
+              # 因此不能像旧实现一样只尝试 sudo -n 后静默降级。
               if /usr/bin/python3 -c "import Xlib" 2>/dev/null; then
                 echo "==> python-xlib: 已就绪"
               else
                 _XOK=0
                 if command -v apt-get >/dev/null 2>&1; then
-                  { sudo -n apt-get install -y -qq python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
+                  { run_admin apt-get install -y -qq python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
                 elif command -v dnf >/dev/null 2>&1; then
-                  { sudo -n dnf install -y -q python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
+                  { run_admin dnf install -y -q python3-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
+                elif command -v pacman >/dev/null 2>&1; then
+                  { run_admin pacman -S --needed --noconfirm python-xlib 2>/dev/null || /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null; } && _XOK=1
                 else
                   /usr/bin/python3 -m pip install --user -q python-xlib 2>/dev/null && _XOK=1
                 fi
@@ -735,9 +875,11 @@ class ScreenSession internal constructor(
               else
                 _XCLIP_OK=0
                 if command -v apt-get >/dev/null 2>&1; then
-                  sudo -n apt-get install -y -qq xclip 2>/dev/null && _XCLIP_OK=1
+                  run_admin apt-get install -y -qq xclip 2>/dev/null && _XCLIP_OK=1
                 elif command -v dnf >/dev/null 2>&1; then
-                  sudo -n dnf install -y -q xclip 2>/dev/null && _XCLIP_OK=1
+                  run_admin dnf install -y -q xclip 2>/dev/null && _XCLIP_OK=1
+                elif command -v pacman >/dev/null 2>&1; then
+                  run_admin pacman -S --needed --noconfirm xclip 2>/dev/null && _XCLIP_OK=1
                 fi
                 [ "${'$'}_XCLIP_OK" = "1" ] && echo "==> xclip: 安装完成" || echo "==> xclip: 安装失败——文本粘贴不可用（鼠标/键码仍可用）"
               fi
@@ -759,10 +901,43 @@ class ScreenSession internal constructor(
             CONTROL_MAGIC = b"THC1"
             STATUS_MAGIC = b"THS1"
             AUTH_MAGIC = b"THA1"
+            HEARTBEAT_TYPE = 13
+            TCP_OWNER_LEASE_SECONDS = 6.0
             AUTH_TOKEN_FILE = os.path.expanduser("~/.termish-screen.token")
             AUTH_TOKEN = open(AUTH_TOKEN_FILE, "rb").read().strip()
             if len(AUTH_TOKEN) != 64 or any(c not in b"0123456789abcdefABCDEF" for c in AUTH_TOKEN):
                 raise RuntimeError("invalid screen auth token")
+
+            def stop_legacy_relay_listener():
+                # 早期版本可能没有可靠 PID 文件；新进程在 bind 前按监听端口定位
+                # 旧 relay，并核对 cmdline 含当前脚本绝对路径后才终止它。
+                if sys.platform == "darwin":
+                    return
+                pids = []
+                try:
+                    out = subprocess.run(
+                        ["lsof", "-t", "-iTCP:%d" % TCP_PORT, "-sTCP:LISTEN"],
+                        capture_output=True, text=True, timeout=2,
+                    ).stdout
+                    pids = [int(p) for p in out.split() if p.isdigit()]
+                except Exception:
+                    pass
+                relay_path = os.path.realpath(__file__)
+                stopped = False
+                for pid in set(pids):
+                    if pid == os.getpid():
+                        continue
+                    try:
+                        cmdline = open("/proc/%d/cmdline" % pid, "rb").read().replace(b"\x00", b" ").decode("utf-8", "ignore")
+                        if relay_path not in cmdline:
+                            continue
+                        os.kill(pid, signal.SIGTERM)
+                        stopped = True
+                    except Exception:
+                        pass
+                if stopped:
+                    time.sleep(1.0)
+
             AUD_TYPE = 9  # AUD NAL 类型（帧对齐切分标记；模块级：class 作用域不进方法）
             # 远程操作：Quartz CGEvent 模拟鼠标/滚轮（点击需辅助功能权限）。
             # 系统 python 默认无 pyobjc：安装脚本已 pip --user 补装；仍失败时
@@ -786,21 +961,36 @@ class ScreenSession internal constructor(
                 _AXPromptKey = None
             # 授权弹窗节流：首次触发后 30s 内不再弹（防高频控制包反复打扰）
             _LAST_PROMPT = [0.0]
+            # 虚拟鼠标拖动开始前的实体指针位置；拖动结束后恢复，不干扰被控端操作者。
+            _VIRTUAL_MOUSE_ORIGIN = [None]
+            _VIRTUAL_MOUSE_HELD = [False]
+            _VIRTUAL_MOUSE_OWNER = [None]
+            _VIRTUAL_MOUSE_LAST = [(0.0, 0.0)]
 
             # ---- Linux 远程控制：X11 XTEST 注入（对应 macOS CGEvent）----
-            # Xlib 仅 Linux 桌面可用；macOS 上 import 失败 → _XTEST_OK=False 降级
-            #（与 Quartz=None 同理）。Wayland 会话 XTEST 无效（协议禁止全局注入），
-            # 读流脚本已提示改用 Xorg。
+            # Xlib 仅 Linux 桌面可用。模块导入与 X display 建连分开：用户服务可能
+            # 先于图形会话启动，旧实现第一次连接失败后会永久保持“不支持控制”。
+            # 后续状态/控制请求会重试建连，桌面就绪后无需再次重装服务。
             try:
                 from Xlib import X as _XLIB_X
                 from Xlib import XK as _XLIB_XK
                 from Xlib import display as _xdisplay
                 from Xlib.ext import xtest as _xtest
-                _XDISPLAY = _xdisplay.Display()
-                _XTEST_OK = True
+                _XLIB_AVAILABLE = True
             except Exception:
-                _XDISPLAY = None
-                _XTEST_OK = False
+                _XLIB_AVAILABLE = False
+            _XDISPLAY = None
+
+            def _ensure_xtest():
+                global _XDISPLAY
+                if sys.platform == "darwin" or not _XLIB_AVAILABLE:
+                    return False
+                if _XDISPLAY is None:
+                    try:
+                        _XDISPLAY = _xdisplay.Display()
+                    except Exception:
+                        _XDISPLAY = None
+                return _XDISPLAY is not None
 
             # Carbon kVK（US 布局，客户端键码体系）→ X keysym 名。Linux 注入时
             # 反查 X keycode（XKB 布局相关，经 XKeysymToKeycode 换算）
@@ -841,7 +1031,7 @@ class ScreenSession internal constructor(
 
             def _x_inject_control(typ, x, y, extra, payload):
                 # 与 macOS handle_control 相同的控制包语义，Linux 用 XTEST 注入
-                if not _XTEST_OK:
+                if not _ensure_xtest():
                     return
                 try:
                     W = _XDISPLAY.screen().width_in_pixels
@@ -872,6 +1062,14 @@ class ScreenSession internal constructor(
                         btn = 1 if typ == 8 else 3
                         _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, btn)
                         _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, btn)
+                    elif typ == 10:  # 虚拟左键拖动开始
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonPress, 1)
+                    elif typ == 11:  # 虚拟左键拖动移动
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                    elif typ == 12:  # 虚拟左键拖动结束
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.MotionNotify, x=px, y=py)
+                        _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, 1)
                     elif typ == 5:  # 键码：extra=kvK，x 的低位 = 修饰掩码
                         _x_post_key(extra, int(x))
                     elif typ == 4:  # 文本：剪贴板 + Ctrl+V（XTEST 发不了 Unicode）
@@ -914,7 +1112,7 @@ class ScreenSession internal constructor(
                     pass
 
 
-            def handle_control(data, ax_ok):
+            def handle_control(data, ax_ok, owner=None):
                 # 17B: magic4 + type1 + x f32(4) + y f32(4) + extra i32(4)
                 if len(data) < 17 or data[:4] != CONTROL_MAGIC:
                     return
@@ -922,11 +1120,25 @@ class ScreenSession internal constructor(
                 x = struct.unpack(">f", data[5:9])[0]
                 y = struct.unpack(">f", data[9:13])[0]
                 extra = struct.unpack(">i", data[13:17])[0]
+                if typ == 10:
+                    _VIRTUAL_MOUSE_HELD[0] = True
+                    _VIRTUAL_MOUSE_OWNER[0] = owner
+                    _VIRTUAL_MOUSE_LAST[0] = (x, y)
+                elif typ == 11 and _VIRTUAL_MOUSE_HELD[0]:
+                    _VIRTUAL_MOUSE_LAST[0] = (x, y)
+                elif typ == 12:
+                    _VIRTUAL_MOUSE_LAST[0] = (x, y)
                 if sys.platform != "darwin":
                     # Linux：XTEST 注入（鼠标/滚轮/键码/剪贴板文本）
                     _x_inject_control(typ, x, y, extra, data[17:])
+                    if typ == 12:
+                        _VIRTUAL_MOUSE_HELD[0] = False
+                        _VIRTUAL_MOUSE_OWNER[0] = None
                     return
                 if Quartz is None or not ax_ok:
+                    if typ == 10 or typ == 12:
+                        _VIRTUAL_MOUSE_HELD[0] = False
+                        _VIRTUAL_MOUSE_OWNER[0] = None
                     return  # 无权限：状态包由调用方发送，客户端引导授权
                 try:
                     if typ == 4:
@@ -982,6 +1194,36 @@ class ScreenSession internal constructor(
                             if restore is not None:
                                 Quartz.CGEventPost(Quartz.kCGHIDEventTap, restore)
                         return
+                    elif typ == 10:
+                        # 长按开始：记住实体指针，移动虚拟光标并按下左键。
+                        current_event = Quartz.CGEventCreate(None)
+                        if _VIRTUAL_MOUSE_ORIGIN[0] is None and current_event is not None:
+                            _VIRTUAL_MOUSE_ORIGIN[0] = Quartz.CGEventGetLocation(current_event)
+                        ev = Quartz.CGEventCreateMouseEvent(
+                            src, Quartz.kCGEventLeftMouseDown, (px, py), Quartz.kCGMouseButtonLeft
+                        )
+                    elif typ == 11:
+                        # macOS 必须使用 LeftMouseDragged；MouseMoved 不会触发控件拖放。
+                        ev = Quartz.CGEventCreateMouseEvent(
+                            src, Quartz.kCGEventLeftMouseDragged, (px, py), Quartz.kCGMouseButtonLeft
+                        )
+                    elif typ == 12:
+                        up = Quartz.CGEventCreateMouseEvent(
+                            src, Quartz.kCGEventLeftMouseUp, (px, py), Quartz.kCGMouseButtonLeft
+                        )
+                        if up is not None:
+                            Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+                        current = _VIRTUAL_MOUSE_ORIGIN[0]
+                        _VIRTUAL_MOUSE_ORIGIN[0] = None
+                        _VIRTUAL_MOUSE_HELD[0] = False
+                        _VIRTUAL_MOUSE_OWNER[0] = None
+                        if current is not None:
+                            restore = Quartz.CGEventCreateMouseEvent(
+                                src, Quartz.kCGEventMouseMoved, current, Quartz.kCGMouseButtonLeft
+                            )
+                            if restore is not None:
+                                Quartz.CGEventPost(Quartz.kCGHIDEventTap, restore)
+                        return
                     else:
                         return
                     if ev is not None:
@@ -991,6 +1233,39 @@ class ScreenSession internal constructor(
                         sys.stderr.write("control error: %s\n" % e)
                     except Exception:
                         pass
+
+            def release_virtual_mouse(owner):
+                # TCP 异常断开/被新连接替换时也必须补发 mouse-up，避免被控端左键卡住。
+                if not _VIRTUAL_MOUSE_HELD[0] or _VIRTUAL_MOUSE_OWNER[0] is not owner:
+                    return
+                x, y = _VIRTUAL_MOUSE_LAST[0]
+                try:
+                    if sys.platform != "darwin":
+                        if _ensure_xtest():
+                            _xtest.fake_input(_XDISPLAY, _XLIB_X.ButtonRelease, 1)
+                            _XDISPLAY.sync()
+                    elif Quartz is not None:
+                        b = Quartz.CGDisplayBounds(Quartz.CGMainDisplayID())
+                        point = (int(x * b.size.width), int(y * b.size.height))
+                        src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+                        up = Quartz.CGEventCreateMouseEvent(
+                            src, Quartz.kCGEventLeftMouseUp, point, Quartz.kCGMouseButtonLeft
+                        )
+                        if up is not None:
+                            Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
+                        current = _VIRTUAL_MOUSE_ORIGIN[0]
+                        if current is not None:
+                            restore = Quartz.CGEventCreateMouseEvent(
+                                src, Quartz.kCGEventMouseMoved, current, Quartz.kCGMouseButtonLeft
+                            )
+                            if restore is not None:
+                                Quartz.CGEventPost(Quartz.kCGHIDEventTap, restore)
+                except Exception:
+                    pass
+                finally:
+                    _VIRTUAL_MOUSE_ORIGIN[0] = None
+                    _VIRTUAL_MOUSE_HELD[0] = False
+                    _VIRTUAL_MOUSE_OWNER[0] = None
 
             # 修饰键 → 虚拟键码（Carbon kVK）与 CGEvent 标志。
             # ⚠️ 必须条件定义：Linux 上 Quartz import 失败（None），模块级
@@ -1102,20 +1377,34 @@ class ScreenSession internal constructor(
                 # 约 0.5s 一个关键帧；不再把 60/120fps 固定为 g=15，
                 # 否则会变成 0.25/0.125s 并徒增带宽和解码压力。
                 gop = max(15, fps // 2)
-                vf = "fps=" + str(fps) + ",scale=" + cfg["scale"]
+                scale = cfg["scale"]
+                # 桌面内容以文字和细线为主；默认 bicubic 下采样偏软，Lanczos 在
+                # 同分辨率下保留更多边缘细节。对高于源尺寸的档位也比普通插值锐利。
+                vf = "fps=" + str(fps)
+                if scale != "native":
+                    vf += ",scale=" + scale + ":flags=lanczos"
                 if IS_MAC:
                     # macOS：VideoToolbox 硬编（M 系列 Media Engine 专核，CPU 零负担）。
                     # 历史教训：libx264 软编在 4K/高帧率下 CPU 打满 → 编码端掉帧（卡）+
                     # 被迫降质量（糊）；Parsec/ToDesk/RustDesk 全走硬编。
-                    # 码率按分辨率档位映射（CBR 精确生效，实测 -b:v 8M → 8Mbps）：
-                    # 960/1280/1920 对应 4/6/10Mbps——1080p60 屏幕流 10M 足够清晰。
-                    scale = cfg["scale"]
-                    if scale.startswith("1920"):
-                        bitrate = "10M"
+                    # 基础码率按分辨率档位映射，再按帧率提高。此前 30/60/120fps
+                    # 共用固定码率，超清 120fps 每帧预算只剩 30fps 的四分之一，
+                    # 分辨率虽是 2560，文字仍会糊。
+                    if scale == "native" or scale.startswith("2560"):
+                        base_mbps = 24
+                    elif scale.startswith("1920"):
+                        base_mbps = 10
                     elif scale.startswith("1280"):
-                        bitrate = "6M"
+                        base_mbps = 6
                     else:
-                        bitrate = "4M"
+                        base_mbps = 4
+                    if fps >= 120:
+                        bitrate_mbps = base_mbps * 2
+                    elif fps >= 60:
+                        bitrate_mbps = base_mbps * 3 // 2
+                    else:
+                        bitrate_mbps = base_mbps
+                    bitrate = str(bitrate_mbps) + "M"
                     return ["-f", "avfoundation", "-capture_cursor", "1",
                             "-pixel_format", "uyvy422", "-i", "1:none",
                             "-hide_banner", "-loglevel", "error", "-framerate", str(fps),
@@ -1134,8 +1423,19 @@ class ScreenSession internal constructor(
                             "-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert",
                             "-f", "h264", "-"]
                 # Linux X11：x11grab 抓屏（DISPLAY 由服务启动时注入，默认 :0）
+                # Linux 软编按画质档设置 CRF。此前一直使用 libx264 默认 CRF 23，
+                # 即使把尺寸升到 2560，终端字体和 UI 细线仍会被量化得发糊。
+                if scale == "native" or scale.startswith("2560"):
+                    crf = "16"
+                elif scale.startswith("1920"):
+                    crf = "18"
+                elif scale.startswith("1280"):
+                    crf = "20"
+                else:
+                    crf = "22"
                 common = ["-hide_banner", "-loglevel", "error", "-framerate", str(fps),
                           "-vf", vf, "-c:v", "libx264", "-preset", "ultrafast",
+                          "-crf", crf,
                           # 不用 -tune zerolatency（其 sliced-threads 切碎帧），显式等价参数
                           # keyint 随帧率变化：约 0.5s 关键帧间隔——解码器重同步/丢帧
                           # 恢复最多等 0.5s（流畅度优先）；aud=1：每帧前发 AUD NAL，
@@ -1175,6 +1475,40 @@ class ScreenSession internal constructor(
             LAST_HB = [0.0]
             TCP_CLIENT = [None]  # TCP 视频通道客户端（手机出站连接，单客户端）
 
+            def relay_log(message):
+                try:
+                    with open(ERRLOG, "a") as log:
+                        log.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), message))
+                except Exception:
+                    pass
+
+            def wake_linux_display():
+                # Linux 的 x11grab 在 DPMS Off 时仍持续输出合法黑帧：TCP、解码器、
+                # fps 全部正常，客户端无法据此区分“桌面全黑”和“显示器休眠”。
+                # 远程画面连接建立及观看期间周期性唤醒当前 DISPLAY；xset 缺失、
+                # Wayland/X 权限不足均静默降级。s reset 只重置空闲计时器，不修改
+                # 用户的屏保或 DPMS 配置，连接断开后原电源策略自然恢复。
+                if IS_MAC:
+                    return
+                display = os.environ.get("DISPLAY", ":0")
+                try:
+                    subprocess.run(
+                        ["xset", "-display", display, "s", "reset"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+                    )
+                    state = subprocess.run(
+                        ["xset", "-display", display, "q"],
+                        capture_output=True, text=True, timeout=2,
+                    ).stdout
+                    if "Monitor is Off" in state:
+                        subprocess.run(
+                            ["xset", "-display", display, "dpms", "force", "on"],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2,
+                        )
+                        relay_log("woke sleeping Linux display %s" % display)
+                except Exception:
+                    pass
+
             class UdpStream:
                 # ffmpeg 抓屏 + AUD 帧对齐。最终版视频走 SSH 内的 TCP 通道；保留
                 # loopback UDP 参数仅用于兼容旧 relay 测试，不再暴露公网 UDP 端口。
@@ -1189,6 +1523,7 @@ class ScreenSession internal constructor(
                     self.rate = 12_000_000
                     self.last_rate_adj = 0.0
                     self.errf = open(ERRLOG, "a")
+                    wake_linux_display()
                     self.ff = subprocess.Popen([FF] + make_args(read_stream_cfg()), stdout=subprocess.PIPE, stderr=self.errf)
                     try:
                         with open(FF_PIDFILE, "w") as f:
@@ -1199,6 +1534,9 @@ class ScreenSession internal constructor(
                     self.started = time.time()
                     self.last_data = time.time()
                     self.sent = 0
+                    self.stop_reason = None
+                    self.last_client_heartbeat = time.time()
+                    self.last_display_keepalive = 0.0
 
                 def start(self):
                     threading.Thread(target=self.pump, daemon=True).start()
@@ -1254,6 +1592,7 @@ class ScreenSession internal constructor(
 
                 def pump(self):
                     buf = b""
+                    close_reason = "pump ended"
                     # ⚠️ 用 os.read（原始管道读：有多少读多少）——python file.read(65536)
                     # 是凑满语义，静止画面低码率时要攢 ~20s 才返回一次（64KB/25B每帧），
                     # 表现为画面冻结 + 突发倾泻（真机反馈：滑动黑块 + 卡顿）
@@ -1267,10 +1606,12 @@ class ScreenSession internal constructor(
                                 if (self.sent == 0 and now - self.started > 45) or (self.sent > 0 and now - self.last_data > 20):
                                     if display_asleep():
                                         continue
+                                    close_reason = "ffmpeg output watchdog"
                                     break
                                 continue
                             data = os.read(self.ff_stdout_fd, 262144)
                             if not data:
+                                close_reason = "ffmpeg stdout eof code=%s" % self.ff.poll()
                                 break
                             buf += data
                             # 按 AUD 边界切帧：从第 2 个 AUD 起每个 AUD 开新帧
@@ -1287,11 +1628,13 @@ class ScreenSession internal constructor(
                             elif starts:
                                 # 只有一个 AUD 且在缓冲中后段：丢弃 AUD 之前的半帧字节
                                 buf = buf[starts[0]:]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        close_reason = "pump error %s: %s" % (type(e).__name__, e)
                     finally:
-                        self.errf.write("[%s] video stream closed after %.1fs sent=%d\n" % (
-                            time.strftime("%H:%M:%S"), time.time() - self.started, self.sent))
+                        reason = self.stop_reason or close_reason
+                        self.errf.write("[%s] video stream closed after %.1fs sent=%d transport=%s reason=%s\n" % (
+                            time.strftime("%H:%M:%S"), time.time() - self.started, self.sent,
+                            "tcp" if self.tcp_conn is not None else "udp", reason))
                         self.errf.flush()
                         # 自愈：ffmpeg 退出/看门狗触发后清空当前 stream，让主循环在
                         # 下次心跳时重新拉 ffmpeg（否则手机持续心跳会不断刷新 LAST_HB，
@@ -1304,12 +1647,17 @@ class ScreenSession internal constructor(
                                     TCP_CLIENT[0] = None
                         try:
                             if self.tcp_conn is not None:
+                                # 控制线程仍可能阻塞在 recv()；Linux 上仅 close()
+                                # 不保证唤醒另一个线程，SSH 通道就一直等不到 EOF。
+                                self.tcp_conn.shutdown(socket.SHUT_RDWR)
                                 self.tcp_conn.close()
                         except Exception:
                             pass
                         remove_owned_ffmpeg_pid(self.ff.pid)
 
-                def stop(self):
+                def stop(self, reason="requested"):
+                    if self.stop_reason is None:
+                        self.stop_reason = reason
                     self.stopped = True
                     try:
                         if self.tcp_conn is not None:
@@ -1348,6 +1696,8 @@ class ScreenSession internal constructor(
 
             # 旧 UDP 兼容口仅监听回环。最终版视频走 SSH direct-tcpip，禁止再把
             # 未鉴权的心跳/reload/控制端口暴露到公网。
+            stop_legacy_relay_listener()
+
             def make_udp():
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1390,6 +1740,15 @@ class ScreenSession internal constructor(
                         data = recv_exact(conn, size)
                         if not data.startswith(CONTROL_MAGIC):
                             continue
+                        # 客户端每 2 秒续租；普通控制事件也证明 owner 仍存活。
+                        # 心跳只用于所有权，不进入辅助功能权限探测和输入注入。
+                        stream.last_client_heartbeat = time.time()
+                        if data[4] == HEARTBEAT_TYPE:
+                            now = time.time()
+                            if now - stream.last_display_keepalive >= 15.0:
+                                stream.last_display_keepalive = now
+                                wake_linux_display()
+                            continue
                         ax_ok = False
                         if _AX is not None:
                             try:
@@ -1403,10 +1762,11 @@ class ScreenSession internal constructor(
                                     _AXPrompt({_AXPromptKey: True})
                             except Exception:
                                 pass
-                        handle_control(data, ax_ok)
-                except Exception:
-                    pass
+                        handle_control(data, ax_ok, conn)
+                except Exception as e:
+                    relay_log("tcp control closed: %s: %s" % (type(e).__name__, e))
                 finally:
+                    release_virtual_mouse(conn)
                     owned = False
                     with LOCK:
                         if TCP_CLIENT[0] is conn and STREAM[0] is stream:
@@ -1414,10 +1774,11 @@ class ScreenSession internal constructor(
                             STREAM[0] = None
                             owned = True
                     if owned:
-                        stream.stop()
+                        stream.stop("tcp control closed")
 
             # TCP 视频服务只监听远端回环；手机通过已认证 SSH direct-tcpip 访问。
-            # 新连接替换旧连接并重启 ffmpeg，从而立即读取最新画质/帧率配置。
+            # App 在重建会话前会先关闭旧通道。远端再拒绝重复的已认证连接，形成
+            # 第二道代次保护：迟到的旧启动协程/重复点击不能抢占健康画面。
             def tcp_serve():
                 try:
                     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -1428,8 +1789,9 @@ class ScreenSession internal constructor(
                     return
                 while True:
                     conn = None
+                    stream = None
                     try:
-                        conn, _ = srv.accept()
+                        conn, peer = srv.accept()
                         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                         conn.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 256 * 1024)
                         # 回环地址不是用户隔离边界：同机其它 OS 用户也能连接固定端口。
@@ -1443,29 +1805,47 @@ class ScreenSession internal constructor(
                         if not auth.startswith(AUTH_MAGIC) or not hmac.compare_digest(auth[4:], AUTH_TOKEN):
                             raise PermissionError("screen auth failed")
                         conn.settimeout(None)
+                        # 认证与占位必须在同一临界区。健康 owner（2s 心跳，6s
+                        # 租约）拒绝迟到的幽灵连接；App 已死但 SSH/TCP 仍假活时，
+                        # 新连接可回收过期 owner，避免永久“连接中/反复重连”。
+                        old_stream = None
+                        busy = False
+                        replace_reason = "tcp replaced legacy udp"
+                        with LOCK:
+                            if TCP_CLIENT[0] is not None:
+                                active_stream = STREAM[0]
+                                if active_stream is None or time.time() - active_stream.last_client_heartbeat <= TCP_OWNER_LEASE_SECONDS:
+                                    busy = True
+                                else:
+                                    old_stream = active_stream
+                                    replace_reason = "stale tcp lease replaced"
+                            elif STREAM[0] is not None:
+                                old_stream = STREAM[0]
+                            if not busy:
+                                STREAM[0] = None
+                                TCP_CLIENT[0] = conn
+                        if busy:
+                            # 3=已有另一台设备占用。显式返回状态，让客户端展示
+                            # 准确提示并停止自动重连，而不是把正常互斥伪装成 EOF。
+                            conn.sendall(STATUS_MAGIC + bytes([3]))
+                            relay_log("tcp busy peer=%s:%s" % peer)
+                            conn.close()
+                            conn = None
+                            continue
+                        if old_stream is not None:
+                            old_stream.stop(replace_reason)
+                        relay_log("tcp accepted peer=%s:%s" % peer)
                         # 首包 = 控制状态：
-                        # 0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
+                        # 0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制，3=被占用
                         if Quartz is None:
                             # Linux：XTEST 可用则支持控制（0），否则平台不支持（2）
-                            ctrl_status = 0 if _XTEST_OK else 2
+                            ctrl_status = 0 if _ensure_xtest() else 2
                         else:
                             try:
                                 ctrl_status = 0 if (_AX is not None and bool(_AX())) else 1
                             except Exception:
                                 ctrl_status = 1
                         conn.sendall(STATUS_MAGIC + bytes([ctrl_status]))
-                        with LOCK:
-                            old_stream = STREAM[0]
-                            old_conn = TCP_CLIENT[0]
-                            STREAM[0] = None
-                            TCP_CLIENT[0] = conn
-                        if old_stream is not None:
-                            old_stream.stop()
-                        elif old_conn is not None:
-                            try:
-                                old_conn.close()
-                            except Exception:
-                                pass
                         stream = UdpStream(udp, None, conn)
                         with LOCK:
                             if TCP_CLIENT[0] is conn:
@@ -1473,13 +1853,22 @@ class ScreenSession internal constructor(
                         stream.start()
                         threading.Thread(target=tcp_control_loop, args=(conn, stream), daemon=True).start()
                     except Exception as e:
+                        owned = False
+                        with LOCK:
+                            if TCP_CLIENT[0] is conn:
+                                TCP_CLIENT[0] = None
+                                if STREAM[0] is stream:
+                                    STREAM[0] = None
+                                owned = True
+                        if owned and stream is not None:
+                            stream.stop("tcp setup failed")
                         try:
                             if conn is not None:
                                 conn.close()
                         except Exception:
                             pass
                         try:
-                            sys.stderr.write("tcp accept error: %s\n" % e)
+                            relay_log("tcp rejected/failed: %s: %s" % (type(e).__name__, e))
                         except Exception:
                             pass
 
@@ -1497,6 +1886,12 @@ class ScreenSession internal constructor(
                     if len(data) <= len(AUTH_TOKEN) or not hmac.compare_digest(data[:len(AUTH_TOKEN)], AUTH_TOKEN):
                         continue
                     data = data[len(AUTH_TOKEN):]
+                    # v35 起 TCP 与旧 UDP 兼容入口严格互斥。此前 UDP 心跳会在
+                    # TCP 建连的短窗口创建孤儿 ffmpeg，reload 甚至能直接停止
+                    # 健康 TCP，表现为恢复后每 3~6 秒再次断开。
+                    with LOCK:
+                        if TCP_CLIENT[0] is not None:
+                            continue
                     if data.startswith(RELOAD_MAGIC):
                         # 重载（新会话首包）：重启 ffmpeg 重读推流参数——画质/帧率
                         # 切换的生效路径。漫游语义下旧 ffmpeg 永不重启，conf 写了
@@ -1505,6 +1900,8 @@ class ScreenSession internal constructor(
                         # pump 线程 finally 的 LOCK 清理互等（实测卡 5-10s、
                         # reload 后拉不起流）——先锁内取旧流引用，锁外停
                         with LOCK:
+                            if TCP_CLIENT[0] is not None:
+                                continue
                             old = STREAM[0]
                             STREAM[0] = None
                             CLIENT[0] = addr
@@ -1512,10 +1909,14 @@ class ScreenSession internal constructor(
                             old.stop()
                         s = UdpStream(udp, addr)
                         s.start()
+                        udp_owned = False
                         with LOCK:
-                            if STREAM[0] is None:
+                            if TCP_CLIENT[0] is None and STREAM[0] is None:
                                 STREAM[0] = s
+                                udp_owned = True
                             LAST_HB[0] = now
+                        if not udp_owned:
+                            s.stop("udp lost ownership")
                     elif data.startswith(CONTROL_MAGIC):
                         # 远程操作控制包（触摸→鼠标/滚轮）：解析 + CGEvent 模拟。
                         # 回状态包（5B，权限状态）：客户端据此提示引导授权；
@@ -1539,13 +1940,15 @@ class ScreenSession internal constructor(
                             # 控制状态：0=OK，1=macOS 缺辅助功能权限，2=平台不支持控制
                             #（Linux 走 XTEST：可用则 0，不可用则 2）
                             if Quartz is None:
-                                ctrl_status = 0 if _XTEST_OK else 2
+                                ctrl_status = 0 if _ensure_xtest() else 2
                             else:
                                 ctrl_status = 0 if ax_ok else 1
                             udp.sendto(STATUS_MAGIC + bytes([ctrl_status]), addr)
                         except Exception:
                             pass
                         with LOCK:
+                            if TCP_CLIENT[0] is not None:
+                                continue
                             if CLIENT[0] != addr:
                                 CLIENT[0] = addr
                                 if STREAM[0] is not None:
@@ -1558,6 +1961,8 @@ class ScreenSession internal constructor(
                         #（实测 120fps@1920 运动时丢 30-47%/秒）
                         loss_pct = data[4] if len(data) > 4 else 0
                         with LOCK:
+                            if TCP_CLIENT[0] is not None:
+                                continue
                             if STREAM[0] is None:
                                 CLIENT[0] = addr
                                 s = UdpStream(udp, addr)
@@ -1579,15 +1984,19 @@ class ScreenSession internal constructor(
                             LAST_HB[0] = now
                 # 旧 UDP 心跳超时才停流；TCP 连接由 send/recv EOF 驱动生命周期，
                 # 不能套用 LAST_HB（否则 TCP 建立后因 LAST_HB=0 被立即误杀）。
+                expired = None
                 with LOCK:
                     if (STREAM[0] is not None and STREAM[0].tcp_conn is None
                             and now - LAST_HB[0] > 60):
-                        STREAM[0].stop()
+                        expired = STREAM[0]
                         STREAM[0] = None
                         CLIENT[0] = None
+                if expired is not None:
+                    expired.stop("udp heartbeat timeout")
             TERMISH_EOF
             # ---- 服务启动：macOS 用 LaunchAgent（GUI 域录屏权限）；
-            # Linux 用 nohup 后台 + DISPLAY=:0（X11 抓屏，SSH 断开不受影响）----
+            # Linux 用 systemd 用户服务（桌面自启动兜底），机器重启后随图形登录
+            # 自动恢复。旧版仅 nohup，进程在本次 SSH 断开后能活、重启后必丢。----
             if [ "${'$'}OS" = "Darwin" ]; then
             mkdir -p "${'$'}HOME/Library/LaunchAgents"
             RELAY="${'$'}RELAY" cat > "${'$'}PLIST" <<TERMISH_EOF
@@ -1623,26 +2032,147 @@ class ScreenSession internal constructor(
               exit 1
             fi
             else
-            # Linux：重启 relay（nohup，脱离 SSH 会话存活），DISPLAY 指向图形会话。
+            # Linux：重启 relay，并注册用户级持久服务。
             # ⚠️ 不用 pkill -f screen-relay.py：安装脚本自身（sh -c）命令行含
             # 脚本文本，-f 全匹配会把自己杀掉（macOS 分支同款坑，用户反馈：
             # Ubuntu 引导安装失败）——用 PID 文件精确清理
             RELAY_PID="${'$'}HOME/.termish-screen.pid"
+            stop_termish_relay_pid() {
+              OLD_PID="${'$'}1"
+              # 安装脚本启用了 set -e；PID 文件失效是正常升级场景，函数必须
+              # 显式成功返回，否则会在写入新 relay 后、启动它之前提前退出。
+              case "${'$'}OLD_PID" in ''|*[!0-9]*) return 0 ;; esac
+              [ -r "/proc/${'$'}OLD_PID/cmdline" ] || return 0
+              OLD_CMD="${'$'}(tr '\0' ' ' < "/proc/${'$'}OLD_PID/cmdline" 2>/dev/null)"
+              case "${'$'}OLD_CMD" in
+                *"${'$'}RELAY"*) kill "${'$'}OLD_PID" 2>/dev/null || true ;;
+              esac
+              return 0
+            }
             if [ -f "${'$'}RELAY_PID" ]; then
-              kill "${'$'}(cat "${'$'}RELAY_PID")" 2>/dev/null || true
+              stop_termish_relay_pid "${'$'}(cat "${'$'}RELAY_PID" 2>/dev/null)"
               rm -f "${'$'}RELAY_PID"
             fi
-            sleep 0.5
-            # 探测 X display：Xwayland 的 display 号从进程参数取（Wayland 会话
-            # 可能是 :1024 等非 0 号，写死 :0 会连不上）
-            XDISP=":0"
-            if pgrep -x Xwayland >/dev/null 2>&1; then
-              XDISP="${'$'}(pgrep -x Xwayland -a 2>/dev/null | head -1 | grep -oE ':[0-9]+' | head -1)"
-              [ -n "${'$'}XDISP" ] || XDISP=":0"
+            # v31 及更早版本可能没有可靠 PID 文件，或失败的新进程覆盖过 PID。
+            # 从监听端口找到旧进程后仍逐项核对 cmdline 必须包含当前 relay 绝对路径，
+            # 只关闭 Termish 自己的服务，不使用会误杀安装脚本/其它 Python 的 pkill。
+            LISTENER_PID=""
+            if command -v lsof >/dev/null 2>&1; then
+              LISTENER_PID="${'$'}(lsof -t -iTCP:${'$'}PORT -sTCP:LISTEN 2>/dev/null | head -1)"
+            elif command -v fuser >/dev/null 2>&1; then
+              LISTENER_PID="${'$'}(fuser -n tcp "${'$'}PORT" 2>/dev/null | awk '{print ${'$'}1}')"
             fi
+            stop_termish_relay_pid "${'$'}LISTENER_PID"
+            sleep 0.5
+            # 启动包装器每次运行都重新探测 DISPLAY/XAUTHORITY。Xwayland 的 display
+            # 号和授权文件会在重启后变化，不能把安装当时的值固化进 service unit。
+            RUNNER="${'$'}HOME/.termish-screen-launch.sh"
             LOG="${'$'}HOME/.termish-screen.log"
-            DISPLAY="${'$'}XDISP" nohup /usr/bin/python3 "${'$'}RELAY" >> "${'$'}LOG" 2>&1 &
-            echo ${'$'}! > "${'$'}RELAY_PID"
+            cat > "${'$'}RUNNER" <<'TERMISH_EOF'
+            #!/bin/sh
+            RELAY="${'$'}HOME/Library/Application Support/termish/screen-relay.py"
+            LOG="${'$'}HOME/.termish-screen.log"
+            while :; do
+              XDISP=":0"
+              XPID=""
+              GRAPHICAL=0
+              if command -v pgrep >/dev/null 2>&1; then
+                # 只选择当前用户的图形服务器；GDM greeter 的 Xwayland 属于
+                # gdm-greeter，连接它会因授权隔离而被误判为“不支持控制”。
+                XPID="${'$'}(pgrep -u "${'$'}(id -u)" -x Xwayland 2>/dev/null | head -1)"
+                if [ -z "${'$'}XPID" ]; then
+                  XPID="${'$'}(pgrep -u "${'$'}(id -u)" -x Xorg 2>/dev/null | head -1)"
+                fi
+              fi
+              if [ -n "${'$'}XPID" ] && [ -r "/proc/${'$'}XPID/cmdline" ]; then
+                GRAPHICAL=1
+                DETECTED_DISPLAY="${'$'}(tr '\0' '\n' < "/proc/${'$'}XPID/cmdline" | grep -E '^:[0-9]+${'$'}' | head -1)"
+                [ -n "${'$'}DETECTED_DISPLAY" ] && XDISP="${'$'}DETECTED_DISPLAY"
+              elif command -v loginctl >/dev/null 2>&1; then
+                for sid in ${'$'}(loginctl list-sessions --no-legend 2>/dev/null | awk -v uid="${'$'}(id -u)" '${'$'}2 == uid { print ${'$'}1 }'); do
+                  SESSION_TYPE="${'$'}(loginctl show-session "${'$'}sid" -p Type --value 2>/dev/null)"
+                  SESSION_REMOTE="${'$'}(loginctl show-session "${'$'}sid" -p Remote --value 2>/dev/null)"
+                  case "${'$'}SESSION_TYPE:${'$'}SESSION_REMOTE" in
+                    x11:no)
+                      GRAPHICAL=1
+                      SESSION_DISPLAY="${'$'}(loginctl show-session "${'$'}sid" -p Display --value 2>/dev/null)"
+                      [ -n "${'$'}SESSION_DISPLAY" ] && XDISP="${'$'}SESSION_DISPLAY"
+                      break
+                      ;;
+                  esac
+                done
+              fi
+              XNUM="${'$'}{XDISP#:}"
+              if [ "${'$'}GRAPHICAL" = "1" ] && [ -S "/tmp/.X11-unix/X${'$'}XNUM" ]; then
+                export DISPLAY="${'$'}XDISP"
+                XAUTH=""
+                if [ -n "${'$'}XPID" ] && [ -r "/proc/${'$'}XPID/cmdline" ]; then
+                  XAUTH="${'$'}(tr '\0' '\n' < "/proc/${'$'}XPID/cmdline" | awk 'take { print; exit } ${'$'}0 == "-auth" { take=1 }')"
+                fi
+                if [ -z "${'$'}XAUTH" ] && [ -f "/run/user/${'$'}(id -u)/gdm/Xauthority" ]; then
+                  XAUTH="/run/user/${'$'}(id -u)/gdm/Xauthority"
+                fi
+                if [ -z "${'$'}XAUTH" ] && [ -f "${'$'}HOME/.Xauthority" ]; then
+                  XAUTH="${'$'}HOME/.Xauthority"
+                fi
+                if [ -n "${'$'}XAUTH" ] && [ -r "${'$'}XAUTH" ]; then
+                  export XAUTHORITY="${'$'}XAUTH"
+                fi
+                exec /usr/bin/python3 "${'$'}RELAY" >> "${'$'}LOG" 2>&1
+              fi
+              sleep 2
+            done
+            TERMISH_EOF
+            chmod 700 "${'$'}RUNNER"
+
+            SERVICE_STARTED=0
+            USER_RUNTIME="/run/user/${'$'}(id -u)"
+            UNIT_DIR="${'$'}HOME/.config/systemd/user"
+            UNIT="${'$'}UNIT_DIR/dev.termish.screen.service"
+            if command -v systemctl >/dev/null 2>&1 && [ -S "${'$'}USER_RUNTIME/bus" ]; then
+              mkdir -p "${'$'}UNIT_DIR"
+              cat > "${'$'}UNIT" <<TERMISH_EOF
+            [Unit]
+            Description=Termish screen relay
+            After=graphical-session.target
+
+            [Service]
+            Type=simple
+            ExecStart=%h/.termish-screen-launch.sh
+            Restart=on-failure
+            RestartSec=2
+
+            [Install]
+            WantedBy=default.target
+            TERMISH_EOF
+              export XDG_RUNTIME_DIR="${'$'}USER_RUNTIME"
+              export DBUS_SESSION_BUS_ADDRESS="unix:path=${'$'}USER_RUNTIME/bus"
+              systemctl --user daemon-reload
+              # enable --now 不会重启已运行的旧 unit；升级 relay 时必须显式 restart，
+              # 否则端口仍由被 systemd 拉回的旧 Python 进程占用。
+              if systemctl --user enable dev.termish.screen.service \
+                && systemctl --user restart dev.termish.screen.service; then
+                SERVICE_STARTED=1
+                rm -f "${'$'}HOME/.config/autostart/dev.termish.screen.desktop"
+                echo "==> systemd 用户服务：已启用（重启后自动恢复）"
+              fi
+            fi
+            if [ "${'$'}SERVICE_STARTED" != "1" ]; then
+              # 没有可用的 systemd user bus（部分精简桌面）时，通过 XDG autostart
+              # 保证下次图形登录自动启动；当前安装仍用 nohup 立即拉起。
+              mkdir -p "${'$'}HOME/.config/autostart"
+              cat > "${'$'}HOME/.config/autostart/dev.termish.screen.desktop" <<'TERMISH_EOF'
+            [Desktop Entry]
+            Type=Application
+            Name=Termish Screen Relay
+            Exec=/bin/sh -c "${'$'}HOME/.termish-screen-launch.sh"
+            X-GNOME-Autostart-enabled=true
+            NoDisplay=true
+            TERMISH_EOF
+              nohup "${'$'}RUNNER" >/dev/null 2>&1 &
+              echo ${'$'}! > "${'$'}RELAY_PID"
+              echo "==> 桌面自启动服务：已启用（重启后自动恢复）"
+            fi
             sleep 1.5
             # 验证控制面与回环视频端口都在监听；不建立探测连接（会触发 ffmpeg）。
             if (lsof -nP -iTCP:${'$'}PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":${'$'}PORT ") \
@@ -1692,12 +2222,21 @@ class ScreenSession internal constructor(
                 ?.trim()
                 ?.takeIf { token -> token.length == 64 && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } }
 
-        /** scale 字符串 → 画质档位 index（960=0 / 1280=1 / 1920=2；未知按标清）。 */
+        /** scale 字符串 → 画质档位 index（流畅/标清/高清/原画；未知按标清）。 */
         internal fun qualityIndexFor(scale: String): Int =
             when (scale) {
                 "960:-2" -> 0
                 "1920:-2" -> 2
+                "native", "2560:-2" -> 3
                 else -> 1
+            }
+
+        internal fun scaleForQuality(index: Int): String =
+            when (index) {
+                0 -> "960:-2"
+                2 -> "1920:-2"
+                3 -> "native"
+                else -> "1280:-2"
             }
 
         /**

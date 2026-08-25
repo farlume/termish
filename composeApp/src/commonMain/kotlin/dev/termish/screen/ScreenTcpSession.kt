@@ -6,8 +6,11 @@ import dev.termish.util.ioDispatcher
 import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.datetime.Clock
 
 /** TCP/SSH 视频协议单帧上限，防损坏长度头触发无界内存分配。 */
 internal const val SCREEN_TCP_MAX_FRAME_BYTES = 4 * 1024 * 1024
@@ -17,6 +20,8 @@ internal const val SCREEN_TCP_MAX_CONTROL_BYTES = 64 * 1024
 
 /** relay 安装时生成的 256-bit token，以 64 个十六进制字符传输。 */
 internal const val SCREEN_AUTH_TOKEN_HEX_LENGTH = 64
+internal const val SCREEN_TCP_HEARTBEAT_INTERVAL_MS = 2_000L
+internal const val SCREEN_TCP_STATUS_BUSY = 3
 
 private val SCREEN_AUTH_MAGIC = byteArrayOf('T'.code.toByte(), 'H'.code.toByte(), 'A'.code.toByte(), '1'.code.toByte())
 
@@ -137,21 +142,54 @@ class ScreenTcpSession(
     private val authToken: String,
     private val onVideoPacket: (ByteArray) -> Unit,
     private val onDisconnected: () -> Unit,
-    private val onStatus: (Int) -> Unit = {},
+    /** 返回 false 表示 relay 已明确拒绝本次连接，不应按意外断线触发自动重连。 */
+    private val onStatus: (Int) -> Boolean = { true },
+    /** 时间源注入，便于活性判定测试及避免平台时间 API 泄漏到 commonMain。 */
+    private val nowMillis: () -> Long = { Clock.System.now().toEpochMilliseconds() },
 ) {
     private var job: Job? = null
+    private var watchdogJob: Job? = null
+    private val disconnectLock = Mutex()
 
     @Volatile
     private var active = false
 
+    @Volatile
+    private var startedAtMillis = 0L
+
+    @Volatile
+    private var lastVideoAtMillis = 0L
+
+    @Volatile
+    private var receivedVideoPackets = 0L
+
+    private var lastHeartbeatAtMillis = 0L
+
     fun start() {
         if (active) return
         active = true
+        startedAtMillis = nowMillis()
+        lastVideoAtMillis = 0L
+        receivedVideoPackets = 0L
+        lastHeartbeatAtMillis = 0L
         // relay 在认证成功前不会发状态/视频，也不会替换旧客户端。
         channel.write(frameScreenTcpAuth(authToken))
         job =
             scope.launch(ioDispatcher()) {
-                val parser = ScreenTcpFrameParser(onStatus, onVideoPacket)
+                val parser =
+                    ScreenTcpFrameParser(
+                        onStatus = { status ->
+                            if (!onStatus(status)) {
+                                active = false
+                                watchdogJob?.cancel()
+                            }
+                        },
+                        onFrame = { frame ->
+                            lastVideoAtMillis = nowMillis()
+                            receivedVideoPackets++
+                            onVideoPacket(frame)
+                        },
+                    )
                 try {
                     while (active && coroutineContext.isActive) {
                         val data = channel.read() ?: break
@@ -161,9 +199,34 @@ class ScreenTcpSession(
                     TermLog.w("screen") { "SSH TCP 视频读取结束：${e::class.simpleName} ${e.message}" }
                 } finally {
                     channel.close()
-                    if (active) {
-                        active = false
-                        onDisconnected()
+                    notifyDisconnected("eof")
+                }
+            }
+        watchdogJob =
+            scope.launch(ioDispatcher()) {
+                while (active && coroutineContext.isActive) {
+                    delay(1_000)
+                    val now = nowMillis()
+                    if (now - lastHeartbeatAtMillis >= SCREEN_TCP_HEARTBEAT_INTERVAL_MS) {
+                        lastHeartbeatAtMillis = now
+                        sendRaw(ScreenControlPacket.encode(ScreenControlPacket.TYPE_HEARTBEAT, 0f, 0f))
+                    }
+                    val packetCount = receivedVideoPackets
+                    if (
+                        isScreenVideoStalled(
+                            nowMillis = now,
+                            lastVideoAtMillis = lastVideoAtMillis,
+                            startedAtMillis = startedAtMillis,
+                            hasReceivedVideo = packetCount > 0,
+                        )
+                    ) {
+                        val baseline = if (packetCount > 0) lastVideoAtMillis else startedAtMillis
+                        TermLog.w("screen") {
+                            "SSH TCP 视频停滞：idle=${now - baseline}ms packets=$packetCount，主动重连"
+                        }
+                        channel.close()
+                        notifyDisconnected("stalled")
+                        break
                     }
                 }
             }
@@ -179,7 +242,30 @@ class ScreenTcpSession(
         channel.close()
         job?.cancel()
         job = null
+        watchdogJob?.cancel()
+        watchdogJob = null
     }
 
     fun isActive(): Boolean = active
+
+    /** 播放层检测到卡死时复用统一断线出口，避免只显示错误却永久停在旧画面。 */
+    fun fail(reason: String) {
+        if (!active) return
+        channel.close()
+        notifyDisconnected(reason)
+    }
+
+    /** reader EOF 与 watchdog 可能同时到达；只允许一个来源触发重连。 */
+    private fun notifyDisconnected(reason: String) {
+        if (!active || !disconnectLock.tryLock()) return
+        try {
+            if (!active) return
+            active = false
+            watchdogJob?.cancel()
+            TermLog.i("screen") { "SSH TCP 视频会话结束：$reason" }
+            onDisconnected()
+        } finally {
+            disconnectLock.unlock()
+        }
+    }
 }

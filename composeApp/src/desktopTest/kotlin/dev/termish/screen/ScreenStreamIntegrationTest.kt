@@ -348,6 +348,7 @@ class ScreenStreamIntegrationTest {
         assertTrue(py.contains("\"-g\", str(gop)"), "ffmpeg 应使用动态 GOP")
         assertTrue(py.contains("RELAY_VERSION = ${ScreenSession.RELAY_VERSION}"), "relay 版本应与客户端一致")
         assertTrue(py.contains("elif typ == 8 or typ == 9:"), "虚拟鼠标点击必须使用独立原子事件")
+        assertTrue(py.contains("Quartz.kCGEventLeftMouseDragged"), "虚拟鼠标拖动必须使用 macOS 原生拖动事件")
         assertTrue(py.contains("CGEventGetLocation(current_event)"), "虚拟点击后必须恢复实体鼠标位置")
         assertTrue(py.contains("CGEventSetLocation(ev, (px, py))"), "滚轮应定位到虚拟箭头且不移动实体指针")
         assertTrue(py.contains("FF_PIDFILE"), "relay 应只按自身 PID 文件清理孤儿 ffmpeg")

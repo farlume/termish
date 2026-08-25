@@ -220,20 +220,28 @@ class HostRepository(
 
     // ---------- 最近会话（连接页列表持久化） ----------
 
-    private val recentSessionsKey = "termish.recent_sessions.v1"
+    /** 最近终端会话：主机 + 会话启动类型；Herdr 不再写入主机配置。 */
+    @Serializable
+    data class RecentTerminalEntry(
+        val hostId: String,
+        val launchHerdr: Boolean = false,
+        val createdAt: Long = 0L,
+    )
 
-    /** 最近会话的主机 id 列表（重启后恢复连接页，状态为未连接，点击重连）。 */
-    fun loadRecentSessionHostIds(): List<String> {
+    private val recentSessionsKey = "termish.recent_sessions.v2"
+
+    /** 重启后恢复连接页，状态为未连接，点击后按原启动类型重连。 */
+    fun loadRecentTerminalEntries(): List<RecentTerminalEntry> {
         val raw = settings.getStringOrNull(recentSessionsKey) ?: return emptyList()
         return try {
-            json.decodeFromString<List<String>>(raw)
+            json.decodeFromString<List<RecentTerminalEntry>>(raw)
         } catch (e: Exception) {
             emptyList()
         }
     }
 
-    fun saveRecentSessionHostIds(ids: List<String>) {
-        settings.putString(recentSessionsKey, json.encodeToString(ids))
+    fun saveRecentTerminalEntries(entries: List<RecentTerminalEntry>) {
+        settings.putString(recentSessionsKey, json.encodeToString(entries))
     }
 
     /** 最近 SFTP 会话：主机 id + 浏览路径（v2 起带路径，进程重启后恢复到上次目录）。 */
@@ -241,6 +249,7 @@ class HostRepository(
     data class RecentSftpEntry(
         val hostId: String,
         val path: String = "",
+        val createdAt: Long = 0L,
     )
 
     private val recentSftpKey = "termish.recent_sftp.v2"

@@ -26,12 +26,12 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * 连接编排层：两模式（SSH / Mosh）建连、重连退避、网络事件、herdr 工作台
- * 开关（探测/引导安装/注入）、mosh 主题注入、系统探测。
+ * 启动（探测/引导安装/注入）、mosh 主题注入、系统探测。
  *
- * herdr 是远端应用而非传输协议（[Host.launchHerdr]）：
+ * herdr 是本次终端会话的启动类型，而非主机属性或传输协议：
  * - Mosh：引导 `mosh-server new -- herdr`，mosh 会话直接跑 herdr TUI
  * - SSH / mosh 降级：连接后向 shell 注入 `herdr` 命令（退出回 shell）
- * - 远端未装：引导安装卡片（官网脚本，实时日志）；勾选开关 = 显式同意监控
+ * - 远端未装：引导安装卡片（官网脚本，实时日志）
  *
  * 状态所有权（Compose 观察点：status / frame / buffer …）留在
  * [TerminalController]——本类通过同包 internal 访问读写，UI 观察点不变。
@@ -201,9 +201,9 @@ internal class SessionConnector(
                 trace.step("connected")
                 trace.end()
                 TermLog.i("ssh") { "connected ${c.host.name} kex=${info.kexAlgorithm} in ${c.nowMs() - t0}ms" }
-                // herdr 工作台开关：探测远端 herdr；缺失 → 引导安装卡片
-                // （会话保活；勾选开关 = 显式同意 agent 监控）
-                if (c.host.launchHerdr) {
+                // Herdr 会话：探测远端 herdr；缺失 → 引导安装卡片；
+                // 用户点击独立入口即显式启动本次 agent 监控。
+                if (c.launchHerdr) {
                     val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
                     if (probed == null) {
                         TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
@@ -270,7 +270,7 @@ internal class SessionConnector(
 
     /**
      * Mosh 模式：SSH 引导 mosh-server，UDP 首包确认后关闭 SSH（引导工具使命完成）。
-     * herdr 工作台开关（[Host.launchHerdr]）：引导前探测 herdr（缺失 → 安装卡片），
+     * Herdr 会话：引导前探测 herdr（缺失 → 安装卡片），
      * 引导命令追加 ` -- herdr`（mosh 会话直接跑 herdr TUI）。
      * 降级语义（两种）：引导失败 = 远端未安装 mosh-server → 安装卡片或降级
      * （SSH shell；launchHerdr 时注入 herdr）；引导成功但 UDP 首包超时 =
@@ -326,7 +326,7 @@ internal class SessionConnector(
                 return
             }
             val bootstrapExtra =
-                if (c.host.launchHerdr) {
+                if (c.launchHerdr) {
                     " -- ${shSingleQuote(c.herdrBin ?: "herdr")}"
                 } else {
                     ""
@@ -515,11 +515,11 @@ internal class SessionConnector(
     }
 
     /**
-     * herdr 工作台开关开启时确保已探测（[c.herdrBin]）；未装 → 引导安装卡片
+     * Herdr 会话确保已探测（[c.herdrBin]）；未装 → 引导安装卡片
      *（保留 SSH 连接，置 CONNECTED），返回 false。开关未开直接返回 true。
      */
     private suspend fun ensureHerdrProbed(s: SshSession): Boolean {
-        if (!c.host.launchHerdr || c.herdrBin != null) return true
+        if (!c.launchHerdr || c.herdrBin != null) return true
         val probed = HerdrProbe.probe { cmd -> s.runCommand(cmd, 5_000) }
         if (probed == null) {
             TermLog.w("herdr") { "herdr not found ${c.host.name}: 引导安装" }
@@ -752,7 +752,7 @@ internal class SessionConnector(
                 }
                 // 安装完成：直接重新引导（bootstrap 即最终验证：成功 → mosh；
                 // 仍缺 → 卡片重现可重试/降级；其他错误 → 普通降级）。
-                // launchHerdr 开关由 doConnectMosh 内部处理（引导命令带 -- herdr）
+                // Herdr 启动类型由 doConnectMosh 内部处理（引导命令带 -- herdr）
                 TermLog.i("mosh") { "mosh install finished ${c.host.name}: ${log.take(120)}" }
                 c.moshInstalling = false
                 c.moshNeedsSudoPassword = false
@@ -769,7 +769,7 @@ internal class SessionConnector(
 
     /** 引导卡片上的「降级 SSH」：放弃安装，当前 SSH 显示通道转正。
      *  用户明确选择 SSH → 标记本会话条目后续重连不再重试 mosh。
-     *  herdr 工作台开关开启时注入 herdr 命令（退出回 shell）；否则启动命令。 */
+     *  Herdr 会话注入 herdr 命令（退出回 shell）；否则执行主机启动命令。 */
     fun degradeMoshToSsh() {
         if (!c.moshNeedsInstall) return
         TermLog.i("mosh") { "mosh install skipped ${c.host.name}——降级 SSH" }
@@ -777,7 +777,7 @@ internal class SessionConnector(
         c.moshNeedsSudoPassword = false
         c.moshDegradedToSsh = true
         val cmd =
-            if (c.host.launchHerdr) {
+            if (c.launchHerdr) {
                 c.herdrBin
             } else {
                 c.host.startupCommand
@@ -785,7 +785,7 @@ internal class SessionConnector(
                     .takeIf { it.isNotBlank() }
             }
         if (cmd != null) {
-            if (c.host.launchHerdr) {
+            if (c.launchHerdr) {
                 // herdr 注入统一走延迟 + 清屏路径（防 MOTD 迟到输出顶掉画面）
                 sendHerdrLaunch(c.session ?: return)
             } else {
@@ -841,10 +841,10 @@ internal class SessionConnector(
                 }
             }
         }
-        // 启动入口：herdr 工作台开关优先（herdr 即入口，探测拿到的完整路径）；
+        // 启动入口：Herdr 会话优先（herdr 即入口，探测拿到的完整路径）；
         // 否则启动命令（如 tmux new -A -s main，实现会话现场恢复）
         if (sendStartup) {
-            if (c.host.launchHerdr) {
+            if (c.launchHerdr) {
                 sendHerdrLaunch(s)
             } else {
                 val cmd =
@@ -857,7 +857,7 @@ internal class SessionConnector(
         // herdr 工作台：连接就绪后启动 agent 监控（blocked 通知的轮询源）。
         // 未装 herdr 时走安装卡片路径（finishConnected 提前 return），不会到这；
         // 安装成功后由 installHerdr 显式启动。stop 由 controller.close() 统一收口。
-        if (c.host.launchHerdr) c.startHerdrMonitor()
+        if (c.launchHerdr) c.startHerdrMonitor()
         c.frame++
     }
 
@@ -978,7 +978,7 @@ internal class SessionConnector(
         }
         // 启动命令仅普通会话发送：herdr 工作台下 mosh-server 直接跑 herdr
         // （`-- herdr`），再发启动命令会打进 herdr TUI 的输入流
-        if (!c.host.launchHerdr && c.host.startupCommand.isNotBlank()) {
+        if (!c.launchHerdr && c.host.startupCommand.isNotBlank()) {
             client.sendData((c.host.startupCommand.trim() + "\n").encodeToByteArray())
         }
         c.frame++
@@ -995,7 +995,7 @@ internal class SessionConnector(
         // 注入的 OSC 应答会作为「用户输入」送达远端 shell，普通 shell（bash
         // readline）不解析 OSC，会把 ESC]10;… 原样回显成特殊字符。有 TUI 才
         // 会查询终端主题，注入才安全有效。
-        if (!c.host.moshThemeSync || (!c.host.launchHerdr && c.host.startupCommand.isBlank())) return
+        if (!c.host.moshThemeSync || (!c.launchHerdr && c.host.startupCommand.isBlank())) return
         c.moshThemePayload = c.emulator.buildThemeSyncPayload()
         c.moshThemeInjected = false
     }

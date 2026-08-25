@@ -48,6 +48,12 @@ object Sizes {
     /** 最小触控目标。 */
     val TouchTarget = 48.dp
 
+    /** 表单输入框最小高度，与 Material 3 OutlinedTextField 对齐。 */
+    val FormFieldMinHeight = 64.dp
+
+    /** 主机卡片更多菜单宽度：容纳会话时间与状态，同时避免弹层占据大半卡片。 */
+    val HostActionsMenuWidth = 240.dp
+
     /** Agent 远端目录选择器固定内容高度；列表在内部滚动，确认按钮始终可见。 */
     val AgentDirectorySheet = 400.dp
 

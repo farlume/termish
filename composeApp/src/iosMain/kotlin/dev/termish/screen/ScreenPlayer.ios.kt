@@ -24,6 +24,7 @@ import kotlinx.cinterop.usePinned
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVSampleBufferDisplayLayer
 import platform.CoreGraphics.CGRectZero
+import platform.Foundation.NSDate
 import platform.Foundation.NSLock
 import platform.UIKit.UIColor
 import platform.UIKit.UIView
@@ -70,6 +71,14 @@ actual class ScreenPlayer actual constructor(
     private var cachedSps: ByteArray? = null
     private var cachedPps: ByteArray? = null
     private var readyReported = false
+
+    @Volatile
+    actual var lastRenderedAtMillis = 0L
+        private set
+
+    @Volatile
+    actual var renderSurfaceAttached = false
+        private set
 
     actual val videoDims: MutableState<Pair<Int, Int>?> = mutableStateOf(null)
 
@@ -139,11 +148,13 @@ actual class ScreenPlayer actual constructor(
 
     internal fun attachView(view: ScreenVideoView) {
         if (!views.contains(view)) views += view
+        renderSurfaceAttached = views.isNotEmpty()
         scheduleDrain()
     }
 
     internal fun detachView(view: ScreenVideoView) {
         views.remove(view)
+        renderSurfaceAttached = views.isNotEmpty()
         view.sampleLayer.flushAndRemoveImage()
         view.sampleLayer.removeFromSuperlayer()
     }
@@ -235,10 +246,13 @@ actual class ScreenPlayer actual constructor(
                 view.needsIdr = false
                 val layerState = termish_screen_layer_state(view.sampleLayer)
                 when {
-                    layerState > 0 && !readyReported -> {
-                        readyReported = true
+                    layerState > 0 -> {
+                        lastRenderedAtMillis = NSDate().timeIntervalSince1970.times(1000).toLong()
                         view.consecutiveFailures = 0
-                        onReady()
+                        if (!readyReported) {
+                            readyReported = true
+                            onReady()
+                        }
                     }
 
                     layerState < 0 -> recoverLayer(view)

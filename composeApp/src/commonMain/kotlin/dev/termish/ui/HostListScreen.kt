@@ -27,11 +27,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.LaptopMac
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
@@ -42,6 +42,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -70,12 +72,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.termish.data.ConnectionMode
@@ -101,15 +99,21 @@ import dev.termish.generated.resources.host_synology
 import dev.termish.generated.resources.host_ubuntu
 import dev.termish.generated.resources.host_windows
 import dev.termish.ssh.SftpSession
+import dev.termish.ui.theme.Sizes
 import dev.termish.ui.theme.StatusColors
 import dev.termish.util.monospaceFontFamily
 import kotlinx.coroutines.delay
+import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.painterResource
 
-/** 首页卡片展示的会话（终端或 SFTP）。 */
+/** 首页卡片与连接页展示的会话能力。 */
 sealed interface HostSessionItem {
     val hostId: String
+    val createdAt: Long
     val isActive: Boolean
     val isConnecting: Boolean
 
@@ -120,6 +124,7 @@ sealed interface HostSessionItem {
         val controller: TerminalController,
     ) : HostSessionItem {
         override val hostId: String get() = controller.host.id
+        override val createdAt: Long get() = controller.createdAt
         override val isActive: Boolean get() = isActiveStatus(controller.status)
         override val isConnecting: Boolean
             get() = controller.status == ConnStatus.CONNECTING || controller.status == ConnStatus.AUTH
@@ -129,6 +134,7 @@ sealed interface HostSessionItem {
     data class Sftp(
         val host: Host,
         val session: SftpSession?,
+        override val createdAt: Long,
     ) : HostSessionItem {
         override val hostId: String get() = host.id
 
@@ -136,6 +142,16 @@ sealed interface HostSessionItem {
         override val isActive: Boolean get() = session != null
         override val isConnecting: Boolean get() = false
         override val isConnected: Boolean get() = session != null
+    }
+
+    data class Screen(
+        val entry: ScreenSessionEntry,
+    ) : HostSessionItem {
+        override val hostId: String get() = entry.host.id
+        override val createdAt: Long get() = entry.createdAt
+        override val isActive: Boolean get() = true
+        override val isConnecting: Boolean get() = entry.session == null
+        override val isConnected: Boolean get() = entry.session != null
     }
 }
 
@@ -150,12 +166,16 @@ fun HostListScreen(
     onAdd: () -> Unit,
     onEdit: (Host) -> Unit,
     onConnect: (Host) -> Unit,
+    onOpenHerdr: (Host) -> Unit,
     onConnectBatch: (List<Host>) -> Unit,
     onDisconnect: (Host) -> Unit,
     onDelete: (Host) -> Unit,
     onAgents: (Host) -> Unit,
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
+    onOpenScreenSession: (ScreenSessionEntry) -> Unit,
+    onStartSftp: (Host) -> Unit,
+    onOpenScreen: (Host) -> Unit,
     onCloseAllSessions: (Host) -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -286,13 +306,6 @@ fun HostListScreen(
                     shape = RoundedCornerShape(14.dp),
                 )
             }
-            // 分组标题（与设置页 SettingsGroup 同款样式；左距对齐下方卡片的 8dp）
-            Text(
-                s.hostsSectionTitle,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 4.dp),
-            )
             if (filtered.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
@@ -309,7 +322,6 @@ fun HostListScreen(
                         HostCard(
                             host = host,
                             sessions = sessions,
-                            active = sessions.any { it.isActive },
                             selectionMode = selectionMode,
                             selected = isSelected,
                             onCardClick = {
@@ -321,6 +333,7 @@ fun HostListScreen(
                                     when (val target = sessions.firstOrNull { it.isActive } ?: sessions.firstOrNull()) {
                                         is HostSessionItem.Terminal -> onOpenSession(target.controller)
                                         is HostSessionItem.Sftp -> onOpenSftp(target.host, target.session)
+                                        is HostSessionItem.Screen -> onOpenScreenSession(target.entry)
                                         null -> onConnect(host)
                                     }
                                 }
@@ -335,10 +348,28 @@ fun HostListScreen(
                             onLongClick = {
                                 if (!selectionMode) enterSelection(host)
                             },
-                            onNewSession = { onConnect(host) },
+                            onTerminal = { onConnect(host) },
+                            onHerdr = { onOpenHerdr(host) },
+                            onSftp = {
+                                val existing = sessions.filterIsInstance<HostSessionItem.Sftp>().firstOrNull()
+                                if (existing != null) {
+                                    onOpenSftp(existing.host, existing.session)
+                                } else {
+                                    onStartSftp(host)
+                                }
+                            },
+                            onScreen = {
+                                val existing = sessions.filterIsInstance<HostSessionItem.Screen>().firstOrNull()
+                                if (existing != null) {
+                                    onOpenScreenSession(existing.entry)
+                                } else {
+                                    onOpenScreen(host)
+                                }
+                            },
                             onAgents = { onAgents(host) },
                             onOpenSession = onOpenSession,
                             onOpenSftp = onOpenSftp,
+                            onOpenScreenSession = onOpenScreenSession,
                             onCloseAllSessions = { onCloseAllSessions(host) },
                         )
                     }
@@ -447,16 +478,19 @@ private fun SelectionHeader(
 private fun HostCard(
     host: Host,
     sessions: List<HostSessionItem>,
-    active: Boolean,
     selectionMode: Boolean,
     selected: Boolean,
     onCardClick: () -> Unit,
     onAvatarClick: () -> Unit,
     onLongClick: () -> Unit,
-    onNewSession: () -> Unit,
+    onTerminal: () -> Unit,
+    onHerdr: () -> Unit,
+    onSftp: () -> Unit,
+    onScreen: () -> Unit,
     onAgents: () -> Unit,
     onOpenSession: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
+    onOpenScreenSession: (ScreenSessionEntry) -> Unit,
     onCloseAllSessions: () -> Unit,
 ) {
     val s = LocalAppStrings.current
@@ -464,57 +498,17 @@ private fun HostCard(
     val connecting = sessions.any { it.isConnecting }
     // 第一行：alias（名称）优先，为空时回退主机地址
     val title = host.name.ifBlank { host.hostname }
-    // 三态统计：已连接（绿）/ 连接中（橙）/ 已断开（灰）——连接中不再算作已连接
-    val connectedCount = sessions.count { it.isConnected }
-    val connectingCount = sessions.count { it.isConnecting }
-    val disconnectedCount = sessions.size - connectedCount - connectingCount
-    // 有会话：统计文字分段着色；无会话显示连接详情
-    val sessionStats = sessions.isNotEmpty()
+    // 卡片副标题始终表达主机本身；会话状态统一交给右侧徽章和更多菜单，
+    // 避免“2 Disconnected”与徽章“2”重复占用同一张卡片。
     val detail =
-        if (!sessionStats) {
-            val mode =
-                if (host.launchHerdr) {
-                    s.hostsModeHerdr
-                } else if (host.connectionMode == ConnectionMode.MOSH) {
-                    s.hostsModeMosh
-                } else {
-                    s.hostsModeSsh
-                }
-            buildString {
-                append(mode)
-                append(", ")
-                append(host.username)
-                if (host.system.isNotBlank()) {
-                    append(", ")
-                    append(host.system)
-                }
+        buildString {
+            append(if (host.connectionMode == ConnectionMode.MOSH) s.hostsModeMosh else s.hostsModeSsh)
+            append(" · ")
+            append(host.username)
+            if (host.system.isNotBlank()) {
+                append(" · ")
+                append(host.system)
             }
-        } else {
-            ""
-        }
-    val statsText =
-        if (sessionStats) {
-            buildAnnotatedString {
-                if (connectedCount > 0) {
-                    withStyle(SpanStyle(color = StatusColors.Connected)) {
-                        append("$connectedCount ${s.hostsConnected}")
-                    }
-                }
-                if (connectingCount > 0) {
-                    if (connectedCount > 0) append(", ")
-                    withStyle(SpanStyle(color = StatusColors.Warning)) {
-                        append("$connectingCount ${s.connStatusConnecting}")
-                    }
-                }
-                if (disconnectedCount > 0) {
-                    if (connectedCount > 0 || connectingCount > 0) append(", ")
-                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
-                        append("$disconnectedCount ${s.connStatusClosed}")
-                    }
-                }
-            }
-        } else {
-            null
         }
 
     Card(
@@ -549,87 +543,84 @@ private fun HostCard(
             ),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            // 系统头像（圆角正方形 + 白色图标）：点击进入/切换批处理选择
-            Box(
-                Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(systemColor(sys))
-                    .clickable(onClick = onAvatarClick),
-                contentAlignment = Alignment.Center,
+        Column {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                if (connecting) {
-                    // 连接中：头像显示转圈，连接完成自动跳转终端页
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    SystemAvatarIcon(sys, 22.dp)
-                }
-            }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    statsText ?: AnnotatedString(detail),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (sessionStats) Color.Unspecified else MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (selectionMode) {
-                // 选中状态标记：勾选圆
+                // 系统头像（圆角正方形 + 白色图标）：点击进入/切换批处理选择
                 Box(
                     Modifier
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(
-                            if (selected) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                        ),
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(systemColor(sys))
+                        .clickable(onClick = onAvatarClick),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (selected) {
-                        Text(
-                            "✓",
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.labelMedium,
+                    if (connecting) {
+                        // 连接中：头像显示转圈，连接完成自动跳转终端页
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(22.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp,
                         )
+                    } else {
+                        SystemAvatarIcon(sys, 22.dp)
                     }
                 }
-            } else {
-                if (sessions.isNotEmpty()) {
-                    // 会话数放在 Agent 入口左侧，让机器人图标始终对齐卡片右边界。
-                    SessionCountMenu(
-                        sessions = sessions,
-                        onConnect = onNewSession,
-                        onOpenTerminal = onOpenSession,
-                        onOpenSftp = onOpenSftp,
-                        onCloseAll = onCloseAllSessions,
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        detail,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                IconButton(onClick = onAgents) {
-                    Icon(
-                        Icons.Default.SmartToy,
-                        contentDescription = s.nativeAgents.menuLabel,
-                        tint = MaterialTheme.colorScheme.primary,
+                if (selectionMode) {
+                    // 选中状态标记：勾选圆
+                    Box(
+                        Modifier
+                            .size(22.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(
+                                if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                },
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (selected) {
+                            Text(
+                                "✓",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    }
+                } else {
+                    HostMoreMenu(
+                        sessions = sessions,
+                        onTerminal = onTerminal,
+                        onHerdr = onHerdr,
+                        onSftp = onSftp,
+                        onScreen = onScreen,
+                        onAgents = onAgents,
+                        onOpenTerminal = onOpenSession,
+                        onOpenSftp = onOpenSftp,
+                        onOpenScreenSession = onOpenScreenSession,
+                        onCloseAll = onCloseAllSessions,
                     )
                 }
             }
@@ -637,45 +628,106 @@ private fun HostCard(
     }
 }
 
-/** 卡片右侧会话下拉：显示会话数量，展开可新建连接、重入会话或全部关闭。 */
+/** 卡片唯一操作入口：更多图标 + 单一会话徽章；连接能力与已有会话统一收进菜单。 */
 @Composable
-private fun SessionCountMenu(
+private fun HostMoreMenu(
     sessions: List<HostSessionItem>,
-    onConnect: () -> Unit,
+    onTerminal: () -> Unit,
+    onHerdr: () -> Unit,
+    onSftp: () -> Unit,
+    onScreen: () -> Unit,
+    onAgents: () -> Unit,
     onOpenTerminal: (TerminalController) -> Unit,
     onOpenSftp: (Host, SftpSession?) -> Unit,
+    onOpenScreenSession: (ScreenSessionEntry) -> Unit,
     onCloseAll: () -> Unit,
 ) {
     val s = LocalAppStrings.current
     var open by remember { mutableStateOf(false) }
+    val activeCount = sessions.count { it.isActive }
+    val connectingOnly = activeCount > 0 && sessions.filter { it.isActive }.all { it.isConnecting }
     Box {
-        Row(
-            Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .clickable { open = true }
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        IconButton(onClick = { open = true }) {
+            BadgedBox(
+                badge = {
+                    if (activeCount > 0) {
+                        Badge(
+                            containerColor = if (connectingOnly) StatusColors.Warning else StatusColors.Connected,
+                        ) {
+                            Text(if (activeCount > 99) "99+" else activeCount.toString())
+                        }
+                    }
+                },
+            ) {
+                Icon(
+                    Icons.Default.MoreVert,
+                    contentDescription = s.navMore,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            modifier = Modifier.width(Sizes.HostActionsMenuWidth),
         ) {
             Text(
-                sessions.size.toString(),
-                style = MaterialTheme.typography.labelLarge,
+                s.hostsConnect,
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             )
-            Icon(
-                Icons.Filled.ArrowDropDown,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             DropdownMenuItem(
-                text = { Text(s.hostsConnect) },
+                text = { Text(s.hostsActionTerminal) },
+                leadingIcon = { Icon(Icons.Default.Terminal, contentDescription = null) },
                 onClick = {
                     open = false
-                    onConnect()
+                    onTerminal()
                 },
             )
-            HorizontalDivider()
+            DropdownMenuItem(
+                text = { Text(s.hostsActionHerdr) },
+                leadingIcon = {
+                    Icon(Icons.Default.Memory, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                },
+                onClick = {
+                    open = false
+                    onHerdr()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.hostsActionFiles) },
+                leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onSftp()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.hostsActionScreen) },
+                leadingIcon = { Icon(Icons.Default.DesktopWindows, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onScreen()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(s.hostsActionAgents) },
+                leadingIcon = { Icon(Icons.Default.SmartToy, contentDescription = null) },
+                onClick = {
+                    open = false
+                    onAgents()
+                },
+            )
+            if (sessions.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    s.connSectionTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             sessions.forEach { item ->
                 // 三态标签：已连接绿 / 连接中橙 / 已断开灰（Sftp 会话恒为活跃）
                 val statusLabel =
@@ -688,6 +740,8 @@ private fun SessionCountMenu(
                             }
                         // SFTP：有连接=活跃；断开保留（session=null）=已断开，可进 tab 重连
                         is HostSessionItem.Sftp -> if (item.session != null) s.hostsActive else s.connStatusClosed
+                        is HostSessionItem.Screen ->
+                            if (item.isConnecting) s.connStatusConnecting else s.hostsActive
                     }
                 val statusColor =
                     when (item) {
@@ -705,13 +759,21 @@ private fun SessionCountMenu(
                             } else {
                                 StatusColors.Neutral
                             }
+                        is HostSessionItem.Screen ->
+                            if (item.isConnecting) StatusColors.Warning else StatusColors.Connected
                     }
                 when (item) {
                     is HostSessionItem.Terminal ->
                         DropdownMenuItem(
                             text = {
+                                val launchLabel =
+                                    if (item.controller.launchMode == TerminalLaunchMode.HERDR) {
+                                        s.hostsActionHerdr
+                                    } else {
+                                        s.hostsActionTerminal
+                                    }
                                 Text(
-                                    "${item.controller.host.username}@${item.controller.host.hostname}",
+                                    "$launchLabel · ${formatSessionCreatedAt(item.createdAt)}",
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -732,7 +794,7 @@ private fun SessionCountMenu(
                         DropdownMenuItem(
                             text = {
                                 Text(
-                                    "${item.host.username}@${item.host.hostname}",
+                                    "${s.hostsActionFiles} · ${formatSessionCreatedAt(item.createdAt)}",
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -749,18 +811,60 @@ private fun SessionCountMenu(
                                 onOpenSftp(item.host, item.session)
                             },
                         )
+                    is HostSessionItem.Screen ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "${s.hostsActionScreen} · ${formatSessionCreatedAt(item.createdAt)}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            trailingIcon = {
+                                Text(
+                                    statusLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = statusColor,
+                                )
+                            },
+                            onClick = {
+                                open = false
+                                onOpenScreenSession(item.entry)
+                            },
+                        )
                 }
             }
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text(s.hostsCloseAll, color = MaterialTheme.colorScheme.error) },
-                onClick = {
-                    open = false
-                    onCloseAll()
-                },
-            )
+            if (sessions.isNotEmpty()) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(s.hostsCloseAll, color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = {
+                        Icon(Icons.Default.LinkOff, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                    },
+                    onClick = {
+                        open = false
+                        onCloseAll()
+                    },
+                )
+            }
         }
     }
+}
+
+/** 同日只显示时分；跨日补月日，紧凑且足以区分会话。 */
+private fun formatSessionCreatedAt(millis: Long): String {
+    if (millis <= 0L) return "--:--"
+    val timeZone = TimeZone.currentSystemDefault()
+    val created = Instant.fromEpochMilliseconds(millis).toLocalDateTime(timeZone)
+    val today =
+        Clock.System
+            .now()
+            .toLocalDateTime(timeZone)
+            .date
+
+    fun pad(value: Int): String = value.toString().padStart(2, '0')
+    val time = "${pad(created.hour)}:${pad(created.minute)}"
+    return if (created.date == today) time else "${pad(created.monthNumber)}-${pad(created.dayOfMonth)} $time"
 }
 
 /** 系统关键词 → 白色图标资源（有品牌图标的系统；其余回退 [systemIcon]）。 */

@@ -117,13 +117,18 @@ class HostRepositoryTest {
     @Test
     fun recentSessionsRoundtrip() {
         val r = repo()
-        assertTrue(r.loadRecentSessionHostIds().isEmpty())
+        assertTrue(r.loadRecentTerminalEntries().isEmpty())
 
-        r.saveRecentSessionHostIds(listOf("a", "b"))
-        assertEquals(listOf("a", "b"), r.loadRecentSessionHostIds())
+        val entries =
+            listOf(
+                HostRepository.RecentTerminalEntry("a"),
+                HostRepository.RecentTerminalEntry("b", launchHerdr = true),
+            )
+        r.saveRecentTerminalEntries(entries)
+        assertEquals(entries, r.loadRecentTerminalEntries())
 
-        r.saveRecentSessionHostIds(emptyList())
-        assertTrue(r.loadRecentSessionHostIds().isEmpty())
+        r.saveRecentTerminalEntries(emptyList())
+        assertTrue(r.loadRecentTerminalEntries().isEmpty())
     }
 
     @Test

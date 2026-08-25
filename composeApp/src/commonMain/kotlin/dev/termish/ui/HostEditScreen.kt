@@ -9,6 +9,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +20,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,7 +36,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.InputChip
@@ -73,6 +75,8 @@ import dev.termish.data.Host
 import dev.termish.data.HostAuthMethod
 import dev.termish.data.HostRepository
 import dev.termish.data.newId
+import dev.termish.ui.theme.Sizes
+import dev.termish.ui.theme.Spacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,7 +94,6 @@ fun HostEditScreen(
     var username by remember { mutableStateOf(existing?.username ?: "root") }
     var authMethod by remember { mutableStateOf(existing?.authMethod ?: HostAuthMethod.PASSWORD) }
     var connectionMode by remember { mutableStateOf(existing?.connectionMode ?: ConnectionMode.SSH) }
-    var launchHerdr by remember { mutableStateOf(existing?.launchHerdr ?: false) }
     var password by remember { mutableStateOf("") }
     var privateKey by remember { mutableStateOf("") }
     var tags by remember { mutableStateOf(existing?.tags ?: emptyList()) }
@@ -125,7 +128,6 @@ fun HostEditScreen(
                                 system = latest?.system ?: existing?.system ?: "",
                                 authMethod = authMethod,
                                 connectionMode = connectionMode,
-                                launchHerdr = launchHerdr,
                                 tags = tags,
                                 createdAt =
                                     existing?.createdAt ?: kotlinx.datetime.Clock.System
@@ -207,25 +209,6 @@ fun HostEditScreen(
                 RadioButton(connectionMode == ConnectionMode.MOSH, { connectionMode = ConnectionMode.MOSH })
                 Text(s.editModeMosh)
             }
-            // herdr 工作台开关（勾选 = 显式同意 agent 监控）：与传输层正交，
-            // Mosh 引导 `mosh-server new -- herdr`；SSH / 降级则连接后注入 herdr 命令
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-            ) {
-                Checkbox(launchHerdr, { launchHerdr = it })
-                Column {
-                    Text(s.editLaunchHerdr, style = MaterialTheme.typography.bodyMedium)
-                    if (launchHerdr) {
-                        Text(
-                            s.editLaunchHerdrHint,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-
             if (authMethod != HostAuthMethod.PRIVATE_KEY) {
                 OutlinedTextField(
                     password,
@@ -355,6 +338,9 @@ private fun TagInputField(
     var state by remember { mutableStateOf(TextFieldValue("")) }
     val input = state.text
     val focusRequester = remember { FocusRequester() }
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
+    val fieldShape = RoundedCornerShape(4.dp)
 
     // 读取 live state（软键盘 onDone 回调时机晚于最后输入，捕获 val 可能拿到旧值）
     fun commit() {
@@ -371,15 +357,19 @@ private fun TagInputField(
 
     Box(
         modifier
-            .clip(RoundedCornerShape(4.dp))
-            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(4.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable { focusRequester.requestFocus() }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .heightIn(min = Sizes.FormFieldMinHeight)
+            .border(
+                Sizes.BorderThin,
+                if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                fieldShape,
+            ).clickable { focusRequester.requestFocus() }
+            .padding(horizontal = Spacing.Lg)
+            .padding(vertical = Spacing.Sm),
     ) {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.align(Alignment.CenterStart),
         ) {
             tags.forEach { t ->
                 InputChip(
@@ -419,6 +409,7 @@ private fun TagInputField(
                 // onPreviewKeyEvent 只兜硬件键盘/桌面端
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { commit() }),
+                interactionSource = interactionSource,
                 modifier =
                     Modifier
                         .widthIn(min = 100.dp)
@@ -447,16 +438,15 @@ private fun TagInputField(
                             }
                         },
                 // placeholder 与输入文本共用同一 textStyle：行高一致，光标/文字对齐
-                textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 decorationBox = { inner ->
                     Box {
-                        // 空态占位提示：无标签且无输入时显示（与输入同 style，不折行）
                         if (tags.isEmpty() && input.isEmpty()) {
                             Text(
                                 label,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )

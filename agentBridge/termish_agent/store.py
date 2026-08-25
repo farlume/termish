@@ -744,6 +744,9 @@ class SessionStore:
             event.setdefault("ts", now)
             if event_type in ("thinking_start", "thinking_delta", "thinking"):
                 if not session.current_reasoning_id:
+                    # Agent 可能先输出一段可见说明，再进入思考/工具阶段。客户端
+                    # 断开时必须能从数据库恢复这段说明，不能只留在内存 stream_text。
+                    persist_stream_text()
                     session.current_reasoning_id = uuid.uuid4().hex[:12]
                     session.current_reasoning_text = ""
                     session.current_answer_id = None
@@ -759,6 +762,10 @@ class SessionStore:
                 event["activityId"] = activity_id
                 if event_type == "tool_start":
                     finish_pending_thinking()
+                    # Codex 常见顺序：delta（说明下一步）→ tool_start。旧实现此处
+                    # 清掉 current_answer_id，却不落盘 stream_text；App 重连后便只
+                    # 剩当前工具卡片，上方已经显示过的说明全部消失。
+                    persist_stream_text()
                     session.current_answer_id = None
                     session.activity_sequence += 1
                     session.pending_tools[activity_id] = {

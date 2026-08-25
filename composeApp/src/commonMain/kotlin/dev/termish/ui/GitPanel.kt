@@ -34,6 +34,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -179,9 +180,9 @@ internal interface GitCommandRunner {
 internal class TerminalGitCommandRunner(
     private val controller: TerminalController,
 ) : GitCommandRunner {
-    /** herdr 工作台开关开启：cwd 优先走 herdr snapshot（焦点 pane 的工作区）。
-     *  herdr 重构后不再是独立连接模式（Host.launchHerdr），探测路径不变。 */
-    val herdrMode: Boolean get() = controller.host.launchHerdr && controller.herdrBin != null
+    /** Herdr 会话：cwd 优先走 herdr snapshot（焦点 pane 的工作区）。
+     *  herdr 是会话启动类型而非主机连接模式，探测路径不变。 */
+    val herdrMode: Boolean get() = controller.launchHerdr && controller.herdrBin != null
 
     /** 工作目录（独立 exec 通道先 `cd` 定位；refresh 时探测，见 [fetchWorkdir]）。 */
     override var workdir: String? = null
@@ -495,6 +496,9 @@ internal fun GitOverlay(
     var commitOpen by remember { mutableStateOf(false) }
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    // Git 面板没有“半收起”语义：只允许完整展开或关闭。否则从详情页下滑时
+    // Sheet 已进入 Hidden、外层 open 却仍为 true，会留下无法再次打开的空状态。
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     // 面板内也保持分层返回：diff → 状态页 → 关闭面板，不依赖顶部按钮。
     // ModalBottomSheet / 提交对话框会先消费自身的返回事件。
@@ -667,12 +671,12 @@ internal fun GitOverlay(
     if (open) {
         ModalBottomSheet(
             onDismissRequest = {
-                if (selected != null) {
-                    selected = null
-                } else {
-                    onOpenChange(false)
-                }
+                // 下滑、点遮罩和 Sheet 自身返回都表示关闭。此时 Material 已把
+                // Sheet 移到 Hidden，必须同步外层 open，不能只清详情层级。
+                selected = null
+                onOpenChange(false)
             },
+            sheetState = sheetState,
             containerColor = theme.background(),
             contentColor = theme.foreground(),
         ) {

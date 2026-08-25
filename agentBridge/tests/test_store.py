@@ -110,6 +110,7 @@ class ReconnectSnapshotAdapter(FakeAdapter):
         await emit({"type": "thinking_delta", "text": "Inspecting"})
         self.reasoning_ready.set()
         await self.continue_to_tool.wait()
+        await emit({"type": "delta", "text": "Running the command"})
         await emit({"type": "tool_start", "name": "bash", "args": "pwd", "toolId": "tool-1"})
         self.tool_ready.set()
         await self.continue_to_answer.wait()
@@ -355,7 +356,11 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
             adapter.continue_to_tool.set()
             await adapter.tool_ready.wait()
             tool_snapshot = self.store.messages(session["sessionId"])
-            self.assertEqual(["user", "thinking", "tool"], [message["role"] for message in tool_snapshot])
+            self.assertEqual(
+                ["user", "thinking", "assistant", "tool"],
+                [message["role"] for message in tool_snapshot],
+            )
+            self.assertEqual("Running the command", tool_snapshot[-2]["text"])
             self.assertEqual("pwd", tool_snapshot[-1]["toolInput"])
             self.assertTrue(tool_snapshot[-1]["running"])
 
@@ -363,7 +368,7 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
             await adapter.answer_ready.wait()
             answer_snapshot = self.store.messages(session["sessionId"])
             self.assertEqual(
-                ["user", "thinking", "tool", "assistant"],
+                ["user", "thinking", "assistant", "tool", "assistant"],
                 [message["role"] for message in answer_snapshot],
             )
             self.assertEqual("hel", answer_snapshot[-1]["text"])

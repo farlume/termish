@@ -78,6 +78,35 @@ class RelayTest(unittest.TestCase):
                     os.killpg(os.getpgid(current_pid), signal.SIGTERM)
                     time.sleep(0.1)
 
+    def test_second_serve_cannot_replace_the_live_daemon_socket(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            environment = os.environ.copy()
+            environment["TERMISH_AGENT_HOME"] = temp
+            pid_path = pathlib.Path(temp) / "runtime" / "agent.pid"
+            subprocess.run(
+                [sys.executable, str(MAIN), "ensure-running"],
+                check=True,
+                capture_output=True,
+                env=environment,
+                timeout=10,
+            )
+            daemon = int(pid_path.read_text(encoding="utf-8"))
+            try:
+                duplicate = subprocess.run(
+                    [sys.executable, str(MAIN), "serve"],
+                    capture_output=True,
+                    env=environment,
+                    timeout=5,
+                )
+                self.assertNotEqual(0, duplicate.returncode)
+                self.assertIn(b"already running", duplicate.stderr)
+                self.assertEqual(daemon, int(pid_path.read_text(encoding="utf-8")))
+                os.kill(daemon, 0)
+            finally:
+                if pid_path.exists():
+                    os.killpg(os.getpgid(int(pid_path.read_text(encoding="utf-8"))), signal.SIGTERM)
+                    time.sleep(0.1)
+
 
 if __name__ == "__main__":
     unittest.main()

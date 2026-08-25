@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,13 +37,17 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.zIndex
 import dev.termish.ui.theme.ScreenControlDimens
 import dev.termish.ui.theme.ScreenControlTokens
 import kotlin.math.roundToInt
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** 收起态：位于键盘按钮上方的虚拟鼠标入口。 */
 @Composable
@@ -77,6 +83,9 @@ internal fun VirtualMousePanel(
     strings: ScreenStrings,
     onClose: () -> Unit,
     onLeftClick: () -> Unit,
+    onLeftDragStart: () -> Unit,
+    onLeftDrag: (Offset) -> Unit,
+    onLeftDragEnd: () -> Unit,
     onRightClick: () -> Unit,
     onScroll: (Int) -> Unit,
     onMovePanel: (Offset) -> Unit,
@@ -86,6 +95,10 @@ internal fun VirtualMousePanel(
 
     val currentOnMovePanel by rememberUpdatedState(onMovePanel)
     val currentOnScroll by rememberUpdatedState(onScroll)
+    val currentOnLeftClick by rememberUpdatedState(onLeftClick)
+    val currentOnLeftDragStart by rememberUpdatedState(onLeftDragStart)
+    val currentOnLeftDrag by rememberUpdatedState(onLeftDrag)
+    val currentOnLeftDragEnd by rememberUpdatedState(onLeftDragEnd)
 
     Box(
         modifier
@@ -113,8 +126,81 @@ internal fun VirtualMousePanel(
                     Modifier
                         .weight(1f)
                         .fillMaxSize()
-                        .semantics { contentDescription = strings.virtualMouseLeftClick }
-                        .clickable(onClick = onLeftClick),
+                        .semantics {
+                            contentDescription = strings.virtualMouseLeftClick
+                            role = Role.Button
+                            onClick {
+                                currentOnLeftClick()
+                                true
+                            }
+                        }.pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown()
+                                down.consume()
+                                var lastPosition = down.position
+                                var released = false
+                                var cancelled = false
+                                var pointerGone = false
+                                val longPressed =
+                                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id }
+                                            if (change == null) {
+                                                cancelled = true
+                                                pointerGone = true
+                                                break
+                                            }
+                                            if (!change.pressed) {
+                                                released = true
+                                                break
+                                            }
+                                            if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                                                change.consume()
+                                                cancelled = true
+                                                break
+                                            }
+                                            lastPosition = change.position
+                                        }
+                                        false
+                                    } ?: true
+
+                                when {
+                                    released -> currentOnLeftClick()
+                                    longPressed && !cancelled -> {
+                                        currentOnLeftDragStart()
+                                        try {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change =
+                                                    event.changes.firstOrNull { it.id == down.id }
+                                                        ?: break
+                                                if (!change.pressed) break
+                                                val delta = change.position - lastPosition
+                                                if (delta != Offset.Zero) {
+                                                    change.consume()
+                                                    currentOnLeftDrag(delta)
+                                                    lastPosition = change.position
+                                                }
+                                            }
+                                        } finally {
+                                            currentOnLeftDragEnd()
+                                        }
+                                    }
+                                    else -> {
+                                        // 长按前就滑出触摸阈值：取消点击，并把本次手势消费到抬手。
+                                        if (!pointerGone) {
+                                            while (true) {
+                                                val event = awaitPointerEvent()
+                                                val change = event.changes.firstOrNull { it.id == down.id }
+                                                if (change == null || !change.pressed) break
+                                                change.consume()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
                 )
                 Box(
                     Modifier

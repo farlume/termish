@@ -38,6 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
+import kotlinx.datetime.Clock
 
 enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
 
@@ -74,10 +75,15 @@ internal fun awaitHostKeyPromptAnswer(deferred: CompletableDeferred<Boolean>): B
  * 终端会话控制器：持有终端状态（buffer / emulator / 连接状态）供 UI 观察，
  * 并把键盘输入路由到当前传输（SSH shell / mosh）。
  *
- * 连接编排（SSH/Mosh 建连、重连、herdr 工作台开关、网络事件）在
+ * 连接编排（SSH/Mosh 建连、重连、会话启动类型、网络事件）在
  * [SessionConnector]——状态所有权留在这里（Compose 观察点不变），
  * connector 经同包 internal 访问读写。
  */
+enum class TerminalLaunchMode {
+    SHELL,
+    HERDR,
+}
+
 class TerminalController(
     val host: Host,
     internal val password: String?,
@@ -85,11 +91,16 @@ class TerminalController(
     internal val repository: HostRepository,
     /** 意外断线时自动重连（指数退避，最多 3 次）。 */
     internal val autoReconnect: Boolean = true,
+    /** 本次会话启动普通 shell 或 herdr；不属于主机连接配置。 */
+    val launchMode: TerminalLaunchMode = TerminalLaunchMode.SHELL,
     /** 连接错误文案提供器（随语言切换取最新 AppStrings）。 */
     private val strings: () -> AppStrings = { appStringsFor("en") },
+    /** 条目首次创建时间；断线重连与进程恢复后保持不变。 */
+    val createdAt: Long = Clock.System.now().toEpochMilliseconds(),
     /** SSH 会话工厂（测试注入 fake；生产默认走平台引擎）。 */
     internal val sessionFactory: (SshConnection, SshCallbacks) -> SshSession = ::createSshSession,
 ) {
+    internal val launchHerdr: Boolean get() = launchMode == TerminalLaunchMode.HERDR
     val buffer = TerminalBuffer(80, 24, maxScrollbackLines = 10_000)
     val emulator = TerminalEmulator(buffer)
     val selection = TerminalSelection(buffer)
@@ -129,7 +140,7 @@ class TerminalController(
     /** 自动探测到远端系统并已保存时回调（Termius 式识别；UI 据此刷新主机列表）。 */
     var onSystemDetected: ((Host) -> Unit)? = null
 
-    /** herdr 工作台开关开启且远端未安装 herdr（banner 显示安装引导）。 */
+    /** Herdr 会话启动时远端未安装 herdr（banner 显示安装引导）。 */
     var herdrNeedsInstall by mutableStateOf(false)
         internal set
 
@@ -160,7 +171,7 @@ class TerminalController(
     var moshNeedsSudoPassword by mutableStateOf(false)
         internal set
 
-    /** 探测到的 herdr 可执行路径（工作台开关：引导 mosh / 注入命令用）。 */
+    /** 探测到的 herdr 可执行路径（Herdr 会话引导 mosh / 注入命令用）。 */
     internal var herdrBin: String? = null
 
     /** 本会话条目已从 mosh 降级到 SSH（UDP 不通，或用户在安装卡片主动选择）：
@@ -256,7 +267,7 @@ class TerminalController(
     private val connector = SessionConnector(this, strings)
 
     /**
-     * herdr agent 监控器（host.launchHerdr 时启用）：轮询 `herdr api snapshot`，
+     * herdr agent 监控器（Herdr 会话时启用）：轮询 `herdr api snapshot`，
      * blocked 经两轮确认后发 AGENT_TASK 通知（NotificationCenter 前台过滤）。
      *
      * 生命周期：连接就绪（finishConnected / installHerdr 成功）→ start；
@@ -275,9 +286,9 @@ class TerminalController(
             onAgents = {},
         )
 
-    /** 连接就绪后启动 agent 监控（幂等；仅 launchHerdr 且 CONNECTED 时生效）。 */
+    /** 连接就绪后启动 agent 监控（幂等；仅 Herdr 会话且 CONNECTED 时生效）。 */
     internal fun startHerdrMonitor() {
-        if (!host.launchHerdr || status != ConnStatus.CONNECTED) return
+        if (!launchHerdr || status != ConnStatus.CONNECTED) return
         herdrMonitor.start()
     }
 

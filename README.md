@@ -325,7 +325,7 @@ browser for desktop workflows while the phone stays native.
    start chatting. Recent chats, Agent management, and settings live in the
    workspace drawer. The remote needs
    `python3`; supported Agent CLIs can be installed inside the app.
-7. **herdr workspace** — turn on the host's herdr mode (pocket entry to your
+7. **herdr workspace** — tap the host card's Herdr action (pocket entry to your
    agents). If herdr is missing on the remote, a **guided install** card pops:
    one-tap install (official script), live install log on the card, straight
    into your agent workspace when done.

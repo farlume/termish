@@ -42,6 +42,16 @@ class ScreenTcpSessionTest {
     }
 
     @Test
+    fun `busy status is distinct from control capability statuses`() {
+        val statuses = mutableListOf<Int>()
+        val parser = ScreenTcpFrameParser(statuses::add, {})
+
+        parser.push(byteArrayOf('T'.code.toByte(), 'H'.code.toByte(), 'S'.code.toByte(), '1'.code.toByte(), SCREEN_TCP_STATUS_BUSY.toByte()))
+
+        assertEquals(listOf(SCREEN_TCP_STATUS_BUSY), statuses)
+    }
+
+    @Test
     fun `control messages carry an explicit tcp length prefix`() {
         val payload = ScreenControlPacket.encodeText("中文 input")
         val framed = frameScreenTcpControl(payload)
@@ -77,6 +87,27 @@ class ScreenTcpSessionTest {
 
         assertEquals(ScreenControlPacket.TYPE_CLICK, left[4].toInt())
         assertEquals(ScreenControlPacket.TYPE_RIGHT_CLICK, right[4].toInt())
+    }
+
+    @Test
+    fun `virtual mouse drag sequence has distinct control types`() {
+        val down = ScreenControlPacket.encode(ScreenControlPacket.TYPE_VIRTUAL_LEFT_DOWN, 0.25f, 0.75f)
+        val drag = ScreenControlPacket.encode(ScreenControlPacket.TYPE_VIRTUAL_LEFT_DRAG, 0.5f, 0.5f)
+        val up = ScreenControlPacket.encode(ScreenControlPacket.TYPE_VIRTUAL_LEFT_UP, 0.75f, 0.25f)
+
+        assertEquals(ScreenControlPacket.TYPE_VIRTUAL_LEFT_DOWN, down[4].toInt())
+        assertEquals(ScreenControlPacket.TYPE_VIRTUAL_LEFT_DRAG, drag[4].toInt())
+        assertEquals(ScreenControlPacket.TYPE_VIRTUAL_LEFT_UP, up[4].toInt())
+    }
+
+    @Test
+    fun `tcp lease heartbeat is a framed no input control packet`() {
+        val heartbeat = ScreenControlPacket.encode(ScreenControlPacket.TYPE_HEARTBEAT, 0f, 0f)
+        val framed = frameScreenTcpControl(heartbeat)
+
+        assertEquals(17, heartbeat.size)
+        assertEquals(ScreenControlPacket.TYPE_HEARTBEAT, heartbeat[4].toInt())
+        assertContentEquals(heartbeat, framed.copyOfRange(4, framed.size))
     }
 
     private fun frame(payload: ByteArray): ByteArray = intBytes(payload.size) + payload

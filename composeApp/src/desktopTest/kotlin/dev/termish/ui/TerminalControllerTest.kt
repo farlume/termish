@@ -59,10 +59,8 @@ class TerminalControllerTest {
 
     private fun host(startup: String = "") = Host(id = "h1", name = "dev", hostname = "example.com", username = "root", startupCommand = startup)
 
-    private fun herdrHost() = host().copy(launchHerdr = true)
-
-    /** Mosh + herdr 工作台开关（mosh 引导直接跑 herdr）。 */
-    private fun herdrMoshHost() = host().copy(connectionMode = ConnectionMode.MOSH, launchHerdr = true)
+    /** Mosh + Herdr 会话（mosh 引导直接跑 herdr）。 */
+    private fun herdrMoshHost() = host().copy(connectionMode = ConnectionMode.MOSH)
 
     // herdr --version 输出（探测判「已安装」用；snapshot 判 daemon 运行用）
     private val versionOutput = "herdr 0.8.0"
@@ -185,7 +183,7 @@ class TerminalControllerTest {
         repo: HostRepository = repo(),
     ): Pair<TerminalController, FakeSsh> {
         val c =
-            TerminalController(herdrHost(), "pw", null, repo, false) { _, cb ->
+            TerminalController(host(), "pw", null, repo, false, launchMode = TerminalLaunchMode.HERDR) { _, cb ->
                 fake.callbacks = cb
                 fake
             }
@@ -198,7 +196,14 @@ class TerminalControllerTest {
         autoReconnect: Boolean = false,
     ): Pair<TerminalController, FakeSsh> {
         val c =
-            TerminalController(herdrMoshHost(), "pw", null, repo, autoReconnect) { _, cb ->
+            TerminalController(
+                herdrMoshHost(),
+                "pw",
+                null,
+                repo,
+                autoReconnect,
+                launchMode = TerminalLaunchMode.HERDR,
+            ) { _, cb ->
                 fake.callbacks = cb
                 fake
             }
@@ -482,12 +487,12 @@ class TerminalControllerTest {
         assertEquals(frameBefore, c.frame)
     }
 
-    // ---------- herdr 工作台开关 ----------
+    // ---------- Herdr 会话启动类型 ----------
 
     @Test
     fun herdrProbeFailureGuidesInstall() {
         // 全部候选 runCommand 返回 null → 远端无 herdr：保留 SSH 连接进入「待安装」
-        // （banner 引导安装），不报错、不降级、不重连（SSH 模式 + 工作台开关）
+        // （banner 引导安装），不报错、不降级、不重连（SSH + Herdr 会话）
         val (c, f) = herdrController(FakeSsh())
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
@@ -580,7 +585,7 @@ class TerminalControllerTest {
 
     @Test
     fun herdrMoshMissingShowsInstallGuide() {
-        // Mosh + 工作台开关：herdr 在但 mosh-server 未装 → mosh 引导安装卡片（非静默
+        // Mosh + Herdr 会话：herdr 在但 mosh-server 未装 → mosh 引导安装卡片（非静默
         // 降级——装上 mosh 才有漫游能力）；状态必须置 CONNECTED（回归：此前
         // 状态停在 CONNECTING，banner 常驻「连接中…」）
         val fake =
@@ -604,7 +609,7 @@ class TerminalControllerTest {
 
     @Test
     fun herdrDegradedInjectsShellCommand() {
-        // 已降级条目（moshDegradedToSsh）+ 工作台开关：直走 SSH shell 并注入
+        // 已降级条目（moshDegradedToSsh）+ Herdr 会话：直走 SSH shell 并注入
         // herdr 命令（herdr 是 shell 子进程，退出后回到 shell）
         val fake =
             FakeSsh(
@@ -785,7 +790,7 @@ class TerminalControllerTest {
 
     @Test
     fun herdrInstallMoshReGuidesWithHerdrArg() {
-        // Mosh + 工作台开关 + mosh 未装 → 引导安装；安装完成后重新引导必须带
+        // Mosh + Herdr 会话 + mosh 未装 → 引导安装；安装完成后重新引导必须带
         // -- 'herdr'（mosh 会话直接跑 herdr）。此处模拟装后 PATH 未刷新仍
         // not found → 回到引导卡片，但引导命令必须已带上 herdr 参数
         var installed = false
@@ -823,13 +828,13 @@ class TerminalControllerTest {
 
         assertEquals(2, bootstraps.size, "安装后应重新引导，实际: $bootstraps")
         assertTrue(bootstraps[1].contains("mosh-server new"), "引导命令: ${bootstraps[1]}")
-        assertTrue(bootstraps[1].contains("-- ${shSingleQuote("herdr")}"), "工作台开关引导应带 -- herdr: ${bootstraps[1]}")
+        assertTrue(bootstraps[1].contains("-- ${shSingleQuote("herdr")}"), "Herdr 会话引导应带 -- herdr: ${bootstraps[1]}")
         c.destroy()
     }
 
     @Test
     fun herdrDegradeButtonInjectsHerdrAndSticksForReconnect() {
-        // Mosh + 工作台开关 + mosh 未装 → 卡片「降级 SSH」= 注入 herdr 命令；
+        // Mosh + Herdr 会话 + mosh 未装 → 卡片「降级 SSH」= 注入 herdr 命令；
         // 用户明确选择后置 sticky 标记，断链重连直走 SSH shell（仍注入 herdr），
         // 不再引导 mosh
         var bootstrapCount = 0

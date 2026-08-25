@@ -185,6 +185,8 @@ fun ScreenContent(
     // （用户反馈：拖到右缘卡住，光标点不到视频最右列——对齐 ToDesk 整体左移效果）
     var virtualMouseRawX by remember { mutableFloatStateOf(Float.NaN) }
     var virtualMouseAnchorPosition by remember { mutableStateOf<Offset?>(null) }
+    var virtualMouseLeftHeld by remember { mutableStateOf(false) }
+    var virtualMouseHeldCursor by remember { mutableStateOf<ScreenPoint?>(null) }
 
     val mousePanelWidthPx = with(density) { ScreenControlDimens.MousePanelWidth.toPx() }
     val mousePanelHeightPx = with(density) { ScreenControlDimens.MousePanelHeight.toPx() }
@@ -199,7 +201,23 @@ fun ScreenContent(
     val mousePanelTopInsetPx = statusBarInsetTop + with(density) { Sizes.HeaderCompact.toPx() }
     // rightControlAreaPx is now a state updated in onMovePanel (gradual push)
 
+    fun releaseVirtualMouseLeft() {
+        if (!virtualMouseLeftHeld) return
+        virtualMouseHeldCursor?.let { cursor ->
+            state.controlSender?.invoke(
+                ScreenControlPacket.TYPE_VIRTUAL_LEFT_UP,
+                cursor.x,
+                cursor.y,
+                0,
+            )
+        }
+        virtualMouseLeftHeld = false
+        virtualMouseHeldCursor = null
+        TermLog.i("screen") { "virtual mouse left drag ended" }
+    }
+
     fun closeVirtualMouse() {
+        releaseVirtualMouseLeft()
         if (!virtualMouseOpen) return
         virtualMouseOpen = false
         rightControlAreaPx = 0f
@@ -208,8 +226,8 @@ fun ScreenContent(
         TermLog.i("screen") { "virtual mouse closed" }
     }
 
-    LaunchedEffect(state.controlMode) {
-        if (!state.controlMode) closeVirtualMouse()
+    LaunchedEffect(state.controlMode, state.connected) {
+        if (!state.controlMode || !state.connected) closeVirtualMouse()
     }
 
     // 点击涟漪（远程操作反馈）：按下点扩散圆圈动画，ToDesk/向日葵同款
@@ -307,7 +325,7 @@ fun ScreenContent(
         virtualMouseRawX = clamped.x + rightControlAreaPx
     }
     Column(
-        Modifier
+        modifier
             .fillMaxSize()
             .background(Color.Black),
     ) {
@@ -370,10 +388,11 @@ fun ScreenContent(
                     Modifier
                         .fillMaxHeight()
                         .width(with(density) { visibleVideoWidthPx.toDp() })
-                        // ⚠️ key 必须含 controlMode：pointerInput 闭包只在组合时执行一次，
-                        // 块内捕获的 controlMode 是旧值——全屏中切「操作」按钮后手势层
-                        // 不重启，点击仍被观看模式的 transform 手势吞掉（用户反馈）
-                        .pointerInput(state.controlMode, videoViewportSize) {
+                        // ⚠️ key 必须同时包含 state 实例与 controlMode：切画质会重建
+                        // ScreenSession/ScreenUiState。如果手势协程不重启，它会继续
+                        // 捕获旧 state，把触摸发到已关闭的 controlSender；虚拟鼠标
+                        // 回调经重组后却正常，因而表现为“手指失效、鼠标正常”。
+                        .pointerInput(state, state.controlMode, videoViewportSize) {
                             if (state.controlMode) {
                                 // 远程操作：单指 = 鼠标左键（按下/拖动/抬起），双指垂直滑动 = 滚轮。
                                 // 坐标归一化到画面显示区域；事件不经队列即时发（丢包容忍）
@@ -631,7 +650,7 @@ fun ScreenContent(
                 )
             }
 
-            // 被控端控制状态提示：Linux 不支持控制（不误导 macOS 授权路径）/ macOS 缺权限
+            // 被控端控制状态提示：Linux 控制后端不可用 / macOS 缺辅助功能权限。
             if (state.controlMode && state.controlUnsupported) {
                 Text(
                     s.screen.controlUnsupportedHint,
@@ -672,49 +691,11 @@ fun ScreenContent(
                             anchor = ScreenPoint(anchor.x, anchor.y),
                             frame = frame,
                         )
-                    VirtualMouseCursor(
-                        frame = frame,
-                        cursor = cursor,
-                    )
-                    VirtualMousePanel(
-                        position =
-                            Offset(
-                                anchor.x + mouseCursorPanelOffsetXPx,
-                                anchor.y + mouseCursorPanelOffsetYPx,
-                            ),
-                        strings = s.screen,
-                        onClose = ::closeVirtualMouse,
-                        onLeftClick = {
-                            state.controlSender?.invoke(
-                                ScreenControlPacket.TYPE_CLICK,
-                                cursor.x,
-                                cursor.y,
-                                0,
-                            )
-                            val hotspot = cursorHotspot(cursor, screenFrame(state))
-                            ripple = RippleFx(hotspot.x, hotspot.y, rippleSeq++)
-                            TermLog.i("screen") { "virtual mouse left click" }
-                        },
-                        onRightClick = {
-                            state.controlSender?.invoke(
-                                ScreenControlPacket.TYPE_RIGHT_CLICK,
-                                cursor.x,
-                                cursor.y,
-                                0,
-                            )
-                            TermLog.i("screen") { "virtual mouse right click" }
-                        },
-                        onScroll = { direction ->
-                            state.controlSender?.invoke(
-                                ScreenControlPacket.TYPE_SCROLL,
-                                cursor.x,
-                                cursor.y,
-                                direction,
-                            )
-                            TermLog.i("screen") { "virtual mouse scroll direction=$direction" }
-                        },
-                        onMovePanel = { delta ->
-                            val current = virtualMouseAnchorPosition ?: return@VirtualMousePanel
+                    val moveVirtualMouse: (Offset) -> ScreenPoint? = { delta ->
+                        val current = virtualMouseAnchorPosition
+                        if (current == null) {
+                            null
+                        } else {
                             val viewportRight = viewportSize.width.toFloat()
                             val maxAnchorX =
                                 (viewportRight - mouseControlWidthPx).coerceAtLeast(0f)
@@ -729,16 +710,11 @@ fun ScreenContent(
                             // 左/右边界渐进推开（对称）：面板拖过画面边缘的过冲量，
                             // 转成画面反向平移——右推=画面左移（右边内容挤进来），
                             // 左推=画面右移（放大后左边隐藏内容挤出来）
-                            // 左界 = 画面左缘与屏幕左缘的较大者：放大后画面左缘在
-                            // 屏幕外（<0），鼠标不能挪出屏幕（贴屏幕左缘触发左推）；
-                            // 未放大时画面左缘在屏幕内，鼠标仍限制在画面内
                             val leftEdge = unpushedFrame.left.coerceAtLeast(0f)
                             val overLeft = leftEdge - rawX
                             val anchorX: Float
                             val overlapPx: Float
                             if (overLeft > 0f && panOffset.x < 0f) {
-                                // 左推：贴屏幕左缘后继续左拖的过冲，转成 panOffset.x
-                                // 增大（画面右移，左边隐藏内容挤出来）；上限 = 归零
                                 val maxPanX =
                                     (videoViewportSize.width * (zoomScale - 1f)).coerceAtLeast(0f)
                                 panOffset =
@@ -774,13 +750,90 @@ fun ScreenContent(
                                     viewportHeight = viewportSize.height.toFloat(),
                                     controlHeight = mouseControlHeightPx,
                                     topInset = mousePanelTopInsetPx,
-                                    // 面板完整可见：anchor（箭头热点）上界 = 视口宽 - 控制区总宽，
-                                    // 即面板右边缘最多贴视口右边缘——推开的过冲由视频左移承接，
-                                    // 面板不滑出屏幕。与 LaunchedEffect 的 clamp 保持一致
-                                    // （否则 effect 重启时 anchor 跳变、面板闪动）。
                                     viewportWidth = maxAnchorX,
                                 )
                             virtualMouseAnchorPosition = Offset(clamped.x, clamped.y)
+                            cursorAtVirtualMouseAnchor(clamped, targetFrame)
+                        }
+                    }
+                    VirtualMouseCursor(
+                        frame = frame,
+                        cursor = cursor,
+                    )
+                    VirtualMousePanel(
+                        position =
+                            Offset(
+                                anchor.x + mouseCursorPanelOffsetXPx,
+                                anchor.y + mouseCursorPanelOffsetYPx,
+                            ),
+                        strings = s.screen,
+                        onClose = ::closeVirtualMouse,
+                        onLeftClick = {
+                            state.controlSender?.invoke(
+                                ScreenControlPacket.TYPE_CLICK,
+                                cursor.x,
+                                cursor.y,
+                                0,
+                            )
+                            val hotspot = cursorHotspot(cursor, screenFrame(state))
+                            ripple = RippleFx(hotspot.x, hotspot.y, rippleSeq++)
+                            TermLog.i("screen") { "virtual mouse left click" }
+                        },
+                        onLeftDragStart = {
+                            if (!virtualMouseLeftHeld) {
+                                virtualMouseLeftHeld = true
+                                virtualMouseHeldCursor = cursor
+                                state.controlSender?.invoke(
+                                    ScreenControlPacket.TYPE_VIRTUAL_LEFT_DOWN,
+                                    cursor.x,
+                                    cursor.y,
+                                    0,
+                                )
+                                TermLog.i("screen") { "virtual mouse left drag started" }
+                            }
+                        },
+                        onLeftDrag = { delta ->
+                            moveVirtualMouse(delta)?.let { movedCursor ->
+                                virtualMouseHeldCursor = movedCursor
+                                state.controlSender?.invoke(
+                                    ScreenControlPacket.TYPE_VIRTUAL_LEFT_DRAG,
+                                    movedCursor.x,
+                                    movedCursor.y,
+                                    0,
+                                )
+                            }
+                        },
+                        onLeftDragEnd = ::releaseVirtualMouseLeft,
+                        onRightClick = {
+                            state.controlSender?.invoke(
+                                ScreenControlPacket.TYPE_RIGHT_CLICK,
+                                cursor.x,
+                                cursor.y,
+                                0,
+                            )
+                            TermLog.i("screen") { "virtual mouse right click" }
+                        },
+                        onScroll = { direction ->
+                            state.controlSender?.invoke(
+                                ScreenControlPacket.TYPE_SCROLL,
+                                cursor.x,
+                                cursor.y,
+                                direction,
+                            )
+                            TermLog.i("screen") { "virtual mouse scroll direction=$direction" }
+                        },
+                        onMovePanel = { delta ->
+                            moveVirtualMouse(delta)?.let { movedCursor ->
+                                if (virtualMouseLeftHeld) {
+                                    virtualMouseHeldCursor = movedCursor
+                                    state.controlSender?.invoke(
+                                        ScreenControlPacket.TYPE_VIRTUAL_LEFT_DRAG,
+                                        movedCursor.x,
+                                        movedCursor.y,
+                                        0,
+                                    )
+                                }
+                            }
                         },
                     )
                 }
@@ -841,6 +894,7 @@ fun ScreenContent(
                 StreamQualitySwitcher(
                     fps = state.streamFps,
                     quality = state.streamQuality,
+                    videoDims = state.player?.videoDims?.value,
                     maxFps = state.decoderMaxFps,
                     onSelect = onStreamConfigChange,
                     onFpsIndex = { state.streamFps = it },
@@ -1139,11 +1193,13 @@ private fun RemoteKey(
     }
 }
 
-/** 帧率（30/60/120）与画质（3 档）档位切换：全屏 header 右上角。 */
+/** 帧率（30/60/120）与画质档位切换：全屏 header 右上角。 */
 @Composable
 private fun StreamQualitySwitcher(
     fps: Int,
     quality: Int,
+    /** 解码器收到的真实尺寸；优先显示它，避免配置档位与实际推流不一致。 */
+    videoDims: Pair<Int, Int>?,
     /** 解码能力帧率上限（0 = 未知，全部显示）；隐藏解码器跑不满的档位。 */
     maxFps: Int,
     onSelect: (Int, String) -> Unit,
@@ -1153,14 +1209,23 @@ private fun StreamQualitySwitcher(
     modifier: Modifier = Modifier,
 ) {
     val s = LocalAppStrings.current
-    val qualities = listOf("960:-2" to s.screen.qualityLow, "1280:-2" to s.screen.qualityMid, "1920:-2" to s.screen.qualityHigh)
+    val qualities =
+        listOf(
+            "960:-2" to s.screen.qualityLow,
+            "1280:-2" to s.screen.qualityMid,
+            "1920:-2" to s.screen.qualityHigh,
+            "native" to s.screen.qualityUltra,
+        )
     val fpsOptions = listOf(30, 60, 120).filter { maxFps <= 0 || it <= maxFps }
     var menuOpen by remember { mutableStateOf(false) }
 
     Box(modifier) {
         // 当前档位胶囊（点击展开菜单）
+        val qualityOrActualSize =
+            videoDims?.let { (width, height) -> "$width×$height" }
+                ?: qualities.getOrElse(quality) { qualities[1] }.second
         Text(
-            "$fps fps · ${qualities.getOrElse(quality) { qualities[1] }.second}",
+            "$fps fps · $qualityOrActualSize",
             color = Color.White.copy(alpha = 0.9f),
             style = MaterialTheme.typography.labelSmall,
             fontFamily = FontFamily.Monospace,
@@ -1195,7 +1260,7 @@ private fun StreamQualitySwitcher(
                 )
             }
             HorizontalDivider()
-            // 画质组（3 档）
+            // 画质组：超清保留更多远端细节，默认仍为标清以控制带宽与编码压力。
             qualities.forEachIndexed { i, (scale, label) ->
                 DropdownMenuItem(
                     text = {
@@ -1207,14 +1272,24 @@ private fun StreamQualitySwitcher(
                     },
                     onClick = {
                         menuOpen = false
+                        // 超清优先保证文字与细线：从 120fps 直接切超清时先降到
+                        // 60fps。用户仍可随后手动选回 120fps（远端会提高码率）。
+                        val selectedFps = fpsForQualitySelection(fps, i)
+                        onFpsIndex(selectedFps)
                         onQualityIndex(i)
-                        onSelect(fps, scale)
+                        onSelect(selectedFps, scale)
                     },
                 )
             }
         }
     }
 }
+
+/** 超清首次选择优先清晰度；其它档位及用户后续手动选帧率不受限制。 */
+internal fun fpsForQualitySelection(
+    currentFps: Int,
+    qualityIndex: Int,
+): Int = if (qualityIndex == 3 && currentFps > 60) 60 else currentFps
 
 /** 推流服务安装引导卡片：服务缺失时按具体原因（ffmpeg 缺失 / 服务未运行）引导一键安装，
  * 安装中实时日志；失败后保留日志尾巴可重试。 */

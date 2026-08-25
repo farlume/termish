@@ -37,7 +37,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 private const val BRIDGE_PROTOCOL_VERSION = 3
-private const val MINIMUM_BRIDGE_VERSION = "0.7.7"
+private const val MINIMUM_BRIDGE_VERSION = "0.7.8"
 private const val REMOTE_BRIDGE = "\$HOME/.local/share/termish-agent/current/termish-agent.pyz"
 private const val REQUEST_TIMEOUT_MS = 20_000L
 

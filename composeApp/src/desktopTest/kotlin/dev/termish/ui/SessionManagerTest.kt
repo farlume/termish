@@ -48,7 +48,9 @@ class SessionManagerTest {
         m.open(host("a"), autoReconnect = true)
 
         assertEquals(1, m.sessions.size)
-        assertEquals(listOf("a"), r.loadRecentSessionHostIds())
+        val recent = r.loadRecentTerminalEntries().single()
+        assertEquals("a", recent.hostId)
+        assertTrue(recent.createdAt > 0L)
         m.sessions.forEach { it.destroy() }
     }
 
@@ -57,7 +59,8 @@ class SessionManagerTest {
         val r = repo()
         r.upsertHost(host("a"))
         val m1 = SessionManager(r)
-        m1.open(host("a"), autoReconnect = true)
+        m1.open(host("a"), autoReconnect = true, launchMode = TerminalLaunchMode.HERDR)
+        val createdAt = m1.sessions.single().createdAt
         m1.sessions.forEach { it.destroy() }
 
         val m2 = SessionManager(r)
@@ -65,6 +68,8 @@ class SessionManagerTest {
 
         assertEquals(1, m2.sessions.size)
         assertEquals(ConnStatus.IDLE, m2.sessions.single().status)
+        assertEquals(TerminalLaunchMode.HERDR, m2.sessions.single().launchMode)
+        assertEquals(createdAt, m2.sessions.single().createdAt)
         assertEquals(
             "a",
             m2.sessions
@@ -84,7 +89,7 @@ class SessionManagerTest {
         m.remove(c)
 
         assertTrue(m.sessions.isEmpty())
-        assertTrue(r.loadRecentSessionHostIds().isEmpty())
+        assertTrue(r.loadRecentTerminalEntries().isEmpty())
     }
 
     @Test
@@ -98,7 +103,7 @@ class SessionManagerTest {
         m.closeForHost("a")
 
         assertTrue(m.sessions.isEmpty())
-        assertTrue(r.loadRecentSessionHostIds().isEmpty())
+        assertTrue(r.loadRecentTerminalEntries().isEmpty())
     }
 
     @Test
@@ -193,7 +198,7 @@ class SessionManagerTest {
         val h = host("sftp-host")
         r.upsertHost(h)
         // 持久化带路径的 SFTP 条目（杀 App 前的浏览位置）
-        r.saveRecentSftpEntries(listOf(HostRepository.RecentSftpEntry(h.id, "/var/www")))
+        r.saveRecentSftpEntries(listOf(HostRepository.RecentSftpEntry(h.id, "/var/www", createdAt = 1234L)))
 
         val m = SessionManager(r)
         m.restoreRecent(listOf(h), autoReconnect = true)
@@ -202,6 +207,27 @@ class SessionManagerTest {
         assertEquals(h.id, m.sftpSessions[0].host.id)
         assertEquals(null, m.sftpSessions[0].session) // 未连接条目
         assertEquals("/var/www", m.sftpSessions[0].uiState.path) // 路径恢复
+        assertEquals(1234L, m.sftpSessions[0].createdAt)
+    }
+
+    @Test
+    fun restoreRecentPersistsGeneratedTimeForLegacyEntries() {
+        val r = repo()
+        val h = host("legacy-host")
+        r.upsertHost(h)
+        r.saveRecentTerminalEntries(listOf(HostRepository.RecentTerminalEntry(h.id)))
+        r.saveRecentSftpEntries(listOf(HostRepository.RecentSftpEntry(h.id)))
+
+        val m = SessionManager(r)
+        m.restoreRecent(listOf(h), autoReconnect = true)
+
+        val terminalCreatedAt = m.sessions.single().createdAt
+        val sftpCreatedAt = m.sftpSessions.single().createdAt
+        assertTrue(terminalCreatedAt > 0L)
+        assertTrue(sftpCreatedAt > 0L)
+        assertEquals(terminalCreatedAt, r.loadRecentTerminalEntries().single().createdAt)
+        assertEquals(sftpCreatedAt, r.loadRecentSftpEntries().single().createdAt)
+        m.sessions.forEach { it.destroy() }
     }
 
     @Test
@@ -210,7 +236,7 @@ class SessionManagerTest {
         val h = host("sftp-host")
         val m = SessionManager(r)
         // 先有恢复条目（session=null），再连接同一主机 → 替换而非重复
-        m.sftpSessions.add(SftpSessionEntry(h, null))
+        m.sftpSessions.add(SftpSessionEntry(h, null, createdAt = 1234L))
 
         val fake =
             object : SftpSession {
@@ -249,5 +275,6 @@ class SessionManagerTest {
         assertEquals(1, m.sftpSessions.size)
         assertEquals(fake, m.sftpSessions[0].session)
         assertEquals(fake, entry.session)
+        assertEquals(1234L, entry.createdAt)
     }
 }

@@ -27,6 +27,7 @@ private val decoderProbeCache = HashMap<String, Int>()
 
 /** H.264 解码 MIME（探测与解码共用）。 */
 private const val DECODER_MIME = "video/avc"
+private const val ANDROID_SOFTWARE_AVC_DECODER = "c2.android.avc.decoder"
 
 /**
  * Android 实现：TCP 显式分帧得到的完整 H.264 帧（Annex-B，AUD 开头）直接喂
@@ -49,6 +50,12 @@ actual class ScreenPlayer actual constructor(
 
     /** 视频实际尺寸（解码器上报）：UI 宽高比布局 + 远程操作坐标映射。 */
     actual val videoDims: MutableState<Pair<Int, Int>?> = decoder.videoDims
+
+    actual val lastRenderedAtMillis: Long
+        get() = decoder.lastRenderedAtMillis
+
+    actual val renderSurfaceAttached: Boolean
+        get() = decoder.hasSurface()
 
     actual fun start() {
         decoder.start()
@@ -100,6 +107,9 @@ class ScreenDecoder(
     @Volatile private var running = false
 
     @Volatile private var firstFrameRendered = false
+
+    @Volatile var lastRenderedAtMillis = 0L
+        private set
     private var thread: Thread? = null
 
     /**
@@ -111,7 +121,7 @@ class ScreenDecoder(
     private val surfaces = CopyOnWriteArrayList<Surface>()
 
     fun attachSurface(surface: Surface) {
-        if (!surfaces.contains(surface)) surfaces.add(surface)
+        if (surface.isValid && !surfaces.contains(surface)) surfaces.add(surface)
     }
 
     /** 只移除指定 surface（小窗/全屏各自销毁互不影响）。 */
@@ -119,7 +129,25 @@ class ScreenDecoder(
         surfaces.remove(surface)
     }
 
-    private fun currentSurface(): Surface? = surfaces.lastOrNull()
+    fun hasSurface(): Boolean = surfaces.any { it.isValid }
+
+    private fun currentSurface(): Surface? {
+        // Surface 可能已 obsolete，而 surfaceDestroyed 回调还未从 UI 线程到达。
+        // 先剔除失效引用，避免 MediaCodec 继续渲染到已销毁的 SurfaceView。
+        surfaces.removeAll { !it.isValid }
+        return surfaces.lastOrNull()
+    }
+
+    private fun isSurfaceFailure(
+        surface: Surface?,
+        error: Exception,
+    ): Boolean {
+        val detail = error.message.orEmpty()
+        return surface?.isValid != true ||
+            detail.contains("obsolete", ignoreCase = true) ||
+            detail.contains("non-initialized", ignoreCase = true) ||
+            detail.contains("abandoned", ignoreCase = true)
+    }
 
     fun start() {
         if (running) return
@@ -205,21 +233,29 @@ class ScreenDecoder(
                         runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, cap) }
                     }
                 }
-            return runCatching {
-                codec =
-                    MediaCodec.createDecoderByType(MIME).also {
-                        it.configure(fmt, surface, null, 0)
-                        it.start()
-                    }
+            var candidate: MediaCodec? = null
+            return try {
+                candidate = createDecoder()
+                candidate.configure(fmt, surface, null, 0)
+                candidate.start()
+                codec = candidate
                 lastDims = dims
                 fed = 0
                 TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
                 true
-            }.onFailure { e ->
-                TermLog.w("screen") { "decoder configure failed: $e" }
-                onError(ScreenPlayerFailure.Initialization(e.message))
-                running = false
-            }.getOrDefault(false)
+            } catch (e: Exception) {
+                runCatching { candidate?.stop() }
+                runCatching { candidate?.release() }
+                codec = null
+                if (isSurfaceFailure(surface, e)) {
+                    TermLog.i("screen") { "surface 在解码器配置期间失效，等待新 surface" }
+                } else {
+                    TermLog.w("screen") { "decoder configure failed: $e" }
+                    onError(ScreenPlayerFailure.Initialization(e.message))
+                    running = false
+                }
+                false
+            }
         }
 
         try {
@@ -236,9 +272,10 @@ class ScreenDecoder(
                 val sc = codec
                 if (sc != null) {
                     val s = currentSurface()
-                    if (s !== boundSurface) {
+                    if (s !== boundSurface || boundSurface?.isValid != true) {
                         TermLog.i("screen") { "surface 变化（$boundSurface → $s），释放解码器待重建" }
                         releaseCodec()
+                        needIdr = true
                     }
                 }
 
@@ -258,7 +295,9 @@ class ScreenDecoder(
                     if (codec == null) {
                         val surface = currentSurface() ?: continue // 等 UI surface
                         boundSurface = surface
-                        if (!configureCodec(surface, ps.sps, ps.pps, dims)) return
+                        if (!configureCodec(surface, ps.sps, ps.pps, dims)) {
+                            if (running) continue else return
+                        }
                         needIdr = false // 当前帧即 IDR，直接可喂
                     }
                 } else {
@@ -268,7 +307,9 @@ class ScreenDecoder(
                         val surface = currentSurface() ?: continue // 等 UI surface
                         boundSurface = surface
                         TermLog.i("screen") { "surface 变化后用缓存参数集重建解码器" }
-                        if (!configureCodec(surface, cachedSps, cachedPps, cachedDims)) return
+                        if (!configureCodec(surface, cachedSps, cachedPps, cachedDims)) {
+                            if (running) continue else return
+                        }
                         needIdr = true
                     }
                 }
@@ -276,7 +317,10 @@ class ScreenDecoder(
                 val c = codec ?: continue // 无解码器（无参数集且无缓存）：等关键帧
                 if (needIdr && !H264Stream.containsIdr(frame)) {
                     // 起播前丢弃非 IDR：P 帧不能作为新解码器的起播帧
-                    renderOutputs(c)
+                    if (!renderOutputs(c, boundSurface)) {
+                        releaseCodec()
+                        needIdr = true
+                    }
                     continue
                 }
                 needIdr = false
@@ -291,7 +335,10 @@ class ScreenDecoder(
                     dropEvery = (dropEvery + 1).coerceAtMost(4)
                     dropCounter = 0
                     statFull++
-                    renderOutputs(c)
+                    if (!renderOutputs(c, boundSurface)) {
+                        releaseCodec()
+                        needIdr = true
+                    }
                     continue
                 }
                 if (dropEvery > 1) {
@@ -300,7 +347,10 @@ class ScreenDecoder(
                         // 被抽掉的帧：占位释放 input buffer（不喂数据）
                         c.queueInputBuffer(idx, 0, 0, pts, 0)
                         statSkipped++
-                        renderOutputs(c)
+                        if (!renderOutputs(c, boundSurface)) {
+                            releaseCodec()
+                            needIdr = true
+                        }
                         continue
                     }
                     if (dropCounter >= dropEvery * 8) dropCounter = 0
@@ -317,7 +367,11 @@ class ScreenDecoder(
                 } else {
                     c.queueInputBuffer(idx, 0, 0, pts, 0)
                 }
-                renderOutputs(c)
+                if (!renderOutputs(c, boundSurface)) {
+                    releaseCodec()
+                    needIdr = true
+                    continue
+                }
 
                 // 每秒诊断打点：fed/rendered/input-full/skipped——真机定位
                 // 「解码跟不上」是硬件极限还是管线瓶颈（旗舰机 1080p 硬解
@@ -355,48 +409,85 @@ class ScreenDecoder(
         }
     }
 
-    private fun renderOutputs(codec: MediaCodec) {
+    private fun renderOutputs(
+        codec: MediaCodec,
+        surface: Surface?,
+    ): Boolean {
         val info = MediaCodec.BufferInfo()
-        while (true) {
-            val idx = codec.dequeueOutputBuffer(info, 0)
-            when {
-                idx == MediaCodec.INFO_TRY_AGAIN_LATER -> return
-                idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    val f = codec.outputFormat
-                    TermLog.i("screen") { "decoder format: $f" }
-                    val dims =
-                        runCatching {
-                            val w =
-                                if (f.containsKey("crop-right") && f.containsKey("crop-left")) {
-                                    f.getInteger("crop-right") + 1 - f.getInteger("crop-left")
-                                } else {
-                                    f.getInteger(MediaFormat.KEY_WIDTH)
-                                }
-                            val h =
-                                if (f.containsKey("crop-bottom") && f.containsKey("crop-top")) {
-                                    f.getInteger("crop-bottom") + 1 - f.getInteger("crop-top")
-                                } else {
-                                    f.getInteger(MediaFormat.KEY_HEIGHT)
-                                }
-                            w to h
-                        }.getOrNull()
-                    if (dims != null) videoDims.value = dims
-                }
-                idx >= 0 -> {
-                    if (info.size > 0) {
-                        codec.releaseOutputBuffer(idx, true)
-                        statRendered++
-                        if (!firstFrameRendered) {
-                            firstFrameRendered = true
-                            TermLog.i("screen") { "first frame rendered (direct)" }
-                            onReady()
+        return try {
+            while (true) {
+                val idx = codec.dequeueOutputBuffer(info, 0)
+                when {
+                    idx == MediaCodec.INFO_TRY_AGAIN_LATER -> return true
+                    idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                        val f = codec.outputFormat
+                        TermLog.i("screen") { "decoder format: $f" }
+                        val dims =
+                            runCatching {
+                                val w =
+                                    if (f.containsKey("crop-right") && f.containsKey("crop-left")) {
+                                        f.getInteger("crop-right") + 1 - f.getInteger("crop-left")
+                                    } else {
+                                        f.getInteger(MediaFormat.KEY_WIDTH)
+                                    }
+                                val h =
+                                    if (f.containsKey("crop-bottom") && f.containsKey("crop-top")) {
+                                        f.getInteger("crop-bottom") + 1 - f.getInteger("crop-top")
+                                    } else {
+                                        f.getInteger(MediaFormat.KEY_HEIGHT)
+                                    }
+                                w to h
+                            }.getOrNull()
+                        if (dims != null) videoDims.value = dims
+                    }
+                    idx >= 0 -> {
+                        if (info.size > 0) {
+                            codec.releaseOutputBuffer(idx, true)
+                            statRendered++
+                            lastRenderedAtMillis = System.currentTimeMillis()
+                            if (!firstFrameRendered) {
+                                firstFrameRendered = true
+                                TermLog.i("screen") { "first frame rendered (direct)" }
+                                onReady()
+                            }
+                        } else {
+                            codec.releaseOutputBuffer(idx, false)
                         }
-                    } else {
-                        codec.releaseOutputBuffer(idx, false)
                     }
                 }
             }
+            true
+        } catch (e: Exception) {
+            if (isSurfaceFailure(surface, e)) {
+                TermLog.i("screen") { "surface 渲染期间失效，释放解码器等待重建" }
+                false
+            } else {
+                throw e
+            }
         }
+    }
+
+    /**
+     * Android Emulator 的 goldfish H.264 硬件桥接器可能在首帧后永久阻塞
+     * dequeueInputBuffer（即使设置了超时）。模拟器不需要追求硬解功耗，固定使用
+     * Android 自带软件解码器更稳定；真机继续交给系统选择硬件解码器。
+     */
+    private fun createDecoder(): MediaCodec {
+        val isEmulator =
+            Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
+                Build.FINGERPRINT.contains("emulator", ignoreCase = true) ||
+                Build.HARDWARE.contains("goldfish", ignoreCase = true) ||
+                Build.HARDWARE.contains("ranchu", ignoreCase = true)
+        if (isEmulator) {
+            runCatching { MediaCodec.createByCodecName(ANDROID_SOFTWARE_AVC_DECODER) }
+                .onSuccess {
+                    TermLog.i("screen") { "emulator uses software decoder $ANDROID_SOFTWARE_AVC_DECODER" }
+                    return it
+                }.onFailure {
+                    TermLog.w("screen") { "software decoder unavailable, fallback to default: ${it.message}" }
+                }
+        }
+        return MediaCodec.createDecoderByType(MIME)
     }
 }
 

@@ -207,6 +207,9 @@ fun TerminalScreen(
     onStreamConfigChange: (Host, Int, String) -> Unit = { _, _, _ -> },
     /** 终端页小窗：当前主机活跃屏幕会话的 uiState（null = 不显示）；点击 = 就地全屏。 */
     screenPip: ScreenUiState? = null,
+    /** 主机卡直接打开画面时的全屏请求；普通终端菜单启动为 null。 */
+    screenFullscreenRequestHostId: String? = null,
+    onScreenFullscreenRequestConsumed: () -> Unit = {},
     /** 屏幕会话所属主机（全屏头部显示用；独立于 current tab）。 */
     pipHost: Host? = null,
     /** 小窗 ✕：关闭当前屏幕会话（由 AppRoot 销毁会话并移除条目）。 */
@@ -221,6 +224,21 @@ fun TerminalScreen(
     // 屏幕小窗就地全屏（提升到 TerminalScreen 根层）：全屏画面要覆盖 tab 栏与
     // 状态栏区域，放在 TerminalBody 内会被 statusBarsPadding + TabBar 框成画布全屏（v1.5.1 反馈）
     var pipFullscreen by remember { mutableStateOf(false) }
+    val setPipFullscreen: (Boolean) -> Unit = { fullscreen ->
+        // 主机卡“远程画面”会投递一次自动展开请求；用户主动收起时同步消费，
+        // 否则 screenPip 重组会再次把 pipFullscreen 拉回 true，看起来像返回无效。
+        if (!fullscreen) onScreenFullscreenRequestConsumed()
+        pipFullscreen = fullscreen
+    }
+    LaunchedEffect(screenPip, pipHost, screenFullscreenRequestHostId) {
+        if (screenPip == null) {
+            // 待连接条目失败/关闭后退出沉浸式，恢复终端与系统状态栏。
+            pipFullscreen = false
+        } else if (pipHost?.id == screenFullscreenRequestHostId) {
+            pipFullscreen = true
+            onScreenFullscreenRequestConsumed()
+        }
+    }
     // 屏幕尺寸（px）：全屏展开动画从小窗几何映射用
     var screenSize by remember { mutableStateOf(IntSize.Zero) }
     // 小窗位置/尺寸（提升到 TerminalScreen：全屏展开动画需要从小窗几何放大，
@@ -239,8 +257,14 @@ fun TerminalScreen(
             expandAnim.animateTo(0f, animationSpec = tween(200))
         }
     }
-    // 切 tab 退出全屏（全屏状态提升后不再随 TerminalBody 销毁自动重置）
-    LaunchedEffect(current) { pipFullscreen = false }
+    // 只在 tab id 真正变化时退出全屏。首次进入 TerminalScreen 不能执行：主机卡
+    // 自动展开刚写入 true 时，初始 effect 若紧接着写 false，会让状态与动画脱节，
+    // 最终画面停在全屏但返回按钮永远收不起。
+    var fullscreenTabId by remember { mutableStateOf(current.id) }
+    LaunchedEffect(current.id) {
+        if (fullscreenTabId != current.id) setPipFullscreen(false)
+        fullscreenTabId = current.id
+    }
     // 沉浸式隐藏状态栏后 inset 归零：记录非全屏时的状态栏高度，
     // 全屏 header 内容下移与终端页 tab 栏对齐（用户反馈：按钮更靠上）
     val screenDensity = LocalDensity.current
@@ -290,7 +314,7 @@ fun TerminalScreen(
                         repository = repository,
                         onBack = onBack,
                         pipFullscreen = pipFullscreen,
-                        onPipFullscreenChange = { pipFullscreen = it },
+                        onPipFullscreenChange = setPipFullscreen,
                         // 收起动画播放中（全屏层还在缩回）：小窗延迟出现防闪烁
                         pipCollapsing = !pipFullscreen && expandAnim.value > 0f,
                         statusBarTopDp = with(screenDensity) { statusBarTopPx.toDp() },
@@ -381,10 +405,10 @@ fun TerminalScreen(
                     host = fullHost,
                     session = null,
                     state = screenPip,
-                    onBack = { pipFullscreen = false },
+                    onBack = { setPipFullscreen(false) },
                     onReconnect = { onReconnectScreenForHost(fullHost) },
                     onInstallService = { password -> onInstallScreenService(fullHost, password) },
-                    onClose = { pipFullscreen = false },
+                    onClose = { setPipFullscreen(false) },
                     statusBarInsetTop = lastStatusBarTop,
                     // ⚠️ 之前漏传（默认空实现）——全屏切档位回调从未到达 AppRoot
                     onStreamConfigChange = { fps, scale ->
@@ -1542,10 +1566,22 @@ private fun TerminalTabBar(
                                 val st = it.controller.status
                                 st != ConnStatus.CONNECTED && st != ConnStatus.CONNECTING && st != ConnStatus.AUTH
                             } ?: false
+                        val typeLabel =
+                            when (tab) {
+                                is SessionTab.Terminal ->
+                                    if (tab.controller.launchMode == TerminalLaunchMode.HERDR) {
+                                        s.hostsActionHerdr
+                                    } else {
+                                        s.hostsActionTerminal
+                                    }
+                                is SessionTab.Sftp -> s.hostsActionFiles
+                                is SessionTab.Screen -> s.hostsActionScreen
+                            }
                         SessionTabChip(
                             host = host,
                             seq = seq,
                             showSeq = hostTerminalTabs.size > 1,
+                            typeLabel = typeLabel,
                             statusDotColor = statusColor,
                             inactive = inactive,
                             selected = tab.id == current.id,
@@ -1615,6 +1651,8 @@ private fun SessionTabChip(
     /** 同主机会话序号：仅 [showSeq] 时显示 `(n)`。 */
     seq: Int = 0,
     showSeq: Boolean = false,
+    /** 同主机混合终端/Herdr/SFTP 时直接可见，避免多个同名 tab 无法区分。 */
+    typeLabel: String,
     statusDotColor: Color?,
     /** 断开/失败的会话：文字与背景降透明度（状态点仍保留区分）。 */
     inactive: Boolean = false,
@@ -1650,7 +1688,7 @@ private fun SessionTabChip(
         }
         Spacer(Modifier.size(6.dp))
         Text(
-            sessionTabTitle(host, seq, showSeq),
+            "${sessionTabTitle(host, seq, showSeq)} · $typeLabel",
             style = MaterialTheme.typography.labelSmall,
             color = if (inactive) foreground.copy(alpha = 0.4f) else foreground,
             maxLines = 1,

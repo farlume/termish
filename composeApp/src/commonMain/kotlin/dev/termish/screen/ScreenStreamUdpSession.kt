@@ -52,6 +52,14 @@ object ScreenControlPacket {
     const val TYPE_CLICK = 8
     const val TYPE_RIGHT_CLICK = 9
 
+    /** 虚拟鼠标长按拖动：独立序列让 relay 使用平台原生拖动事件并在结束后恢复实体鼠标。 */
+    const val TYPE_VIRTUAL_LEFT_DOWN = 10
+    const val TYPE_VIRTUAL_LEFT_DRAG = 11
+    const val TYPE_VIRTUAL_LEFT_UP = 12
+
+    /** TCP owner 租约心跳；relay 只更新时间，不注入任何本地输入。 */
+    const val TYPE_HEARTBEAT = 13
+
     /** 修饰掩码（TYPE_KEY 的 x 字段）。 */
     const val MOD_COMMAND = 1
     const val MOD_SHIFT = 2

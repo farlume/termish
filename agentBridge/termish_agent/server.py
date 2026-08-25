@@ -49,6 +49,23 @@ def daemon_lock():
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
+@contextlib.contextmanager
+def daemon_instance_lock():
+    """Hold a non-blocking lock for the daemon's entire lifetime."""
+    lock_path = runtime_dir() / "agent.instance.lock"
+    with lock_path.open("a+b") as lock:
+        if fcntl:
+            try:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError("Agent Bridge daemon is already running") from exc
+        try:
+            yield
+        finally:
+            if fcntl:
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def daemon_pid() -> Optional[int]:
     try:
         return int((runtime_dir() / "agent.pid").read_text(encoding="utf-8").strip())
@@ -69,6 +86,45 @@ def signal_daemon(pid: int, signum: int) -> None:
         os.killpg(os.getpgid(pid), signum)
     else:
         os.kill(pid, signum)
+
+
+def daemon_process_ids() -> Set[int]:
+    """Find this account's daemon processes, including legacy PID-file orphans."""
+    target = str(pathlib.Path(sys.argv[0]).resolve())
+    found: Set[int] = set()
+    proc = pathlib.Path("/proc")
+    if proc.is_dir():
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                if entry.stat().st_uid != os.getuid():
+                    continue
+                args = [
+                    value.decode("utf-8", "ignore")
+                    for value in (entry / "cmdline").read_bytes().split(b"\0")
+                    if value
+                ]
+                if target in args and "serve" in args:
+                    found.add(int(entry.name))
+            except (OSError, ValueError):
+                continue
+        return found
+
+    try:
+        output = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        ).stdout
+        for line in output.splitlines():
+            pid_text, _, command = line.strip().partition(" ")
+            if pid_text.isdigit() and target in command and command.rstrip().endswith(" serve"):
+                found.add(int(pid_text))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return found
 
 
 class BridgeServer:
@@ -200,15 +256,22 @@ def ensure_daemon() -> None:
 
 def restart_daemon() -> None:
     with daemon_lock():
+        # 0.7.7 及更早版本只相信 PID 文件。并发/异常升级时新进程会覆盖 PID，
+        # 旧 daemon 继续持有进行中会话；App 重连到新 socket 后就只看得到工具
+        # 摘要。按“当前 pyz 绝对路径 + serve 参数 + 同 UID”找齐并停止所有孤儿。
+        pids = daemon_process_ids()
         pid = daemon_pid()
         if pid and process_alive(pid):
+            pids.add(pid)
+        for pid in pids:
             try:
                 signal_daemon(pid, signal.SIGTERM)
             except OSError:
                 pass
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and process_alive(pid):
-                time.sleep(0.05)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and any(process_alive(pid) for pid in pids):
+            time.sleep(0.05)
+        for pid in pids:
             if process_alive(pid):
                 try:
                     signal_daemon(pid, signal.SIGKILL)
@@ -288,7 +351,8 @@ def main(argv: Optional[list] = None) -> None:
     subparsers.add_parser("status")
     args = parser.parse_args(argv)
     if args.command == "serve":
-        asyncio.run(BridgeServer().run())
+        with daemon_instance_lock():
+            asyncio.run(BridgeServer().run())
     elif args.command == "connect":
         relay()
     elif args.command == "ensure-running":

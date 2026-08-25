@@ -38,13 +38,19 @@ class ScreenUiState {
     /** 解码能力探测的帧率上限（0 = 未知；档位菜单据此隐藏超出项）。 */
     var decoderMaxFps by mutableStateOf(0)
 
+    /** 当前画面首次出帧时间；用于区分稳定运行后的偶发断线与刚连接即失败。 */
+    var videoReadyAtMillis: Long = 0
+
+    /** 连续自动重连次数；稳定播放后归零，防止失败会话无限循环替换。 */
+    var streamReconnectAttempts: Int = 0
+
     /** 远程操作模式（触摸→鼠标/滚轮，默认开）；关闭 = 纯观看（本地缩放平移，无键盘）。 */
     var controlMode by mutableStateOf(true)
 
     /** 被控端缺辅助功能权限（relay 状态包上报，引导用户授权）。 */
     var controlPermissionMissing by mutableStateOf(false)
 
-    /** 被控端平台不支持远程控制（Linux 无 CGEvent；relay 状态 2 上报）。 */
+    /** 被控端当前图形会话没有可用的控制后端（relay 状态 2 上报）。 */
     var controlUnsupported by mutableStateOf(false)
 
     /** 远程操作发送器（ScreenSession 注入：触摸事件 → TCP 控制包）。 */

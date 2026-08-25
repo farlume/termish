@@ -39,7 +39,10 @@ class StreamCfgParseTest {
         assertEquals(0, ScreenSession.qualityIndexFor("960:-2"))
         assertEquals(1, ScreenSession.qualityIndexFor("1280:-2"))
         assertEquals(2, ScreenSession.qualityIndexFor("1920:-2"))
+        assertEquals(3, ScreenSession.qualityIndexFor("native"))
+        assertEquals(3, ScreenSession.qualityIndexFor("2560:-2"))
         assertEquals(1, ScreenSession.qualityIndexFor("1600:-2")) // 未知按标清
+        assertEquals("native", ScreenSession.scaleForQuality(3))
     }
 
     @Test

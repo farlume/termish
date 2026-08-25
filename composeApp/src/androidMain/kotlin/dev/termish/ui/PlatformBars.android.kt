@@ -2,6 +2,7 @@ package dev.termish.ui
 
 import android.app.Activity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -24,13 +25,24 @@ actual fun PlatformStatusBarIcons(lightIcons: Boolean) {
 actual fun PlatformImmersiveMode(immersive: Boolean) {
     val view = LocalView.current
     if (!view.isInEditMode) {
-        SideEffect {
-            val window = (view.context as? Activity)?.window ?: return@SideEffect
-            val controller = WindowCompat.getInsetsController(window, view)
-            if (immersive) {
-                controller.hide(WindowInsetsCompat.Type.statusBars())
-            } else {
-                controller.show(WindowInsetsCompat.Type.statusBars())
+        DisposableEffect(view, immersive) {
+            val controller =
+                (view.context as? Activity)?.window?.let { window ->
+                    WindowCompat.getInsetsController(window, view)
+                }
+            if (controller != null) {
+                if (immersive) {
+                    controller.hide(WindowInsetsCompat.Type.statusBars())
+                } else {
+                    controller.show(WindowInsetsCompat.Type.statusBars())
+                }
+            }
+            onDispose {
+                // 页面可能在全屏收起动画结束前直接离开；组合销毁时必须恢复，
+                // 否则后续主机页拿到 0 状态栏 inset，Header 会永久变短。
+                if (immersive) {
+                    controller?.show(WindowInsetsCompat.Type.statusBars())
+                }
             }
         }
     }

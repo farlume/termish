@@ -11,9 +11,11 @@ class NavigationStackTest {
         val stack = NavigationStack("home")
 
         stack.push("terminal")
+        assertEquals(NavigationDirection.FORWARD, stack.direction)
         stack.push("agent")
 
         assertTrue(stack.pop())
+        assertEquals(NavigationDirection.BACKWARD, stack.direction)
         assertEquals("terminal", stack.current)
         assertTrue(stack.pop())
         assertEquals("home", stack.current)
@@ -28,6 +30,7 @@ class NavigationStackTest {
         stack.push("terminal")
 
         assertEquals(listOf("home", "terminal"), stack.snapshot())
+        assertEquals(NavigationDirection.FORWARD, stack.direction)
     }
 
     @Test
