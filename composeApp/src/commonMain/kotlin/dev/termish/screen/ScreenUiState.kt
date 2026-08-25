@@ -20,6 +20,15 @@ class ScreenUiState {
     /** 帧率估算。 */
     var fps by mutableStateOf(0)
 
+    /** 最近统计窗口的接收码率。 */
+    var bitrateKbps by mutableStateOf(0)
+
+    /** 基于发送/到达间隔差估算的网络抖动。 */
+    var jitterMillis by mutableStateOf(0)
+
+    /** 网络推断丢帧 + 播放器主动丢帧，千分比。 */
+    var droppedPermille by mutableStateOf(0)
+
     /** 是否已连通并推流。 */
     var connected by mutableStateOf(false)
 
@@ -31,6 +40,12 @@ class ScreenUiState {
 
     /** 当前推流帧率（全屏右上角档位显示）。 */
     var streamFps by mutableStateOf(30)
+
+    /** 用户选择的帧率上限；自动降档恢复时不会超过它（0 = 等待远端配置回读）。 */
+    var preferredStreamFps: Int = 0
+
+    /** 最近一次自适应调档时间；跨重连保留，提供恢复迟滞。 */
+    var adaptiveFpsChangedAtMillis: Long = 0
 
     /** 当前画质档位（全屏右上角档位显示）。 */
     var streamQuality by mutableStateOf(1)

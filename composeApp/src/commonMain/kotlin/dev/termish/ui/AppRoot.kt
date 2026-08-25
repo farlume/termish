@@ -111,6 +111,7 @@ private fun ScreenStrings.toSessionMessages(): ScreenSessionMessages =
         displayMissing = displayMissing,
         serviceNotRunning = serviceNotRunning,
         waylandHint = waylandHint,
+        waylandDependenciesMissing = waylandDependenciesMissing,
         screenAsleepHint = screenAsleepHint,
         screenLockedHint = screenLockedHint,
         firstFrameTimeout = firstFrameTimeout,
@@ -359,6 +360,8 @@ fun AppRoot(repository: HostRepository) {
             AgentBridgeController(host, repository, callbacks, scope)
         }
 
+    lateinit var applyScreenStreamConfig: (Host, Int, String, Boolean) -> Unit
+
     /**
      * 建立 SFTP 会话（认证/主机密钥确认走全局弹窗），成功后回调 [onEstablished]。
      * 供首次连接与断线重连复用；失败由调用方处理（首次=Snackbar，重连=保持 banner）。
@@ -567,6 +570,8 @@ fun AppRoot(repository: HostRepository) {
                                         newUi.streamReconnectAttempts = attempt
                                         newUi.streamFps = sourceUiState.streamFps
                                         newUi.streamQuality = sourceUiState.streamQuality
+                                        newUi.preferredStreamFps = sourceUiState.preferredStreamFps
+                                        newUi.adaptiveFpsChangedAtMillis = sourceUiState.adaptiveFpsChangedAtMillis
                                         screenSessions.add(
                                             ScreenSessionEntry(host, owner, newSession, newUi, current.createdAt),
                                         )
@@ -577,6 +582,14 @@ fun AppRoot(repository: HostRepository) {
                             }
                         screenReconnectJobs[host.id] = reconnectJob
                     }
+                },
+                onAdaptiveFpsRequested = { fps ->
+                    applyScreenStreamConfig(
+                        host,
+                        fps,
+                        ScreenSession.scaleForQuality(uiState.streamQuality),
+                        false,
+                    )
                 },
             )
         withContext(ioDispatcher()) { session.start() }
@@ -639,6 +652,8 @@ fun AppRoot(repository: HostRepository) {
                                     }
                                     latest.session?.close()
                                     screenSessions.removeAll { it.host.id == host.id }
+                                    uiState.preferredStreamFps = entry.uiState.preferredStreamFps
+                                    uiState.adaptiveFpsChangedAtMillis = entry.uiState.adaptiveFpsChangedAtMillis
                                     screenSessions.add(
                                         ScreenSessionEntry(host, entry.ownerSessionId, session, uiState, entry.createdAt),
                                     )
@@ -668,6 +683,8 @@ fun AppRoot(repository: HostRepository) {
                 establishScreen(host) { session, uiState ->
                     screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
                     screenSessions.removeAll { it.host.id == host.id }
+                    uiState.preferredStreamFps = existingEntry?.uiState?.preferredStreamFps ?: 0
+                    uiState.adaptiveFpsChangedAtMillis = existingEntry?.uiState?.adaptiveFpsChangedAtMillis ?: 0
                     screenSessions.add(
                         ScreenSessionEntry(
                             host,
@@ -691,11 +708,12 @@ fun AppRoot(repository: HostRepository) {
         screenSessions.removeAll { it.host.id == host.id }
     }
 
-    // 全屏帧率/画质切换：SSH 写远端 relay 配置 → 重建会话生效。
+    // 帧率/画质切换：SSH 写远端 relay 配置 → 重建会话生效。
+    // userInitiated=false 时保留用户上限，后续稳定窗口可逐级恢复。
     // ⚠️ 档位必须设置在【重建后的新 uiState】上：重建（establishScreen）
     // 会创建新 ScreenUiState（默认档位），设在旧对象上会被替换掉，
     // 右上角数字永远不变（用户反馈）
-    val streamConfigChange: (Host, Int, String) -> Unit = { host, fps, scale ->
+    applyScreenStreamConfig = { host, fps, scale, userInitiated ->
         screenReconnectJobs.remove(host.id)?.cancel()
         lateinit var configJob: Job
         configJob =
@@ -710,6 +728,7 @@ fun AppRoot(repository: HostRepository) {
                 // 切帧率后右上角仍显示 30——自动重连与重建竞态）
                 entry?.uiState?.streamFps = fps
                 entry?.uiState?.streamQuality = ScreenSession.qualityIndexFor(scale)
+                if (userInitiated) entry?.uiState?.preferredStreamFps = fps
                 entry?.session?.setStreamConfig(fps, scale)
                 establishScreen(host) { session, uiState ->
                     if (screenReconnectJobs[host.id] !== configJob) {
@@ -720,6 +739,14 @@ fun AppRoot(repository: HostRepository) {
                     screenSessions.removeAll { it.host.id == host.id }
                     uiState.streamFps = fps
                     uiState.streamQuality = ScreenSession.qualityIndexFor(scale)
+                    uiState.preferredStreamFps =
+                        if (userInitiated) {
+                            fps
+                        } else {
+                            entry?.uiState?.preferredStreamFps?.takeIf { it > 0 } ?: fps
+                        }
+                    uiState.adaptiveFpsChangedAtMillis =
+                        entry?.uiState?.adaptiveFpsChangedAtMillis ?: 0
                     screenSessions.add(
                         ScreenSessionEntry(
                             host,
@@ -732,6 +759,9 @@ fun AppRoot(repository: HostRepository) {
                 }
             }
         screenReconnectJobs[host.id] = configJob
+    }
+    val streamConfigChange: (Host, Int, String) -> Unit = { host, fps, scale ->
+        applyScreenStreamConfig(host, fps, scale, true)
     }
 
     // 覆盖层选主机后：建立 SFTP 会话（认证/主机密钥弹窗走全局 sftpAuth/sftpHostKey）。

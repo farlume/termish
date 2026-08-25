@@ -54,6 +54,15 @@ class ScreenReconnectPolicyTest {
         )
         assertFalse(
             isScreenVideoStalled(
+                nowMillis = 59_999,
+                lastVideoAtMillis = 0,
+                startedAtMillis = 1,
+                hasReceivedVideo = false,
+                firstVideoTimeoutMillis = SCREEN_WAYLAND_FIRST_VIDEO_TIMEOUT_MS,
+            ),
+        )
+        assertFalse(
+            isScreenVideoStalled(
                 nowMillis = 15_999,
                 lastVideoAtMillis = 10_000,
                 startedAtMillis = 1,

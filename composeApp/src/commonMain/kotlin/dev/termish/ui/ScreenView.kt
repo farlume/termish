@@ -896,6 +896,10 @@ fun ScreenContent(
                     quality = state.streamQuality,
                     videoDims = state.player?.videoDims?.value,
                     maxFps = state.decoderMaxFps,
+                    deliveredFps = state.fps,
+                    bitrateKbps = state.bitrateKbps,
+                    jitterMillis = state.jitterMillis,
+                    droppedPermille = state.droppedPermille,
                     onSelect = onStreamConfigChange,
                     onFpsIndex = { state.streamFps = it },
                     onQualityIndex = { state.streamQuality = it },
@@ -1202,6 +1206,10 @@ private fun StreamQualitySwitcher(
     videoDims: Pair<Int, Int>?,
     /** 解码能力帧率上限（0 = 未知，全部显示）；隐藏解码器跑不满的档位。 */
     maxFps: Int,
+    deliveredFps: Int,
+    bitrateKbps: Int,
+    jitterMillis: Int,
+    droppedPermille: Int,
     onSelect: (Int, String) -> Unit,
     /** 帧率本地立即更新（异步重建前 UI 先反馈——用户反馈：帧率菜单点了不生效）。 */
     onFpsIndex: (Int) -> Unit,
@@ -1241,6 +1249,25 @@ private fun StreamQualitySwitcher(
             onDismissRequest = { menuOpen = false },
             containerColor = MaterialTheme.colorScheme.surface,
         ) {
+            if (deliveredFps > 0 || bitrateKbps > 0) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            s.screen.streamDiagnostics(
+                                deliveredFps,
+                                bitrateKbps,
+                                jitterMillis,
+                                droppedPermille,
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    onClick = {},
+                    enabled = false,
+                )
+                HorizontalDivider()
+            }
             // 帧率组
             fpsOptions.forEach { f ->
                 DropdownMenuItem(

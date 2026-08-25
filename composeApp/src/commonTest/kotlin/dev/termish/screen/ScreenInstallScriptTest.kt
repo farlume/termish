@@ -31,8 +31,10 @@ class ScreenInstallScriptTest {
         assertTrue(desktopProbe >= 0, "读流脚本应先识别桌面系统")
         assertTrue(relayVersionProbe > desktopProbe, "无桌面的 Linux 不应被误导去升级 relay")
         assertContains(script.substring(desktopProbe, relayVersionProbe), "SCREEN_NO_DISPLAY")
-        assertContains(script, "pgrep -u \"${'$'}(id -u)\" -x Xwayland")
+        assertContains(script, "loginctl list-sessions")
         assertContains(script, "SESSION_TYPE:${'$'}SESSION_REMOTE")
+        assertContains(script, "wayland:no|x11:no")
+        assertContains(script, "SCREEN_WAYLAND_DEPS_MISSING")
     }
 
     @Test
@@ -129,6 +131,8 @@ class ScreenInstallScriptTest {
         assertContains(script, "XAUTHORITY")
         assertContains(script, "GRAPHICAL=0")
         assertContains(script, "[ \"${'$'}GRAPHICAL\" = \"1\" ]")
+        assertContains(script, "export XDG_SESSION_TYPE=wayland")
+        assertContains(script, "export WAYLAND_DISPLAY")
     }
 
     @Test
@@ -139,6 +143,29 @@ class ScreenInstallScriptTest {
         assertContains(script, "run_admin dnf install -y -q python3-xlib")
         assertContains(script, "python-xlib: 安装完成")
         assertContains(ScreenSession.XLIB_PROBE_SCRIPT, "import Xlib")
+    }
+
+    @Test
+    fun `Wayland relay uses consented portal capture and input`() {
+        val script = ScreenSession.INSTALL_SCRIPT
+
+        assertContains(ScreenSession.WAYLAND_PROBE_SCRIPT, "import dbus")
+        assertContains(ScreenSession.WAYLAND_PROBE_SCRIPT, "gst-inspect-1.0 pipewiresrc")
+        assertContains(script, "org.freedesktop.portal.RemoteDesktop")
+        assertContains(script, "org.freedesktop.portal.ScreenCast")
+        assertContains(script, "OpenPipeWireRemote")
+        assertContains(script, "pipewiresrc")
+        assertContains(script, "keepalive-time=%d")
+        assertFalse(script.contains("drop-only=true"))
+        assertContains(script, "y4menc")
+        assertContains(script, "NotifyPointerMotionAbsolute")
+        assertContains(script, "NotifyPointerButton")
+        assertContains(script, "NotifyKeyboardKeysym")
+        assertContains(script, "org.freedesktop.portal.Session")
+        assertContains(script, "self.capture.terminate()")
+        assertContains(script, "[\"-f\", \"yuv4mpegpipe\", \"-i\", \"pipe:0\"]")
+        assertFalse(script.contains("\"kmsgrab\""))
+        assertFalse(script.contains("/dev/dri/"))
     }
 
     @Test
@@ -158,6 +185,7 @@ class ScreenInstallScriptTest {
             os: String? = "Linux",
             ffmpegPresent: Boolean = false,
             xlibPresent: Boolean = true,
+            waylandDependenciesPresent: Boolean = true,
             isRoot: Boolean = false,
             hasSudo: Boolean = true,
             passwordless: Boolean = false,
@@ -165,6 +193,7 @@ class ScreenInstallScriptTest {
             os = os,
             ffmpegPresent = ffmpegPresent,
             xlibPresent = xlibPresent,
+            waylandDependenciesPresent = waylandDependenciesPresent,
             isRoot = isRoot,
             hasSudo = hasSudo,
             sudoPasswordless = passwordless,
@@ -172,6 +201,7 @@ class ScreenInstallScriptTest {
 
         assertTrue(needs())
         assertTrue(needs(ffmpegPresent = true, xlibPresent = false))
+        assertTrue(needs(ffmpegPresent = true, waylandDependenciesPresent = false))
         assertFalse(needs(os = "Darwin"))
         assertFalse(needs(ffmpegPresent = true))
         assertFalse(needs(isRoot = true))

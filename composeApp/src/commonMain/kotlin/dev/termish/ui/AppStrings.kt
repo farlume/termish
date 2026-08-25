@@ -555,6 +555,7 @@ data class ScreenStrings(
     val displayMissing: String,
     val serviceNotRunning: String,
     val waylandHint: String,
+    val waylandDependenciesMissing: String,
     val screenAsleepHint: String,
     val screenLockedHint: String,
     val firstFrameTimeout: String,
@@ -574,7 +575,7 @@ data class ScreenStrings(
     val installService: String,
     /** 安装中。 */
     val installingService: String,
-    /** Linux 安装 ffmpeg 需要交互式 sudo 时的密码引导。 */
+    /** Linux 安装屏幕推流依赖需要交互式 sudo 时的密码引导。 */
     val serviceSudoPasswordLabel: String,
     val serviceSudoPasswordHint: String,
     /** 安装失败提示（日志尾巴上方）。 */
@@ -610,6 +611,8 @@ data class ScreenStrings(
     val qualityHigh: String,
     /** 画质档位：超清。 */
     val qualityUltra: String,
+    /** 推流实时诊断：实收帧率、码率、抖动和丢帧。 */
+    val streamDiagnostics: (fps: Int, bitrateKbps: Int, jitterMillis: Int, droppedPermille: Int) -> String,
     /** 全屏返回按钮：就地全屏（小窗展开）时收起回终端。 */
     val collapse: String,
     /** 全屏返回按钮：屏幕 tab 模式返回上一 tab。 */
@@ -998,9 +1001,12 @@ private val EnStrings =
                 unsupportedOs = { os -> "Screen streaming supports macOS and Linux desktop hosts (remote: $os)" },
                 relayUpgradeRequired = "The screen service needs an upgrade — tap install to update it",
                 displayMissing =
-                    "Screen streaming needs the remote user to be signed in to an X11 desktop; the login screen cannot be controlled",
+                    "Screen streaming needs the remote user to be signed in to a graphical desktop; the login screen cannot be controlled",
                 serviceNotRunning = "The remote screen service is not running",
-                waylandHint = "Wayland desktop: only X11 app windows are visible; use an Xorg session for the full desktop",
+                waylandHint =
+                    "Wayland desktop: approve the Remote Desktop permission on the remote host the first time you connect",
+                waylandDependenciesMissing =
+                    "Wayland screen capture dependencies are missing — tap install to add them",
                 screenAsleepHint = "The Mac display is asleep; streaming resumes when it wakes",
                 screenLockedHint = "The Mac is locked; the desktop returns after it is unlocked",
                 firstFrameTimeout = "No screen frames arrived — check the remote service and ffmpeg",
@@ -1021,7 +1027,7 @@ private val EnStrings =
                 installingService = "Installing…",
                 serviceSudoPasswordLabel = "sudo password",
                 serviceSudoPasswordHint =
-                    "Installing ffmpeg or the Linux control dependency needs root access. The password is sent only through this encrypted SSH connection for this installation and is never saved.",
+                    "Installing Linux screen capture and control dependencies needs root access. The password is sent only through this encrypted SSH connection for this installation and is never saved.",
                 installFailed = "Installation failed — check the log below and retry.",
                 pipNeedInstall = "Service not installed",
                 serviceUpgradeHint = "The streaming service is outdated — tap install to upgrade it (your settings are kept).",
@@ -1038,11 +1044,14 @@ private val EnStrings =
                 viewMode = "View",
                 controlPermissionHint = "Your Mac needs Accessibility permission — System Settings → Privacy & Security → Accessibility → enable python, then retry.",
                 controlUnsupportedHint =
-                    "Remote control is unavailable in this graphical session. Sign in to the remote user's Xorg desktop, then reinstall to add python3-xlib if needed.",
+                    "Remote control is unavailable in this graphical session. On Wayland, approve the Remote Desktop permission; on Xorg, reinstall to add python3-xlib if needed.",
                 qualityLow = "Smooth",
                 qualityMid = "Standard",
                 qualityHigh = "HD",
                 qualityUltra = "Original",
+                streamDiagnostics = { fps, bitrate, jitter, dropped ->
+                    "$fps fps · $bitrate kbps · $jitter ms jitter · ${dropped / 10f}% drop"
+                },
                 collapse = "Collapse",
                 back = "Back",
             ),
@@ -1559,9 +1568,10 @@ private val ZhStrings =
                 ffmpegMissing = "远端未安装 ffmpeg",
                 unsupportedOs = { os -> "屏幕推流仅支持 macOS / Linux 桌面主机（当前远端为 $os）" },
                 relayUpgradeRequired = "推流服务需要升级，点安装更新",
-                displayMissing = "屏幕推流需要被控用户登录 X11 桌面；系统登录界面无法远程控制",
+                displayMissing = "屏幕推流需要被控用户登录图形桌面；系统登录界面无法远程控制",
                 serviceNotRunning = "远端推流服务未运行",
-                waylandHint = "Wayland 桌面：画面仅覆盖 X11 应用窗口，建议改用 Xorg 会话",
+                waylandHint = "Wayland 桌面：首次连接请在被控端确认系统“远程控制”授权框",
+                waylandDependenciesMissing = "缺少 Wayland 画面捕获依赖，点安装补齐",
                 screenAsleepHint = "Mac 屏幕已关闭，唤醒后画面自动恢复",
                 screenLockedHint = "Mac 处于锁屏状态，解锁后恢复桌面画面",
                 firstFrameTimeout = "画面数据未到达，请检查远端推流服务和 ffmpeg",
@@ -1578,7 +1588,7 @@ private val ZhStrings =
                 installService = "安装服务",
                 installingService = "正在安装…",
                 serviceSudoPasswordLabel = "sudo 密码",
-                serviceSudoPasswordHint = "安装 ffmpeg 或 Linux 控制依赖需要 root 权限。密码仅通过加密 SSH 连接用于本次安装，不会保存。",
+                serviceSudoPasswordHint = "安装 Linux 画面捕获与控制依赖需要 root 权限。密码仅通过加密 SSH 连接用于本次安装，不会保存。",
                 installFailed = "安装失败——查看下方日志后重试。",
                 pipNeedInstall = "服务未安装",
                 serviceUpgradeHint = "推流服务版本过旧——点安装升级到最新（已有配置保留）。",
@@ -1594,11 +1604,14 @@ private val ZhStrings =
                 virtualMouseMovePanel = "移动虚拟鼠标面板",
                 viewMode = "观看",
                 controlPermissionHint = "被控端需要辅助功能权限——系统设置 → 隐私与安全性 → 辅助功能 → 勾选 python，然后重试。",
-                controlUnsupportedHint = "当前图形会话无法远程控制。请先登录被控用户的 Xorg 桌面；如仍提示，可重装服务补齐 python3-xlib。",
+                controlUnsupportedHint = "当前图形会话无法远程控制。Wayland 请确认系统“远程控制”授权；Xorg 可重装服务补齐 python3-xlib。",
                 qualityLow = "流畅",
                 qualityMid = "标清",
                 qualityHigh = "高清",
                 qualityUltra = "原画",
+                streamDiagnostics = { fps, bitrate, jitter, dropped ->
+                    "实收 $fps fps · $bitrate kbps · 抖动 $jitter ms · 丢帧 ${dropped / 10f}%"
+                },
                 collapse = "收起",
                 back = "返回",
             ),

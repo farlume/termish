@@ -4,6 +4,8 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ScreenTcpSessionTest {
     @Test
@@ -110,6 +112,70 @@ class ScreenTcpSessionTest {
         assertContentEquals(heartbeat, framed.copyOfRange(4, framed.size))
     }
 
+    @Test
+    fun `v2 video envelope preserves sequence timestamp and keyframe flag`() {
+        val frame = byteArrayOf(0, 0, 0, 1, 0x65, 1, 2, 3)
+        val payload =
+            byteArrayOf('T'.code.toByte(), 'H'.code.toByte(), 'V'.code.toByte(), '2'.code.toByte()) +
+                longBytes(42) +
+                longBytes(987_654) +
+                byteArrayOf(1) +
+                frame
+
+        val packet = parseScreenVideoPacket(payload)
+
+        assertEquals(42, packet.sequence)
+        assertEquals(987_654, packet.sentAtMicros)
+        assertEquals(true, packet.isKeyframe)
+        assertContentEquals(frame, packet.data)
+    }
+
+    @Test
+    fun `client feedback has a stable fixed width wire format`() {
+        val feedback =
+            ScreenClientFeedback(
+                receivedFps = 58,
+                renderedFps = 57,
+                bitrateKbps = 6_400,
+                droppedPermille = 25,
+                decoderBusyFrames = 2,
+                jitterMillis = 8,
+                queueDepth = 1,
+                lastSequence = 9_876,
+                requestKeyframe = true,
+            )
+
+        assertEquals(feedback, parseScreenFeedback(encodeScreenFeedback(feedback)))
+    }
+
+    @Test
+    fun `keyframe request ignores transient startup pressure`() {
+        assertFalse(
+            shouldRequestScreenKeyframe(
+                receivedFrames = 30,
+                renderedFrames = 22,
+                networkLostFrames = 0,
+                playerDroppedFrames = 8,
+            ),
+        )
+        assertTrue(
+            shouldRequestScreenKeyframe(
+                receivedFrames = 30,
+                renderedFrames = 0,
+                networkLostFrames = 0,
+                playerDroppedFrames = 8,
+            ),
+        )
+        assertTrue(
+            shouldRequestScreenKeyframe(
+                receivedFrames = 30,
+                renderedFrames = 29,
+                networkLostFrames = 1,
+                playerDroppedFrames = 0,
+            ),
+        )
+    }
+
     private fun frame(payload: ByteArray): ByteArray = intBytes(payload.size) + payload
 
     private fun intBytes(value: Int): ByteArray =
@@ -119,6 +185,8 @@ class ScreenTcpSessionTest {
             (value ushr 8).toByte(),
             value.toByte(),
         )
+
+    private fun longBytes(value: Long): ByteArray = ByteArray(8) { index -> (value ushr (56 - index * 8)).toByte() }
 
     private fun readInt(data: ByteArray): Int =
         ((data[0].toInt() and 0xff) shl 24) or

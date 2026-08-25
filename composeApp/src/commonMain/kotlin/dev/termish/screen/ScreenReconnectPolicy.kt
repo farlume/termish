@@ -3,6 +3,7 @@ package dev.termish.screen
 internal const val SCREEN_STABLE_WINDOW_MS = 15_000L
 internal const val MAX_SCREEN_RECONNECT_ATTEMPTS = 3
 internal const val SCREEN_FIRST_VIDEO_TIMEOUT_MS = 12_000L
+internal const val SCREEN_WAYLAND_FIRST_VIDEO_TIMEOUT_MS = 60_000L
 internal const val SCREEN_VIDEO_STALL_TIMEOUT_MS = 6_000L
 internal const val SCREEN_RENDER_STALL_TIMEOUT_MS = 6_000L
 
@@ -18,9 +19,10 @@ internal fun isScreenVideoStalled(
     lastVideoAtMillis: Long,
     startedAtMillis: Long,
     hasReceivedVideo: Boolean,
+    firstVideoTimeoutMillis: Long = SCREEN_FIRST_VIDEO_TIMEOUT_MS,
 ): Boolean {
     val baseline = if (hasReceivedVideo) lastVideoAtMillis else startedAtMillis
-    val timeout = if (hasReceivedVideo) SCREEN_VIDEO_STALL_TIMEOUT_MS else SCREEN_FIRST_VIDEO_TIMEOUT_MS
+    val timeout = if (hasReceivedVideo) SCREEN_VIDEO_STALL_TIMEOUT_MS else firstVideoTimeoutMillis
     return baseline > 0L && nowMillis - baseline >= timeout
 }
 

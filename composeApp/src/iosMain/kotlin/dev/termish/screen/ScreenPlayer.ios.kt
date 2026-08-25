@@ -58,6 +58,7 @@ private data class PreparedFrame(
  */
 @OptIn(ExperimentalForeignApi::class)
 actual class ScreenPlayer actual constructor(
+    private val targetFps: Int,
     private val onReady: () -> Unit,
     private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
@@ -71,6 +72,12 @@ actual class ScreenPlayer actual constructor(
     private var cachedSps: ByteArray? = null
     private var cachedPps: ByteArray? = null
     private var readyReported = false
+
+    @Volatile private var receivedFrames = 0L
+
+    @Volatile private var renderedFrames = 0L
+
+    @Volatile private var droppedFrames = 0L
 
     @Volatile
     actual var lastRenderedAtMillis = 0L
@@ -90,7 +97,7 @@ actual class ScreenPlayer actual constructor(
         } finally {
             queueLock.unlock()
         }
-        TermLog.i("screen") { "iOS H.264 player started" }
+        TermLog.i("screen") { "iOS H.264 player started targetFps=$targetFps" }
         scheduleDrain()
     }
 
@@ -112,7 +119,11 @@ actual class ScreenPlayer actual constructor(
         queueLock.lock()
         try {
             if (!running) return
-            while (frameQueue.size >= FRAME_QUEUE_CAPACITY) frameQueue.removeFirst()
+            receivedFrames++
+            while (frameQueue.size >= FRAME_QUEUE_CAPACITY) {
+                frameQueue.removeFirst()
+                droppedFrames++
+            }
             frameQueue.addLast(prepared)
             if (!drainScheduled) {
                 drainScheduled = true
@@ -145,6 +156,22 @@ actual class ScreenPlayer actual constructor(
             TermLog.i("screen") { "iOS H.264 player stopped" }
         }
     }
+
+    actual fun metrics(): ScreenPlayerMetrics =
+        ScreenPlayerMetrics(
+            receivedFrames = receivedFrames,
+            renderedFrames = renderedFrames,
+            droppedFrames = droppedFrames,
+            queueDepth =
+                queueLock.run {
+                    lock()
+                    try {
+                        frameQueue.size
+                    } finally {
+                        unlock()
+                    }
+                },
+        )
 
     internal fun attachView(view: ScreenVideoView) {
         if (!views.contains(view)) views += view
@@ -239,6 +266,7 @@ actual class ScreenPlayer actual constructor(
             TermLog.i("screen") { "iOS decoder configured ${videoDims.value}" }
         }
 
+        var rendered = false
         views.toList().forEach { view ->
             if (view.needsIdr && !frame.isIdr) return@forEach
             val status = enqueue(view.sampleLayer, frame.avcc, frame.isIdr)
@@ -247,6 +275,7 @@ actual class ScreenPlayer actual constructor(
                 val layerState = termish_screen_layer_state(view.sampleLayer)
                 when {
                     layerState > 0 -> {
+                        rendered = true
                         lastRenderedAtMillis = NSDate().timeIntervalSince1970.times(1000).toLong()
                         view.consecutiveFailures = 0
                         if (!readyReported) {
@@ -263,6 +292,7 @@ actual class ScreenPlayer actual constructor(
                 recoverLayer(view)
             }
         }
+        if (rendered) renderedFrames++
     }
 
     private fun createFormat(): Boolean {

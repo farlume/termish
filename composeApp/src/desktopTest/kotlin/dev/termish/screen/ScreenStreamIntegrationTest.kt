@@ -339,7 +339,12 @@ class ScreenStreamIntegrationTest {
         // 关键语义断言：视频口仅回环 + TCP 显式分帧 + 硬编（防脚本漂移）
         assertTrue(py.contains("TCP_VIDEO_PORT = 17321 + 2"), "relay 应定义独立 TCP 视频端口")
         assertTrue(py.contains("srv.bind((\"127.0.0.1\", TCP_VIDEO_PORT))"), "视频口必须只监听回环")
-        assertTrue(py.contains("struct.pack(\">I\", len(frame))"), "TCP 视频必须显式分帧")
+        assertTrue(py.contains("struct.pack(\">I\", len(envelope))"), "TCP 视频必须显式分帧")
+        assertTrue(py.contains("VIDEO_MAGIC = b\"THV2\""), "视频帧应携带序号和发送时间元数据")
+        assertTrue(py.contains("FEEDBACK_MAGIC = b\"THF1\""), "relay 应接收客户端质量反馈")
+        assertTrue(py.contains("\"-maxrate\", bitrate, \"-bufsize\", bufsize"), "编码器应限制瞬时码率")
+        assertTrue(py.contains("\"-threads\", str(encoder_threads)"), "Linux 软编应按档位扩展线程")
+        assertTrue(py.contains("self.request_encoder_restart(close_reason, 10.0)"), "抓屏停滞应在原连接内自愈")
         assertTrue(py.contains("recv_exact(conn, 4)"), "TCP 控制包必须显式分帧")
         assertTrue(py.contains("AUTH_MAGIC = b\"THA1\""), "TCP 视频通道必须先做 token 握手")
         assertTrue(py.contains("hmac.compare_digest(auth[4:], AUTH_TOKEN)"), "token 比较必须使用恒定时间实现")
@@ -353,6 +358,8 @@ class ScreenStreamIntegrationTest {
         assertTrue(py.contains("CGEventSetLocation(ev, (px, py))"), "滚轮应定位到虚拟箭头且不移动实体指针")
         assertTrue(py.contains("FF_PIDFILE"), "relay 应只按自身 PID 文件清理孤儿 ffmpeg")
         assertFalse(py.contains("subprocess.run([\"pkill\""), "relay 不得误杀用户的其它 ffmpeg 进程")
+        assertTrue(script.contains("/usr/bin/python3 -u"), "常驻 relay 日志必须无缓冲输出")
+        assertTrue(script.contains("tail -c 1048576"), "常驻 relay 日志必须限制体积")
     }
 
     private fun createTestSession(pemFile: File) =

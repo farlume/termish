@@ -21,6 +21,15 @@ sealed interface ScreenPlayerFailure {
     data object Unsupported : ScreenPlayerFailure
 }
 
+/** 播放管线累计指标；调用方用相邻快照的差值判断解码压力。 */
+data class ScreenPlayerMetrics(
+    val receivedFrames: Long = 0,
+    val renderedFrames: Long = 0,
+    val droppedFrames: Long = 0,
+    val decoderBusyFrames: Long = 0,
+    val queueDepth: Int = 0,
+)
+
 /**
  * 平台视频播放器（远程画面渲染层）：
  * - Android：MediaCodec 直解 + SurfaceView 直上屏（ToDesk 式直通管线）。
@@ -31,6 +40,7 @@ sealed interface ScreenPlayerFailure {
  * 播放错误回调 [onError]；UI 用 [ScreenVideoSurface] 渲染画面。
  */
 expect class ScreenPlayer(
+    targetFps: Int,
     onReady: () -> Unit,
     onError: (ScreenPlayerFailure) -> Unit,
 ) {
@@ -51,6 +61,9 @@ expect class ScreenPlayer(
 
     /** 当前是否有实际渲染面；切到其它会话时无 Surface 不属于播放器卡死。 */
     val renderSurfaceAttached: Boolean
+
+    /** 获取无副作用的累计性能快照。 */
+    fun metrics(): ScreenPlayerMetrics
 }
 
 /** 视频渲染面（Android = SurfaceView；iOS = AVSampleBufferDisplayLayer）。 */

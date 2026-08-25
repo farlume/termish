@@ -1,6 +1,7 @@
 package dev.termish.screen
 
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.os.Build
@@ -21,6 +22,7 @@ import dev.termish.util.TermLog
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /** 解码能力探测缓存（分辨率 → 帧率上限），静态复用免每会话重查。 */
 private val decoderProbeCache = HashMap<String, Int>()
@@ -28,6 +30,13 @@ private val decoderProbeCache = HashMap<String, Int>()
 /** H.264 解码 MIME（探测与解码共用）。 */
 private const val DECODER_MIME = "video/avc"
 private const val ANDROID_SOFTWARE_AVC_DECODER = "c2.android.avc.decoder"
+private const val ANDROID_EMULATOR_MAX_FPS = 30
+
+private fun isAndroidEmulator(): Boolean =
+    Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
+        Build.FINGERPRINT.contains("emulator", ignoreCase = true) ||
+        Build.HARDWARE.contains("goldfish", ignoreCase = true) ||
+        Build.HARDWARE.contains("ranchu", ignoreCase = true)
 
 /**
  * Android 实现：TCP 显式分帧得到的完整 H.264 帧（Annex-B，AUD 开头）直接喂
@@ -43,10 +52,11 @@ private const val ANDROID_SOFTWARE_AVC_DECODER = "c2.android.avc.decoder"
  * 提取）+ 从 IDR 起播 + 独立线程同步模式 + 吞输入 watchdog 打点。
  */
 actual class ScreenPlayer actual constructor(
+    targetFps: Int,
     private val onReady: () -> Unit,
     private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
-    val decoder = ScreenDecoder(onReady, onError)
+    val decoder = ScreenDecoder(targetFps, onReady, onError)
 
     /** 视频实际尺寸（解码器上报）：UI 宽高比布局 + 远程操作坐标映射。 */
     actual val videoDims: MutableState<Pair<Int, Int>?> = decoder.videoDims
@@ -68,6 +78,8 @@ actual class ScreenPlayer actual constructor(
     actual fun stop() {
         decoder.stop()
     }
+
+    actual fun metrics(): ScreenPlayerMetrics = decoder.metrics()
 }
 
 /**
@@ -83,6 +95,7 @@ actual class ScreenPlayer actual constructor(
  * 2-3 帧；丢参考帧花屏到下一个 IDR（keyint=30 ≤ 0.5s）自动恢复。
  */
 class ScreenDecoder(
+    targetFps: Int,
     private val onReady: () -> Unit,
     private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
@@ -90,13 +103,15 @@ class ScreenDecoder(
         private const val MIME = "video/avc"
         private const val QUEUE_CAPACITY = 4
         private const val TIMEOUT_US = 10_000L
-
-        // 帧间隔 33.3ms（30fps 语义）：PTS 与真实帧率一致，避免个别解码器
-        // 按 PTS 排队调度输出（历史值 1s 步进是隐患，Surface 直渲掩盖了它）
-        private const val PTS_STEP_US = 33_333L
     }
 
     private val queue = LinkedBlockingQueue<ByteArray>(QUEUE_CAPACITY)
+    private val configuredFps = targetFps.coerceIn(1, 120)
+    private val ptsStepUs = 1_000_000L / configuredFps
+    private val receivedFrames = AtomicLong()
+    private val renderedFrames = AtomicLong()
+    private val droppedFrames = AtomicLong()
+    private val decoderBusyFrames = AtomicLong()
 
     /** 渲染帧计数（每秒诊断打点后清零）。 */
     @Volatile private var statRendered = 0
@@ -168,11 +183,22 @@ class ScreenDecoder(
     /** 喂入一个完整帧（Annex-B 字节；TCP 协议层保证帧对齐）。 */
     fun feedFrame(frame: ByteArray) {
         if (!running) return
+        receivedFrames.incrementAndGet()
         // 丢旧保新：水位满时丢最旧一帧（不背压发送端——延迟优先于连续性）
         while (!queue.offer(frame)) {
             if (queue.poll() == null) break
+            droppedFrames.incrementAndGet()
         }
     }
+
+    fun metrics(): ScreenPlayerMetrics =
+        ScreenPlayerMetrics(
+            receivedFrames = receivedFrames.get(),
+            renderedFrames = renderedFrames.get(),
+            droppedFrames = droppedFrames.get(),
+            decoderBusyFrames = decoderBusyFrames.get(),
+            queueDepth = queue.size,
+        )
 
     private fun decodeLoop() {
         var codec: MediaCodec? = null
@@ -216,32 +242,42 @@ class ScreenDecoder(
             pps: ByteArray?,
             dims: Pair<Int, Int>?,
         ): Boolean {
+            val selection =
+                try {
+                    createDecoder()
+                } catch (e: Exception) {
+                    TermLog.w("screen") { "decoder creation failed: $e" }
+                    onError(ScreenPlayerFailure.Initialization(e.message))
+                    running = false
+                    return false
+                }
             val fmt =
                 MediaFormat.createVideoFormat(MIME, dims?.first ?: 1920, dims?.second ?: 1080).apply {
                     if (sps != null) setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(sps))
                     if (pps != null) setByteBuffer("csd-1", java.nio.ByteBuffer.wrap(pps))
-                    // 低延迟模式（Android 12+，多数厂商解码器支持）：减少内部
-                    // 缓冲积压——解码输出更快到达 surface（实时性）。不支持时
-                    // 解码器忽略该键，无副作用
-                    if (Build.VERSION.SDK_INT >= 30) {
+                    // 仅在 codec 明确声明支持时开启，避免部分厂商实现接受键值后
+                    // 进入异常缓冲策略。
+                    if (selection.lowLatency) {
                         runCatching { setInteger(MediaFormat.KEY_LOW_LATENCY, 1) }
                     }
-                    // 消费速率提示（API 26+）：解码器按此调度缓冲，避免按
-                    // 默认（可能更高）帧率预设缓冲
+                    runCatching { setInteger(MediaFormat.KEY_FRAME_RATE, configuredFps) }
+                    // 消费速率提示应使用真实推流帧率，而不是解码能力上限。
                     val cap = probeDecoderMaxFps(dims?.first ?: 1920, dims?.second ?: 1080)
-                    if (cap > 0) {
-                        runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, cap) }
-                    }
+                    val operatingRate = if (cap > 0) minOf(configuredFps, cap) else configuredFps
+                    runCatching { setInteger(MediaFormat.KEY_OPERATING_RATE, operatingRate) }
                 }
             var candidate: MediaCodec? = null
             return try {
-                candidate = createDecoder()
+                candidate = selection.codec
                 candidate.configure(fmt, surface, null, 0)
                 candidate.start()
                 codec = candidate
                 lastDims = dims
                 fed = 0
-                TermLog.i("screen") { "decoder configured ${dims?.first}x${dims?.second}" }
+                TermLog.i("screen") {
+                    "decoder configured ${dims?.first}x${dims?.second} " +
+                        "fps=$configuredFps codec=${selection.name} lowLatency=${selection.lowLatency}"
+                }
                 true
             } catch (e: Exception) {
                 runCatching { candidate?.stop() }
@@ -335,6 +371,8 @@ class ScreenDecoder(
                     dropEvery = (dropEvery + 1).coerceAtMost(4)
                     dropCounter = 0
                     statFull++
+                    decoderBusyFrames.incrementAndGet()
+                    droppedFrames.incrementAndGet()
                     if (!renderOutputs(c, boundSurface)) {
                         releaseCodec()
                         needIdr = true
@@ -347,6 +385,7 @@ class ScreenDecoder(
                         // 被抽掉的帧：占位释放 input buffer（不喂数据）
                         c.queueInputBuffer(idx, 0, 0, pts, 0)
                         statSkipped++
+                        droppedFrames.incrementAndGet()
                         if (!renderOutputs(c, boundSurface)) {
                             releaseCodec()
                             needIdr = true
@@ -363,7 +402,7 @@ class ScreenDecoder(
                     buf.clear()
                     buf.put(frame)
                     c.queueInputBuffer(idx, 0, frame.size, pts, 0)
-                    pts += PTS_STEP_US
+                    pts += ptsStepUs
                 } else {
                     c.queueInputBuffer(idx, 0, 0, pts, 0)
                 }
@@ -444,6 +483,7 @@ class ScreenDecoder(
                         if (info.size > 0) {
                             codec.releaseOutputBuffer(idx, true)
                             statRendered++
+                            renderedFrames.incrementAndGet()
                             lastRenderedAtMillis = System.currentTimeMillis()
                             if (!firstFrameRendered) {
                                 firstFrameRendered = true
@@ -472,22 +512,32 @@ class ScreenDecoder(
      * dequeueInputBuffer（即使设置了超时）。模拟器不需要追求硬解功耗，固定使用
      * Android 自带软件解码器更稳定；真机继续交给系统选择硬件解码器。
      */
-    private fun createDecoder(): MediaCodec {
-        val isEmulator =
-            Build.FINGERPRINT.contains("generic", ignoreCase = true) ||
-                Build.FINGERPRINT.contains("emulator", ignoreCase = true) ||
-                Build.HARDWARE.contains("goldfish", ignoreCase = true) ||
-                Build.HARDWARE.contains("ranchu", ignoreCase = true)
-        if (isEmulator) {
+    private data class DecoderSelection(
+        val codec: MediaCodec,
+        val name: String,
+        val lowLatency: Boolean,
+    )
+
+    private fun createDecoder(): DecoderSelection {
+        if (isAndroidEmulator()) {
             runCatching { MediaCodec.createByCodecName(ANDROID_SOFTWARE_AVC_DECODER) }
                 .onSuccess {
                     TermLog.i("screen") { "emulator uses software decoder $ANDROID_SOFTWARE_AVC_DECODER" }
-                    return it
+                    return DecoderSelection(it, ANDROID_SOFTWARE_AVC_DECODER, lowLatency = false)
                 }.onFailure {
                     TermLog.w("screen") { "software decoder unavailable, fallback to default: ${it.message}" }
                 }
         }
-        return MediaCodec.createDecoderByType(MIME)
+        val codec = MediaCodec.createDecoderByType(MIME)
+        val lowLatency =
+            Build.VERSION.SDK_INT >= 30 &&
+                runCatching {
+                    codec
+                        .codecInfo
+                        .getCapabilitiesForType(MIME)
+                        .isFeatureSupported(MediaCodecInfo.CodecCapabilities.FEATURE_LowLatency)
+                }.getOrDefault(false)
+        return DecoderSelection(codec, codec.name, lowLatency)
     }
 }
 
@@ -556,6 +606,14 @@ actual fun probeDecoderMaxFps(
 ): Int {
     val key = "$width x $height"
     decoderProbeCache[key]?.let { return it }
+    // 模拟器实际解码固定走 c2.android.avc.decoder；MediaCodecList 里仍会暴露
+    // goldfish/ranchu 的桥接“硬解”能力，常虚报 120fps+。若把这个值用于档位
+    // 菜单和自动恢复，软件解码器会被反复升档后打满。与 createDecoder 保持同源，
+    // 模拟器稳定钳在 30fps；真机仍按硬件能力开放 60/120fps。
+    if (isAndroidEmulator()) {
+        decoderProbeCache[key] = ANDROID_EMULATOR_MAX_FPS
+        return ANDROID_EMULATOR_MAX_FPS
+    }
     var best = 0
     try {
         val list = MediaCodecList(MediaCodecList.ALL_CODECS)

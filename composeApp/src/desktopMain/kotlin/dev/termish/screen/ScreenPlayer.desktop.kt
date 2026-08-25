@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 
 /** 桌面占位：屏幕推流播放未实现（开发 harness 场景，非核心）。 */
 actual class ScreenPlayer actual constructor(
+    targetFps: Int,
     private val onReady: () -> Unit,
     private val onError: (ScreenPlayerFailure) -> Unit,
 ) {
@@ -27,6 +28,8 @@ actual class ScreenPlayer actual constructor(
     actual val lastRenderedAtMillis: Long = 0L
 
     actual val renderSurfaceAttached: Boolean = false
+
+    actual fun metrics(): ScreenPlayerMetrics = ScreenPlayerMetrics()
 }
 
 @Composable

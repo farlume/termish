@@ -500,6 +500,11 @@ class SshSessionLibssh2(
             @Volatile
             private var channelClosed = false
 
+            // direct-tcpip 的控制消息是长度分帧协议。多个发送协程在 EAGAIN
+            // 期间若交错写入，会把帧头和 payload 拼坏；同一辅助通道必须保证
+            // 一整个 ByteArray 写完后下一包才能开始。
+            private val writeMutex = Mutex()
+
             override fun read(): ByteArray? = readStream(0)
 
             override fun readErr(): ByteArray? = readStream(1)
@@ -536,20 +541,22 @@ class SshSessionLibssh2(
                 if (channelClosed || data.isEmpty()) return
                 val copy = data.copyOf()
                 scope.launch {
-                    var offset = 0
-                    while (!closed && !channelClosed && offset < copy.size) {
-                        val written =
-                            copy.usePinned { pinned ->
-                                termish_channel_write(
-                                    ch,
-                                    pinned.addressOf(offset).reinterpret(),
-                                    (copy.size - offset).toULong(),
-                                )
+                    writeMutex.withLock {
+                        var offset = 0
+                        while (!closed && !channelClosed && offset < copy.size) {
+                            val written =
+                                copy.usePinned { pinned ->
+                                    termish_channel_write(
+                                        ch,
+                                        pinned.addressOf(offset).reinterpret(),
+                                        (copy.size - offset).toULong(),
+                                    )
+                                }
+                            when {
+                                written > 0 -> offset += written.toInt()
+                                written.toInt() == LIBSSH2_ERROR_EAGAIN -> delay(15)
+                                else -> return@withLock
                             }
-                        when {
-                            written > 0 -> offset += written.toInt()
-                            written.toInt() == LIBSSH2_ERROR_EAGAIN -> delay(15)
-                            else -> return@launch
                         }
                     }
                 }
