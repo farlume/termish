@@ -1359,6 +1359,16 @@ class AgentBridgeController(
         attachments: List<AgentPendingAttachment>,
     ): List<AgentAttachment> {
         if (attachments.isEmpty()) return emptyList()
+        val seenSourceIds = mutableSetOf<String>()
+        val uniqueAttachments =
+            attachments.filter { attachment ->
+                if (seenSourceIds.add(attachment.sourceId)) {
+                    true
+                } else {
+                    attachment.close()
+                    false
+                }
+            }
         val relativeDirectory = ".termish/attachments"
         val remoteDirectory = joinRemotePath(session.cwd, relativeDirectory)
         val mkdir =
@@ -1370,21 +1380,25 @@ class AgentBridgeController(
         }
         val sftp = withContext(ioDispatcher()) { createSftpSession(connection(), callbacks) }
         return try {
-            attachments.mapIndexed { index, pending ->
+            uniqueAttachments.mapIndexed { index, pending ->
                 val safeName = sanitizeFileName(pending.name)
                 val storedName = "${session.id.take(8)}-${index + 1}-$safeName"
                 val relativePath = "$relativeDirectory/$storedName"
-                attachmentProgress = "${index + 1} / ${attachments.size} · ${pending.name}"
-                withContext(ioDispatcher()) {
-                    sftp.upload(
-                        remotePath = joinRemotePath(session.cwd, relativePath),
-                        totalSize = pending.size,
-                        onProgress = { sent, total ->
-                            val percent = if (total > 0) (sent * 100 / total).toInt() else 0
-                            attachmentProgress = "${index + 1} / ${attachments.size} · $percent%"
-                        },
-                        nextChunk = pending.readChunk,
-                    )
+                attachmentProgress = "${index + 1} / ${uniqueAttachments.size} · ${pending.name}"
+                try {
+                    withContext(ioDispatcher()) {
+                        sftp.upload(
+                            remotePath = joinRemotePath(session.cwd, relativePath),
+                            totalSize = pending.size,
+                            onProgress = { sent, total ->
+                                val percent = if (total > 0) (sent * 100 / total).toInt() else 0
+                                attachmentProgress = "${index + 1} / ${uniqueAttachments.size} · $percent%"
+                            },
+                            nextChunk = pending.readChunk,
+                        )
+                    }
+                } finally {
+                    pending.close()
                 }
                 AgentAttachment(pending.name, relativePath, pending.size)
             }

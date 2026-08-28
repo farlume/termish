@@ -1241,7 +1241,7 @@ private fun AgentHome(
     val strings = LocalAppStrings.current.nativeAgents
     var input by remember { mutableStateOf("") }
     var attachments by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
-    val pickFiles = rememberFilePicker { attachments = attachments + it }
+    val pickFiles = rememberFilePicker { attachments = appendUniquePickedFile(attachments, it) }
     val available = controller.agents.filter { it.available && it.supported }
     val providerConfig =
         providers.firstOrNull {
@@ -1259,6 +1259,7 @@ private fun AgentHome(
         when (agentSlashAction(command)) {
             AgentSlashAction.NEW -> {
                 input = ""
+                closePickedFiles(attachments)
                 attachments = emptyList()
             }
             AgentSlashAction.MODEL -> slashDialog = AgentSlashDialog.MODEL
@@ -1314,7 +1315,7 @@ private fun AgentHome(
             { input = it },
             attachments,
             pickFiles,
-            { attachments = attachments - it },
+            { attachments = removePickedFile(attachments, it) },
             preferences.defaultDirectory,
             onChooseDirectory,
             controller.agents.firstOrNull { it.id == selectedAgent }?.label,
@@ -1336,6 +1337,7 @@ private fun AgentHome(
                     attachments.map { it.toAgentAttachment() },
                 ) {
                     input = ""
+                    closePickedFiles(attachments)
                     attachments = emptyList()
                 }
             },
@@ -2312,7 +2314,7 @@ private fun AgentChat(
 ) {
     var input by remember(controller.currentSession?.id) { mutableStateOf("") }
     var attachments by remember(controller.currentSession?.id) { mutableStateOf<List<PickedFile>>(emptyList()) }
-    val pickFiles = rememberFilePicker { attachments = attachments + it }
+    val pickFiles = rememberFilePicker { attachments = appendUniquePickedFile(attachments, it) }
     val strings = LocalAppStrings.current.nativeAgents
     val scope = rememberCoroutineScope()
     val modelOptions = providerConfig?.models.orEmpty()
@@ -2432,7 +2434,7 @@ private fun AgentChat(
             { input = it },
             attachments,
             pickFiles,
-            { attachments = attachments - it },
+            { attachments = removePickedFile(attachments, it) },
             controller.currentSession?.cwd.orEmpty(),
             null,
             controller.currentSession?.agent,
@@ -2452,6 +2454,7 @@ private fun AgentChat(
                     provider,
                 ) {
                     input = ""
+                    closePickedFiles(attachments)
                     attachments = emptyList()
                 }
             },
@@ -3633,7 +3636,7 @@ private fun SessionActionsSheet(
     }
 }
 
-private fun PickedFile.toAgentAttachment(): AgentPendingAttachment = AgentPendingAttachment(name, size, readChunk)
+private fun PickedFile.toAgentAttachment(): AgentPendingAttachment = AgentPendingAttachment(sourceId, name, size, readChunk, close)
 
 private fun parentRemotePath(path: String): String {
     val normalized = path.trimEnd('/')
@@ -3709,29 +3712,46 @@ private class AgentUploader(
         val total = queue.size
         var done = 0
         val uploadedPaths = mutableListOf<String>()
-        while (queue.isNotEmpty()) {
-            val f = queue.removeFirst()
+        val sftp =
             try {
-                val path = uploadOne(f, targetDir, done, total)
-                uploadedPaths.add(path)
-                done++
+                controller.openSftp()
             } catch (e: CancellationException) {
+                closeQueuedFiles()
                 throw e
             } catch (e: Exception) {
+                closeQueuedFiles()
                 state = AgentUploadUiState.Failed(e.message ?: (e::class.simpleName ?: "error"))
                 return
             }
+        try {
+            while (queue.isNotEmpty()) {
+                val file = queue.removeFirst()
+                try {
+                    val path = uploadOne(sftp, file, targetDir, done, total)
+                    uploadedPaths.add(path)
+                    done++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    closeQueuedFiles()
+                    state = AgentUploadUiState.Failed(e.message ?: (e::class.simpleName ?: "error"))
+                    return
+                }
+            }
+        } finally {
+            closeQueuedFiles()
+            withContext(ioDispatcher()) { runCatching { sftp.close() } }
         }
         state = AgentUploadUiState.Done(done, uploadedPaths)
     }
 
     private suspend fun uploadOne(
+        sftp: SftpSession,
         picked: PickedFile,
         targetDir: String,
         index: Int,
         queueTotal: Int,
     ): String {
-        val sftp = controller.openSftp()
         try {
             val remotePath =
                 if (targetDir.endsWith("/")) "$targetDir${picked.name}" else "$targetDir/${picked.name}"
@@ -3747,8 +3767,12 @@ private class AgentUploader(
             }
             return remotePath
         } finally {
-            withContext(ioDispatcher()) { runCatching { sftp.close() } }
+            picked.close()
         }
+    }
+
+    private fun closeQueuedFiles() {
+        while (queue.isNotEmpty()) queue.removeFirst().close()
     }
 }
 

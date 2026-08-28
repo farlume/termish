@@ -23,6 +23,12 @@ make ios-native          # one-time cross-compile OpenSSL + libssh2 → iosApp/n
 make ios-framework       # Kotlin framework (simulator + device debug)
 ```
 
+**Android 模拟器必须用 `-gpu host` 启动**：本机是 KVM 虚拟机，直通了 Intel
+Arc A380（`/dev/dri/renderD129`，headless EGL/Vulkan 已验证可用）。禁止
+`-gpu swiftshader_indirect` / `lavapipe` 软渲染——软渲染把 GPU 的活全压给
+CPU，模拟器常年 200%+ CPU、机器发热。AVD `termish` 的 `hw.gpu.mode` 已设为
+`host`；启动命令不要再显式传软渲染参数（`-gpu` 参数会覆盖 AVD 配置）。
+
 Test sshd: `./scripts/test-sshd.sh` (127.0.0.1:22222, generates ephemeral ed25519 keys).
 Demo server (screenshots / herdr+pi): Docker container `termish-demo` on the dev
 machine — credentials & ports are kept in local test assets (`.aiadb/`, gitignored),

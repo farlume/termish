@@ -86,9 +86,11 @@ data class AgentArtifact(
 )
 
 data class AgentPendingAttachment(
+    val sourceId: String,
     val name: String,
     val size: Long,
     val readChunk: () -> ByteArray?,
+    val close: () -> Unit,
 )
 
 data class AgentChatMessage(

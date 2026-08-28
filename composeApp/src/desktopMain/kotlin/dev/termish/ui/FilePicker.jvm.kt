@@ -18,16 +18,22 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit =
                     // 文件流式读：readChunk 逐块拉取，大文件不整体驻内存
                     val input: InputStream = f.inputStream()
                     onPicked(
-                        PickedFile(f.name, f.length()) {
-                            val buf = ByteArray(CHUNK)
-                            val n = input.read(buf)
-                            if (n < 0) {
-                                input.close()
-                                null
-                            } else {
-                                buf.copyOf(n)
-                            }
-                        },
+                        PickedFile(
+                            sourceId = f.canonicalPath,
+                            name = f.name,
+                            size = f.length(),
+                            readChunk = {
+                                val buf = ByteArray(CHUNK)
+                                val n = input.read(buf)
+                                if (n < 0) {
+                                    input.close()
+                                    null
+                                } else {
+                                    buf.copyOf(n)
+                                }
+                            },
+                            close = { runCatching { input.close() } },
+                        ),
                     )
                 }
             }

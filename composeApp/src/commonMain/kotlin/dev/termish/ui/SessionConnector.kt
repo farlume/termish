@@ -874,7 +874,7 @@ internal class SessionConnector(
      *   像固定延迟那样干等），有 MOTD 的等它打完再注入（干净）；持续输出场景
      *   [HERDR_INJECT_MAX_WAIT_MS] 上限兜底
      * - 注入命令先清屏（当前屏 + scrollback）再启动 herdr：即使 MOTD 已打出，
-     *   herdr 的起始画面也是干净的
+     *   herdr 的起始画面也是干净的；清屏是可选增强，失败不得阻断 herdr
      * - 清屏用 printf 八进制转义（POSIX \0ddd，dash/bash 均支持），不依赖
      *   /usr/bin/clear 是否存在
      * 注入前若会话已关闭/重连（session 被替换）则放弃：新连接有自己的一次注入。
@@ -889,7 +889,7 @@ internal class SessionConnector(
                 delay(HERDR_QUIET_POLL_MS)
             }
             if (c.session !== s || c.status != ConnStatus.CONNECTED) return@launch
-            val launch = "printf '\\0033[2J\\0033[3J\\0033[H' && ${shSingleQuote(bin)}\n"
+            val launch = herdrShellLaunchCommand(bin)
             s.sendData(launch.encodeToByteArray())
             TermLog.i("herdr") { "injected herdr launch (quiet+clear) ${c.host.name}" }
         }
@@ -1095,6 +1095,15 @@ internal class SessionConnector(
         }
     }
 }
+
+/**
+ * SSH shell 中的 Herdr 启动命令。
+ *
+ * 某些精简 shell / 重连初始化阶段不提供 `printf`；清屏失败时仍必须继续
+ * 启动 Herdr，否则 `&&` 会把会话留在普通 shell。标准错误丢弃，避免用户看到
+ * `printf: command not found`。
+ */
+internal fun herdrShellLaunchCommand(bin: String): String = "printf '\\0033[2J\\0033[3J\\0033[H' 2>/dev/null; ${shSingleQuote(bin)}\n"
 
 /**
  * POSIX sh 单引号转义：`'` → `'\''`，用于 printf 管道喂 sudo 密码

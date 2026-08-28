@@ -584,6 +584,48 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun herdrLaunchDoesNotDependOnClearCommandSuccess() {
+        val command = herdrShellLaunchCommand("/home/user/.local/bin/herdr")
+
+        assertTrue(command.contains("printf"))
+        assertTrue(command.contains("2>/dev/null;"), "清屏失败应静默并继续启动 Herdr: $command")
+        assertFalse(command.contains("&&"), "Herdr 启动不得依赖 printf 成功: $command")
+        assertTrue(command.endsWith("'/home/user/.local/bin/herdr'\n"))
+    }
+
+    @Test
+    fun herdrUnexpectedCloseReconnectsAndLaunchesHerdrAgain() {
+        val first = FakeSsh(commandHandler = { cmd -> if (cmd.contains("--version")) versionOutput else null })
+        val second = FakeSsh(commandHandler = { cmd -> if (cmd.contains("--version")) versionOutput else null })
+        val factoryCalls = AtomicInteger()
+        val c =
+            TerminalController(
+                host = host(),
+                password = "pw",
+                privateKeyPem = null,
+                repository = repo(),
+                autoReconnect = true,
+                launchMode = TerminalLaunchMode.HERDR,
+            ) { _, callbacks ->
+                val session = if (factoryCalls.getAndIncrement() == 0) first else second
+                session.callbacks = callbacks
+                session
+            }
+
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        awaitHerdrLaunch(first, "herdr")
+
+        first.callbacks.onClosed("lost")
+        assertEquals(ConnStatus.CONNECTING, c.status)
+        awaitHerdrLaunch(second, "herdr")
+
+        assertEquals(ConnStatus.CONNECTED, c.status)
+        assertTrue(herdrLaunchIn(second, "herdr")?.contains("2>/dev/null;") == true)
+        c.destroy()
+    }
+
+    @Test
     fun herdrMoshMissingShowsInstallGuide() {
         // Mosh + Herdr 会话：herdr 在但 mosh-server 未装 → mosh 引导安装卡片（非静默
         // 降级——装上 mosh 才有漫游能力）；状态必须置 CONNECTED（回归：此前

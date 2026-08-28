@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import dev.termish.ssh.SftpSession
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
 import dev.termish.ssh.createSftpSession
@@ -64,7 +65,7 @@ sealed interface UploadUiState {
 /**
  * 终端文件上传器：复用已认证连接参数（密码/私钥/主机）新建 SFTP 连接，
  * 与交互会话解耦（mosh 模式同样适用——SFTP 走独立 SSH 连接）。
- * 多选文件进队列**串行**上传（每次一个 SFTP 会话，传完关闭）；
+ * 多选文件进队列**串行**上传（整批复用一个 SFTP 会话，传完关闭）；
  * 流式上传：本地文件逐块读、逐块写，任意大小不整体驻内存。
  */
 class TerminalFileUploader(
@@ -95,58 +96,51 @@ class TerminalFileUploader(
         val total = queue.size
         var done = 0
         val uploadedPaths = mutableListOf<String>()
-        while (queue.isNotEmpty()) {
-            val f = queue.removeFirst()
+        val callbacks = uploadCallbacks()
+        val connection = uploadConnection()
+        val sftp =
             try {
-                val path = uploadOne(f, targetDir, done, total)
-                uploadedPaths.add(path)
-                done++
+                withContext(ioDispatcher()) { createSftpSession(connection, callbacks) }
             } catch (e: CancellationException) {
+                closeQueuedFiles()
                 throw e
             } catch (e: Exception) {
+                closeQueuedFiles()
                 state = UploadUiState.Failed(e.message ?: (e::class.simpleName ?: "error"))
                 onState?.invoke(state)
                 return
             }
+        try {
+            while (queue.isNotEmpty()) {
+                val file = queue.removeFirst()
+                try {
+                    val path = uploadOne(sftp, file, targetDir, done, total)
+                    uploadedPaths.add(path)
+                    done++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    closeQueuedFiles()
+                    state = UploadUiState.Failed(e.message ?: (e::class.simpleName ?: "error"))
+                    onState?.invoke(state)
+                    return
+                }
+            }
+        } finally {
+            closeQueuedFiles()
+            withContext(ioDispatcher()) { runCatching { sftp.close() } }
         }
         state = UploadUiState.Done(done, uploadedPaths)
         onState?.invoke(state)
     }
 
-    /**
-     * 上传单个文件到远端目录。SFTP 会话每次新建并关闭（与 SftpScreen 一致）。
-     */
     private suspend fun uploadOne(
+        sftp: SftpSession,
         picked: PickedFile,
         targetDir: String,
         index: Int,
         queueTotal: Int,
     ): String {
-        val callbacks =
-            object : SshCallbacks {
-                override suspend fun onOutput(data: ByteArray) {}
-
-                override suspend fun onStderr(data: ByteArray) {}
-
-                override fun onExitStatus(status: Int) {}
-
-                override fun onClosed(reason: String?) {}
-
-                override suspend fun onPrompt(prompt: dev.termish.ssh.AuthPrompt): List<String>? = null
-
-                override fun verifyHostKey(hostKey: dev.termish.ssh.HostKeyInfo): Boolean = true
-            }
-        val conn =
-            SshConnection(
-                host = controller.host.hostname,
-                port = controller.host.port,
-                username = controller.host.username,
-                password = controller.password,
-                privateKeyPem = controller.privateKeyPem,
-                connectTimeoutMillis = 10_000,
-                keepAliveSeconds = 0,
-            )
-        val sftp = createSftpSession(conn, callbacks)
         try {
             val remotePath = if (targetDir.endsWith("/")) "$targetDir${picked.name}" else "$targetDir/${picked.name}"
             withContext(ioDispatcher()) {
@@ -164,9 +158,39 @@ class TerminalFileUploader(
             }
             return remotePath
         } finally {
-            sftp.close()
+            picked.close()
         }
     }
+
+    private fun closeQueuedFiles() {
+        while (queue.isNotEmpty()) queue.removeFirst().close()
+    }
+
+    private fun uploadConnection(): SshConnection =
+        SshConnection(
+            host = controller.host.hostname,
+            port = controller.host.port,
+            username = controller.host.username,
+            password = controller.password,
+            privateKeyPem = controller.privateKeyPem,
+            connectTimeoutMillis = 10_000,
+            keepAliveSeconds = 0,
+        )
+
+    private fun uploadCallbacks(): SshCallbacks =
+        object : SshCallbacks {
+            override suspend fun onOutput(data: ByteArray) {}
+
+            override suspend fun onStderr(data: ByteArray) {}
+
+            override fun onExitStatus(status: Int) {}
+
+            override fun onClosed(reason: String?) {}
+
+            override suspend fun onPrompt(prompt: dev.termish.ssh.AuthPrompt): List<String>? = null
+
+            override fun verifyHostKey(hostKey: dev.termish.ssh.HostKeyInfo): Boolean = true
+        }
 }
 
 /** 上传目标目录选项卡片：图标 + 主标题 + 路径副标题 + 右箭头，点按区域明确。 */

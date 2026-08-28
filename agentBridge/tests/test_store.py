@@ -241,6 +241,19 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn(".termish/attachments/notes.txt", self.adapter.prompts[0])
         self.assertEqual("Review this", self.store.require(session["sessionId"]).title)
 
+    async def test_duplicate_attachment_path_is_referenced_once(self) -> None:
+        session = self.store.create("codex", self.temp.name, None)
+        attachment = {"name": "notes.txt", "path": ".termish/attachments/notes.txt", "size": 42}
+
+        await self.store.start_prompt(session["sessionId"], "Review this", [attachment, attachment.copy()])
+        task = self.store.require(session["sessionId"]).task
+        self.assertIsNotNone(task)
+        await task
+
+        messages = self.store.messages(session["sessionId"])
+        self.assertEqual([attachment], messages[0]["attachments"])
+        self.assertEqual(1, self.adapter.prompts[0].count(".termish/attachments/notes.txt"))
+
     async def test_session_can_be_renamed(self) -> None:
         session = self.store.create("codex", self.temp.name, None)
         renamed = self.store.rename(session["sessionId"], "Release review")

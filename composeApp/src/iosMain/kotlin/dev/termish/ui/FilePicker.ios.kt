@@ -89,20 +89,37 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit =
                                 }
                                 val fd = open(dst, O_RDONLY)
                                 if (fd < 0) return@coordinateReadingItemAtURL
+                                var fileOpen = true
+                                val closeFile = {
+                                    if (fileOpen) {
+                                        fileOpen = false
+                                        close(fd)
+                                    }
+                                }
                                 onPicked(
-                                    PickedFile(name, size) {
-                                        val buf = ByteArray(CHUNK)
-                                        val n =
-                                            buf.usePinned { pinned ->
-                                                read(fd, pinned.addressOf(0), CHUNK.toULong())
+                                    PickedFile(
+                                        sourceId = url.absoluteString ?: url.path.orEmpty(),
+                                        name = name,
+                                        size = size,
+                                        readChunk = {
+                                            val buf = ByteArray(CHUNK)
+                                            val n =
+                                                if (fileOpen) {
+                                                    buf.usePinned { pinned ->
+                                                        read(fd, pinned.addressOf(0), CHUNK.toULong())
+                                                    }
+                                                } else {
+                                                    0L
+                                                }
+                                            if (n <= 0L) {
+                                                closeFile()
+                                                null
+                                            } else {
+                                                buf.copyOf(n.toInt())
                                             }
-                                        if (n <= 0L) {
-                                            close(fd)
-                                            null
-                                        } else {
-                                            buf.copyOf(n.toInt())
-                                        }
-                                    },
+                                        },
+                                        close = closeFile,
+                                    ),
                                 )
                             }
                         } finally {

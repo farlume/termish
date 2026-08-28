@@ -655,10 +655,12 @@ class SessionStore:
             session.approval_futures.clear()
             session.event_journal.clear()
             safe_attachments = []
+            seen_attachment_paths = set()
             for attachment in attachments:
                 path = str(attachment.get("path", "")).strip()
                 name = str(attachment.get("name", "")).strip()
-                if path and name:
+                if path and name and path not in seen_attachment_paths:
+                    seen_attachment_paths.add(path)
                     safe_attachments.append({"name": name, "path": path, "size": int(attachment.get("size", 0))})
             self.add_message(
                 session.id,

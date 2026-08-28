@@ -5,6 +5,9 @@ import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.xfer.FilePermission
 
+private const val TRANSFER_BUFFER_SIZE = 64 * 1024
+private const val PIPELINE_DEPTH = 16
+
 actual fun createSftpSession(
     connection: SshConnection,
     callbacks: SshCallbacks,
@@ -19,8 +22,8 @@ class SftpSessionSshj(
     private val connection: SshConnection,
     private val callbacks: SshCallbacks,
 ) : SftpSession {
-    // SFTP 是请求-响应式（open/read/write/close 每个都等回包）：30s 无响应必是
-    // 断链/异常，限时失败才能被 UI 捕获提示，否则无线挂死（连接被掐后 write 等不到回包）
+    // SFTP 元数据操作仍是请求-响应式；文件传输在下方用有限深度流水线。
+    // 30s 无响应视为断链/异常，限时失败才能被 UI 捕获，避免连接中断后永久等待。
     private val ssh = SshSessionSshj(connection, callbacks, readTimeoutMs = 30_000L)
     private var client: SFTPClient? = null
 
@@ -81,28 +84,34 @@ class SftpSessionSshj(
         nextChunk: () -> ByteArray?,
     ) {
         val c = clientOrThrow()
-        // 新建/截断写入（权限走服务器默认 umask，与远端 shell 重定向一致）；
-        // 分块推流：内存峰值 = 单块大小，与 download 对称
+        // RemoteFileOutputStream 维护未确认写请求队列：高延迟网络下不再每 64KB
+        // 等待一次服务端响应。队列深度 16 时在途数据约 1MB，兼顾吞吐和内存。
         val remote = c.open(remotePath, setOf(OpenMode.CREAT, OpenMode.WRITE, OpenMode.TRUNC))
+        val output = remote.RemoteFileOutputStream(0L, PIPELINE_DEPTH)
         try {
-            val buf = ByteArray(64 * 1024)
             var sent = 0L
             while (true) {
                 // 防御：声明了 totalSize 的源不得超发（无限 nextChunk 会把远端磁盘灌爆/连接永不停）
                 if (totalSize > 0 && sent >= totalSize) break
                 val chunk = nextChunk() ?: break
+                require(chunk.isNotEmpty()) { "File source returned an empty chunk" }
                 var off = 0
                 while (off < chunk.size) {
-                    val n = minOf(buf.size, chunk.size - off)
-                    chunk.copyInto(buf, 0, off, off + n)
-                    remote.write(sent, buf, 0, n)
+                    val remaining = if (totalSize > 0) totalSize - sent else Long.MAX_VALUE
+                    if (remaining <= 0) break
+                    val n = minOf(TRANSFER_BUFFER_SIZE.toLong(), (chunk.size - off).toLong(), remaining).toInt()
+                    output.write(chunk, off, n)
                     off += n
                     sent += n
                     onProgress(sent, totalSize)
                 }
             }
         } finally {
-            remote.close()
+            try {
+                output.close()
+            } finally {
+                remote.close()
+            }
         }
     }
 
@@ -115,10 +124,17 @@ class SftpSessionSshj(
         val remote = c.open(remotePath)
         try {
             val total = remote.length()
-            val buf = ByteArray(64 * 1024)
+            if (total == 0L) {
+                onProgress(0L, 0L)
+                return
+            }
+            // 同时预取多块，隐藏 SFTP 请求往返延迟；total 作为上限，避免越过 EOF
+            // 发出无用请求。
+            val input = remote.ReadAheadRemoteFileInputStream(PIPELINE_DEPTH, 0L, total)
+            val buf = ByteArray(TRANSFER_BUFFER_SIZE)
             var offset = 0L
             while (true) {
-                val n = remote.read(offset, buf, 0, buf.size)
+                val n = input.read(buf, 0, buf.size)
                 if (n <= 0) break
                 onChunk(buf.copyOf(n))
                 offset += n

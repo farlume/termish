@@ -514,6 +514,8 @@ private fun TerminalBody(
                 val dir = uploadDir
                 if (dir.isNotBlank()) {
                     uploader.enqueue(file, dir)
+                } else {
+                    file.close()
                 }
             },
         )

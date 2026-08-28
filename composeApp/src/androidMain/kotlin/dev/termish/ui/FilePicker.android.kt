@@ -24,16 +24,22 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit {
                 if (stream != null) {
                     val size = querySize(context, uri)
                     onPicked(
-                        PickedFile(name, size) {
-                            val buf = ByteArray(CHUNK)
-                            val n = stream.read(buf)
-                            if (n < 0) {
-                                stream.close()
-                                null
-                            } else {
-                                buf.copyOf(n)
-                            }
-                        },
+                        PickedFile(
+                            sourceId = uri.toString(),
+                            name = name,
+                            size = size,
+                            readChunk = {
+                                val buf = ByteArray(CHUNK)
+                                val n = stream.read(buf)
+                                if (n < 0) {
+                                    stream.close()
+                                    null
+                                } else {
+                                    buf.copyOf(n)
+                                }
+                            },
+                            close = { runCatching { stream.close() } },
+                        ),
                     )
                 }
             }
