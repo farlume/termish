@@ -8,7 +8,7 @@ import unittest
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "termish_agent"
 sys.path.insert(0, str(SOURCE))
 
-from protocol import ProtocolError, decode_line, encode_line
+from protocol import MAX_LINE_BYTES, ProtocolError, decode_line, encode_line
 
 
 class ProtocolTest(unittest.TestCase):
@@ -23,6 +23,12 @@ class ProtocolTest(unittest.TestCase):
     def test_rejects_invalid_json(self) -> None:
         with self.assertRaises(ProtocolError):
             decode_line(b"{bad}\n")
+
+    def test_rejects_oversized_input_and_output(self) -> None:
+        with self.assertRaisesRegex(ProtocolError, "request too large"):
+            decode_line(b"x" * (MAX_LINE_BYTES + 1))
+        with self.assertRaisesRegex(ProtocolError, "response too large"):
+            encode_line({"value": "x" * MAX_LINE_BYTES})
 
 
 if __name__ == "__main__":

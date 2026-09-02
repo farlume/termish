@@ -18,16 +18,12 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit {
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris: List<Uri> ->
             uris.forEach { uri ->
                 val name = queryName(context, uri) ?: "file"
+
                 // ContentResolver 流式读：选择器回调只包流，readChunk 逐块拉取，
                 // 任意大小文件内存峰值 = 64KB（此前 readBytes() 全量驻堆，大文件 OOM）
-                val stream = context.contentResolver.openInputStream(uri)
-                if (stream != null) {
-                    val size = querySize(context, uri)
-                    onPicked(
-                        PickedFile(
-                            sourceId = uri.toString(),
-                            name = name,
-                            size = size,
+                fun openReader(): PickedFileReader? =
+                    context.contentResolver.openInputStream(uri)?.let { stream ->
+                        PickedFileReader(
                             readChunk = {
                                 val buf = ByteArray(CHUNK)
                                 val n = stream.read(buf)
@@ -39,6 +35,19 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit {
                                 }
                             },
                             close = { runCatching { stream.close() } },
+                        )
+                    }
+                val reader = openReader()
+                if (reader != null) {
+                    val size = querySize(context, uri)
+                    onPicked(
+                        PickedFile(
+                            sourceId = uri.toString(),
+                            name = name,
+                            size = size,
+                            readChunk = reader.readChunk,
+                            close = reader.close,
+                            openReader = ::openReader,
                         ),
                     )
                 }

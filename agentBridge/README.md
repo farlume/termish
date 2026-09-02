@@ -50,7 +50,7 @@ Protocol version 3 provides:
 
 - `system.hello`
 - `agents.list`, `agents.installPlan`, `agents.install`
-- `sessions.list`, `sessions.create`, `sessions.get`, `sessions.rename`,
+- `sessions.list`, `sessions.create`, `sessions.get` (bounded history pages), `sessions.rename`,
   `sessions.delete`, `sessions.nativeList`, `sessions.nativeImport`
 - `prompt.send` (including uploaded attachment references), `prompt.abort`
 - turn-scoped normalized events for text/thinking deltas, tool start/end,
@@ -64,7 +64,9 @@ their original files remain untouched and their native resume IDs continue the
 underlying Agent context.
 Attachments are uploaded by Termish over SFTP into the selected workspace's
 private `.termish/attachments/` directory; the Bridge persists their metadata
-and adds relative paths to the Agent prompt.
+and adds validated relative paths to the Agent prompt. Upload batches use unique
+names, recorded files are removed with their session, and expired unreferenced
+files are reclaimed on Bridge startup.
 
 Provider selection carries a local configuration ID separately from its adapter
 type. API keys are supplied only for the active prompt and are never persisted

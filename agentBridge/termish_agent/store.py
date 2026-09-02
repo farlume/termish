@@ -28,6 +28,10 @@ from native_history import NativeSession, find_native_session, list_native_sessi
 
 Broadcast = Callable[[Dict[str, Any]], Awaitable[None]]
 EVENT_JOURNAL_LIMIT = 2048
+DEFAULT_MESSAGE_PAGE_SIZE = 120
+MAX_MESSAGE_PAGE_SIZE = 300
+ATTACHMENT_DIRECTORY = ".termish/attachments"
+ATTACHMENT_TTL_SECONDS = 30 * 24 * 60 * 60
 _SENSITIVE_ASSIGNMENT = re.compile(
     r'(?i)(["\']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|authorization|password|secret)'
     r'["\']?\s*[:=]\s*["\']?)([^"\'\s,;}]+)'
@@ -240,6 +244,7 @@ class SessionStore:
         self.installing: set[str] = set()
         self.event_epoch = uuid.uuid4().hex[:12]
         self._restore()
+        self._cleanup_stale_attachments()
 
     def _restore(self) -> None:
         for row in self.db.execute("SELECT * FROM sessions ORDER BY created_at DESC"):
@@ -480,9 +485,25 @@ class SessionStore:
         self.db.commit()
         return self.session_info(session)
 
-    def messages(self, session_id: str) -> List[Dict[str, Any]]:
+    def messages_page(
+        self,
+        session_id: str,
+        before_seq: Optional[int] = None,
+        limit: int = DEFAULT_MESSAGE_PAGE_SIZE,
+        enforce_maximum: bool = True,
+    ) -> Dict[str, Any]:
         session = self.require(session_id)
-        rows = self.db.execute("SELECT seq,role,text,meta,ts FROM messages WHERE session_id=? ORDER BY seq", (session_id,))
+        page_size = max(1, min(int(limit), MAX_MESSAGE_PAGE_SIZE) if enforce_maximum else int(limit))
+        query = "SELECT seq,role,text,meta,ts FROM messages WHERE session_id=?"
+        values: List[Any] = [session_id]
+        if before_seq is not None:
+            query += " AND seq<?"
+            values.append(before_seq)
+        query += " ORDER BY seq DESC LIMIT ?"
+        values.append(page_size + 1)
+        rows = list(self.db.execute(query, values))
+        has_more = len(rows) > page_size
+        rows = list(reversed(rows[:page_size]))
         result = []
         for row in rows:
             item = {
@@ -490,15 +511,98 @@ class SessionStore:
                 "text": row["text"],
                 "ts": row["ts"],
                 "messageId": f'{session_id}:{row["seq"]}',
+                "messageSeq": row["seq"],
             }
             try:
                 item.update(json.loads(row["meta"]))
             except json.JSONDecodeError:
                 pass
             result.append(item)
-        if session.busy:
+        if before_seq is None and session.busy:
             result.extend(self._active_messages(session))
-        return result
+        return {
+            "messages": result,
+            "hasMoreMessages": has_more,
+            "oldestMessageSeq": rows[0]["seq"] if rows else None,
+        }
+
+    def messages(self, session_id: str) -> List[Dict[str, Any]]:
+        """Compatibility helper used by tests and older internal callers."""
+        session = self.require(session_id)
+        count = self.db.execute("SELECT COUNT(*) FROM messages WHERE session_id=?", (session.id,)).fetchone()[0]
+        return self.messages_page(session_id, limit=max(1, count), enforce_maximum=False)["messages"]
+
+    @staticmethod
+    def _safe_attachment_path(session: Session, relative_path: str) -> Optional[pathlib.Path]:
+        relative = pathlib.PurePosixPath(relative_path)
+        expected = pathlib.PurePosixPath(ATTACHMENT_DIRECTORY)
+        if relative.parent != expected or relative.name in {"", ".", ".."}:
+            return None
+        root = (pathlib.Path(session.cwd).expanduser() / ATTACHMENT_DIRECTORY).resolve()
+        candidate = (pathlib.Path(session.cwd).expanduser() / pathlib.Path(*relative.parts)).resolve()
+        if candidate.parent != root:
+            return None
+        return candidate
+
+    def _attachment_paths(self, session: Session) -> List[pathlib.Path]:
+        paths: List[pathlib.Path] = []
+        rows = self.db.execute("SELECT meta FROM messages WHERE session_id=?", (session.id,))
+        for row in rows:
+            try:
+                attachments = json.loads(row["meta"]).get("attachments", [])
+            except (AttributeError, json.JSONDecodeError):
+                continue
+            for attachment in attachments:
+                if not isinstance(attachment, dict):
+                    continue
+                path = self._safe_attachment_path(session, str(attachment.get("path", "")))
+                if path is not None and path not in paths:
+                    paths.append(path)
+        return paths
+
+    def _referenced_attachment_paths(self, excluding_session_id: Optional[str] = None) -> set[pathlib.Path]:
+        referenced: set[pathlib.Path] = set()
+        for candidate in self.sessions.values():
+            if candidate.id == excluding_session_id:
+                continue
+            referenced.update(self._attachment_paths(candidate))
+        return referenced
+
+    def _cleanup_stale_attachments(self) -> None:
+        referenced = self._referenced_attachment_paths()
+        roots = {
+            (pathlib.Path(session.cwd).expanduser() / ATTACHMENT_DIRECTORY).resolve()
+            for session in self.sessions.values()
+        }
+        cutoff = time.time() - ATTACHMENT_TTL_SECONDS
+        for root in roots:
+            try:
+                candidates = list(root.iterdir())
+            except OSError:
+                continue
+            for path in candidates:
+                try:
+                    if path not in referenced and not path.is_dir() and path.stat().st_mtime < cutoff:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _remove_session_attachments(self, session: Session) -> None:
+        referenced_elsewhere = self._referenced_attachment_paths(excluding_session_id=session.id)
+        roots: set[pathlib.Path] = set()
+        for path in self._attachment_paths(session):
+            roots.add(path.parent)
+            if path in referenced_elsewhere:
+                continue
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        for root in roots:
+            try:
+                root.rmdir()
+            except OSError:
+                pass
 
     def approvals(self, session_id: str) -> List[Dict[str, Any]]:
         session = self.require(session_id)
@@ -659,7 +763,7 @@ class SessionStore:
             for attachment in attachments:
                 path = str(attachment.get("path", "")).strip()
                 name = str(attachment.get("name", "")).strip()
-                if path and name and path not in seen_attachment_paths:
+                if self._safe_attachment_path(session, path) is not None and name and path not in seen_attachment_paths:
                     seen_attachment_paths.add(path)
                     safe_attachments.append({"name": name, "path": path, "size": int(attachment.get("size", 0))})
             self.add_message(
@@ -967,6 +1071,7 @@ class SessionStore:
         session = self.require(session_id)
         async with session.prompt_lock:
             await self.abort(session_id)
+            self._remove_session_attachments(session)
             self.sessions.pop(session_id, None)
             self.db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
             self.db.commit()
@@ -1026,9 +1131,15 @@ class SessionStore:
             )
         if method == "sessions.get":
             session = self.require(str(params.get("sessionId", "")))
+            before_seq = params.get("beforeSeq")
+            page = self.messages_page(
+                session.id,
+                int(before_seq) if before_seq is not None else None,
+                int(params.get("messageLimit", DEFAULT_MESSAGE_PAGE_SIZE)),
+            )
             return {
                 **self.session_info(session),
-                "messages": self.messages(session.id),
+                **page,
                 "approvals": self.approvals(session.id),
             }
         if method == "events.replay":

@@ -15,9 +15,12 @@ import dev.termish.ssh.createSftpSession
 import dev.termish.ssh.createSshSession
 import dev.termish.util.TermLog
 import dev.termish.util.ioDispatcher
+import kotlin.random.Random
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,57 +40,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
 private const val BRIDGE_PROTOCOL_VERSION = 3
-private const val MINIMUM_BRIDGE_VERSION = "0.7.8"
+private const val MINIMUM_BRIDGE_VERSION = "0.8.0"
 private const val REMOTE_BRIDGE = "\$HOME/.local/share/termish-agent/current/termish-agent.pyz"
-private const val REQUEST_TIMEOUT_MS = 20_000L
-
-internal data class AgentEventCursor(
-    val epoch: String,
-    val sequence: Long,
-)
-
-internal enum class AgentEventDecision { APPLY, DUPLICATE, GAP, RESET }
-
-internal fun classifyAgentEvent(
-    cursor: AgentEventCursor?,
-    epoch: String,
-    sequence: Long,
-): AgentEventDecision =
-    when {
-        epoch.isBlank() || sequence <= 0L -> AgentEventDecision.APPLY
-        cursor == null || cursor.epoch != epoch -> AgentEventDecision.RESET
-        sequence <= cursor.sequence -> AgentEventDecision.DUPLICATE
-        sequence != cursor.sequence + 1L -> AgentEventDecision.GAP
-        else -> AgentEventDecision.APPLY
-    }
-
-/** prompt.send 的响应交接闸门；同一 SSH reader 内保持事件原始到达顺序。 */
-internal class AgentPromptEventBuffer {
-    private val queues = mutableMapOf<String, MutableList<JsonObject>>()
-
-    fun begin(sessionId: String) {
-        queues.getOrPut(sessionId, ::mutableListOf)
-    }
-
-    fun enqueue(
-        sessionId: String?,
-        envelope: JsonObject,
-    ): Boolean {
-        val queue = sessionId?.let(queues::get) ?: return false
-        queue += envelope
-        return true
-    }
-
-    fun drain(sessionId: String): List<JsonObject> = queues.remove(sessionId).orEmpty()
-
-    fun discard(sessionId: String) {
-        queues.remove(sessionId)
-    }
-
-    fun clear() {
-        queues.clear()
-    }
-}
 
 /**
  * 主机级原生 Agent 控制器。
@@ -142,13 +96,21 @@ class AgentBridgeController(
         private set
     var reconnecting by mutableStateOf(false)
         private set
+    var hasOlderMessages by mutableStateOf(false)
+        private set
+    var loadingOlderMessages by mutableStateOf(false)
+        private set
+    var diagnostics by mutableStateOf(AgentDiagnostics())
+        private set
 
     private val json = Json { ignoreUnknownKeys = true }
     private var ssh: SshSession? = null
     private var channel: SshExecChannel? = null
     private var readerJob: Job? = null
     private var reconnectJob: Job? = null
-    private var readBuffer = ByteArray(0)
+    private var streamFlushJob: Job? = null
+    private val decoder = AgentNdjsonDecoder()
+    private val streamBatcher = AgentStreamBatcher()
     private var nextRequestId = 1
     private val pending = mutableMapOf<Int, CompletableDeferred<JsonObject>>()
     private val eventCursors = mutableMapOf<String, AgentEventCursor>()
@@ -163,6 +125,7 @@ class AgentBridgeController(
     private var loadingSessionId: String? = null
     private var sessionLoadToken = 0
     private val sessionLoadEvents = mutableListOf<JsonObject>()
+    private var oldestMessageSeq: Long? = null
 
     fun connect() {
         if (state == AgentBridgeState.CONNECTING || state == AgentBridgeState.INSTALLING) return
@@ -228,12 +191,13 @@ class AgentBridgeController(
 
     fun selectSession(id: String) {
         activeLocalTurnId = null
+        flushStreamDeltas()
         val loadToken = ++sessionLoadToken
         loadingSessionId = id
         sessionLoadEvents.clear()
         scope.launch {
             try {
-                val result = request("sessions.get", buildJsonObject { put("sessionId", id) })
+                val result = requestSessionPage(id)
                 if (loadToken != sessionLoadToken) return@launch
                 applySessionSnapshot(result)
                 val queued = sessionLoadEvents.toList()
@@ -247,6 +211,34 @@ class AgentBridgeController(
                     loadingSessionId = null
                     sessionLoadEvents.clear()
                 }
+            }
+        }
+    }
+
+    fun loadOlderMessages() {
+        val session = currentSession ?: return
+        val before = oldestMessageSeq ?: return
+        if (!hasOlderMessages || loadingOlderMessages) return
+        loadingOlderMessages = true
+        scope.launch {
+            try {
+                val result = requestSessionPage(session.id, before)
+                if (currentSession?.id != session.id) return@launch
+                val knownIds =
+                    messages
+                        .asSequence()
+                        .map { it.id }
+                        .filter { it.isNotBlank() }
+                        .toSet()
+                val older = result.array("messages").mapNotNull(::parseMessage).filterNot { it.id in knownIds }
+                messages = older + messages
+                hasOlderMessages = result.boolean("hasMoreMessages")
+                oldestMessageSeq = result.longOrNull("oldestMessageSeq") ?: oldestMessageSeq
+                updateMessageDiagnostics()
+            } catch (e: Exception) {
+                errorMessage = e.message
+            } finally {
+                loadingOlderMessages = false
             }
         }
     }
@@ -322,7 +314,7 @@ class AgentBridgeController(
                 accepted = true
                 val turnId = result.string("turnId")
                 onAccepted()
-                val selected = request("sessions.get", buildJsonObject { put("sessionId", sessionId) })
+                val selected = requestSessionPage(sessionId)
                 applySessionSnapshot(selected)
                 activeLocalTurnId = turnId.takeIf { selected.boolean("busy") }
                 drainPromptEventBuffer(sessionId)
@@ -575,11 +567,7 @@ class AgentBridgeController(
                         },
                     )
                 refreshSessions()
-                val selected =
-                    request(
-                        "sessions.get",
-                        buildJsonObject { put("sessionId", imported.string("sessionId")) },
-                    )
+                val selected = requestSessionPage(imported.string("sessionId"))
                 applySessionSnapshot(selected)
                 nativeSessions =
                     nativeSessions.map {
@@ -655,6 +643,7 @@ class AgentBridgeController(
         }.getOrNull()
 
     fun newChat() {
+        flushStreamDeltas()
         sessionLoadToken += 1
         loadingSessionId = null
         sessionLoadEvents.clear()
@@ -663,6 +652,10 @@ class AgentBridgeController(
         pendingApprovals = emptyList()
         busy = false
         activeLocalTurnId = null
+        hasOlderMessages = false
+        loadingOlderMessages = false
+        oldestMessageSeq = null
+        updateMessageDiagnostics()
     }
 
     /**
@@ -699,6 +692,9 @@ class AgentBridgeController(
         reconnectJob?.cancel()
         reconnectJob = null
         reconnecting = false
+        streamFlushJob?.cancel()
+        streamFlushJob = null
+        streamBatcher.clear()
         activeLocalTurnId = null
         sessionLoadToken += 1
         loadingSessionId = null
@@ -812,7 +808,7 @@ class AgentBridgeController(
                 ensureSsh().startExecRaw("python3 \"$REMOTE_BRIDGE\" connect")
             } ?: throw IllegalStateException("Unable to open Agent Bridge channel")
         channel = opened
-        readBuffer = ByteArray(0)
+        decoder.reset()
         readerJob =
             scope.launch {
                 try {
@@ -836,10 +832,15 @@ class AgentBridgeController(
                 put("protocolMax", BRIDGE_PROTOCOL_VERSION)
             },
         )
-        refreshAgents()
-        refreshSessions()
+        coroutineScope {
+            val agentsRefresh = async { refreshAgents() }
+            val sessionsRefresh = async { refreshSessions() }
+            agentsRefresh.await()
+            sessionsRefresh.await()
+        }
         state = AgentBridgeState.READY
         reconnecting = false
+        diagnostics = diagnostics.copy(reconnectAttempt = 0)
     }
 
     private fun scheduleReconnect(reason: String) {
@@ -856,9 +857,13 @@ class AgentBridgeController(
         ssh = null
         reconnectJob =
             scope.launch {
-                var lastError: Exception = IllegalStateException(reason)
-                repeat(3) { attempt ->
-                    delay((attempt + 1) * 1_000L)
+                var attempt = 0
+                while (state == AgentBridgeState.READY && channel == null) {
+                    diagnostics = diagnostics.copy(reconnectAttempt = attempt + 1)
+                    val base = (1_000L shl attempt.coerceIn(0, 5)).coerceAtMost(30_000L)
+                    val retryDelay = agentReconnectDelayMillis(attempt, Random.nextLong(0L, base / 4 + 1))
+                    TermLog.i("agent") { "bridge reconnect attempt=${attempt + 1} delayMs=$retryDelay" }
+                    delay(retryDelay)
                     try {
                         ensureSsh()
                         val probe = probeBridge()
@@ -867,25 +872,35 @@ class AgentBridgeController(
                             probe.protocol != BRIDGE_PROTOCOL_VERSION ||
                             versionIsOlder(probe.version, MINIMUM_BRIDGE_VERSION)
                         ) {
-                            throw IllegalStateException("Agent Bridge update required")
+                            state = AgentBridgeState.NEEDS_INSTALL
+                            reconnecting = false
+                            reconnectJob = null
+                            return@launch
                         }
                         bridgeVersion = probe.version
                         openProtocol()
                         selectedSessionId?.let { recoverSessionEvents(it) }
                         errorMessage = null
+                        diagnostics =
+                            diagnostics.copy(
+                                reconnectAttempt = 0,
+                                reconnectCount = diagnostics.reconnectCount + 1,
+                            )
+                        TermLog.i("agent") { "bridge reconnected attempt=${attempt + 1}" }
                         reconnectJob = null
                         return@launch
                     } catch (e: Exception) {
-                        lastError = e
+                        TermLog.w("agent") { "bridge reconnect failed attempt=${attempt + 1}: ${e.message}" }
+                        errorMessage = e.message ?: reason
                         channel?.close()
                         channel = null
                         ssh?.close()
                         ssh = null
                     }
+                    attempt += 1
                 }
                 reconnectJob = null
                 reconnecting = false
-                fail(lastError)
             }
     }
 
@@ -909,11 +924,15 @@ class AgentBridgeController(
     }
 
     private fun applySessionSnapshot(result: JsonObject) {
+        flushStreamDeltas()
         val session = parseSession(result)
         currentSession = session
         busy = result.boolean("busy")
         messages = result.array("messages").mapNotNull(::parseMessage)
         pendingApprovals = result.array("approvals").mapNotNull(::parseApproval)
+        hasOlderMessages = result.boolean("hasMoreMessages")
+        oldestMessageSeq = result.longOrNull("oldestMessageSeq")
+        updateMessageDiagnostics()
         val epoch = result.stringOrNull("eventEpoch").orEmpty()
         val sequence = result.long("eventCursor")
         if (epoch.isBlank()) {
@@ -976,9 +995,24 @@ class AgentBridgeController(
     }
 
     private suspend fun reloadSessionSnapshot(sessionId: String) {
-        val result = request("sessions.get", buildJsonObject { put("sessionId", sessionId) })
+        val loadedLimit = maxOf(AGENT_MESSAGE_PAGE_SIZE, messages.count { !it.running })
+        val result = requestSessionPage(sessionId, limit = loadedLimit)
         if (sessionId == currentSession?.id) applySessionSnapshot(result)
     }
+
+    private suspend fun requestSessionPage(
+        sessionId: String,
+        beforeSeq: Long? = null,
+        limit: Int = AGENT_MESSAGE_PAGE_SIZE,
+    ): JsonObject =
+        request(
+            "sessions.get",
+            buildJsonObject {
+                put("sessionId", sessionId)
+                put("messageLimit", limit.coerceAtMost(300))
+                if (beforeSeq != null) put("beforeSeq", beforeSeq)
+            },
+        )
 
     private fun beginPromptEventBuffer(sessionId: String) {
         promptEventBuffer.begin(sessionId)
@@ -1007,22 +1041,23 @@ class AgentBridgeController(
                 put("params", params)
             }
         active.write((request.toString() + "\n").encodeToByteArray())
+        val startedAt = Clock.System.now().toEpochMilliseconds()
         return try {
-            withTimeout(REQUEST_TIMEOUT_MS) { deferred.await() }
+            withTimeout(agentRequestTimeoutMillis(method)) { deferred.await() }
         } finally {
             pending.remove(id)
+            val latency = Clock.System.now().toEpochMilliseconds() - startedAt
+            diagnostics =
+                diagnostics.copy(
+                    lastRequestLatencyMs = latency,
+                    lastRequestMethod = method,
+                )
+            TermLog.d("agent") { "bridge request method=$method latencyMs=$latency" }
         }
     }
 
     private fun consume(chunk: ByteArray) {
-        readBuffer += chunk
-        while (true) {
-            val newline = readBuffer.indexOf(0x0A)
-            if (newline < 0) return
-            val line = readBuffer.copyOfRange(0, newline).decodeToString().trimEnd('\r')
-            readBuffer = readBuffer.copyOfRange(newline + 1, readBuffer.size)
-            if (line.isNotBlank()) handleLine(line)
-        }
+        decoder.append(chunk).forEach(::handleLine)
     }
 
     private fun handleLine(line: String) {
@@ -1094,6 +1129,7 @@ class AgentBridgeController(
         val sessionId = envelope.stringOrNull("sessionId")
         val type = event.stringOrNull("type") ?: return
         if (sessionId != null && sessionId != currentSession?.id) return
+        if (type != "delta" && type != "thinking_delta") flushStreamDeltas()
         when (type) {
             "delta" -> appendStream("assistant", event.string("text"), event)
             // Do not render a card until the agent provides actual reasoning text.
@@ -1137,7 +1173,7 @@ class AgentBridgeController(
                 scope.launch { refreshSessions() }
             }
             "install_output" -> {
-                installLog += event.string("text")
+                installLog = appendCappedText(installLog, event.string("text"), AGENT_INSTALL_LOG_LIMIT)
                 installStatus =
                     AgentInstallStatus(
                         event.stringOrNull("agent"),
@@ -1153,10 +1189,16 @@ class AgentBridgeController(
             "install_error" -> {
                 val message = event.string("message")
                 errorMessage = message
-                installLog += if (installLog.isBlank()) message else "\n$message"
+                installLog =
+                    appendCappedText(
+                        installLog,
+                        if (installLog.isBlank()) message else "\n$message",
+                        AGENT_INSTALL_LOG_LIMIT,
+                    )
                 installStatus = AgentInstallStatus(event.stringOrNull("agent"), AgentInstallPhase.FAILED, message)
             }
         }
+        updateMessageDiagnostics()
     }
 
     private fun appendStream(
@@ -1165,25 +1207,54 @@ class AgentBridgeController(
         event: JsonObject,
     ) {
         if (text.isEmpty()) return
-        val activityId = event.stringOrNull("activityId")
-        val index = messages.indexOfLast { it.role == role && it.running && it.activityId == activityId }
-        messages =
-            if (index >= 0) {
-                messages.toMutableList().also { items ->
-                    items[index] = items[index].copy(text = items[index].text + text)
+        streamBatcher.append(
+            role = role,
+            activityId = event.stringOrNull("activityId"),
+            turnId = event.string("turnId"),
+            createdAt = event.long("ts"),
+            text = text,
+        )
+        if (streamFlushJob?.isActive != true) {
+            streamFlushJob =
+                scope.launch {
+                    delay(AGENT_STREAM_FLUSH_INTERVAL_MS)
+                    flushStreamDeltas()
                 }
+        }
+    }
+
+    private fun flushStreamDeltas() {
+        streamFlushJob?.cancel()
+        streamFlushJob = null
+        val deltas = streamBatcher.drain()
+        if (deltas.isEmpty()) return
+        val items = messages.toMutableList()
+        val indexes = mutableMapOf<Pair<String, String?>, Int>()
+        items.forEachIndexed { index, message ->
+            if (message.running) indexes[message.role to message.activityId] = index
+        }
+        deltas.forEach { delta ->
+            val key = delta.role to delta.activityId
+            val index = indexes[key]
+            if (index != null) {
+                val previous = items[index]
+                items[index] = previous.copy(text = previous.text + delta.text)
             } else {
-                messages +
+                indexes[key] = items.size
+                items +=
                     AgentChatMessage(
-                        role = role,
-                        text = text,
-                        id = activityId.orEmpty(),
-                        turnId = event.string("turnId"),
-                        activityId = activityId,
+                        role = delta.role,
+                        text = delta.text,
+                        id = delta.activityId.orEmpty(),
+                        turnId = delta.turnId,
+                        activityId = delta.activityId,
                         running = true,
-                        createdAt = event.long("ts"),
+                        createdAt = delta.createdAt,
                     )
             }
+        }
+        messages = items
+        updateMessageDiagnostics()
     }
 
     private fun replaceOrAppend(
@@ -1362,12 +1433,7 @@ class AgentBridgeController(
         val seenSourceIds = mutableSetOf<String>()
         val uniqueAttachments =
             attachments.filter { attachment ->
-                if (seenSourceIds.add(attachment.sourceId)) {
-                    true
-                } else {
-                    attachment.close()
-                    false
-                }
+                seenSourceIds.add(attachment.sourceId)
             }
         val relativeDirectory = ".termish/attachments"
         val remoteDirectory = joinRemotePath(session.cwd, relativeDirectory)
@@ -1379,12 +1445,19 @@ class AgentBridgeController(
             throw IllegalStateException(mkdir?.stderr ?: "Unable to create attachment directory")
         }
         val sftp = withContext(ioDispatcher()) { createSftpSession(connection(), callbacks) }
+        val uploadId =
+            Clock.System
+                .now()
+                .toEpochMilliseconds()
+                .toString(36) +
+                Random.nextInt().toUInt().toString(36)
         return try {
             uniqueAttachments.mapIndexed { index, pending ->
                 val safeName = sanitizeFileName(pending.name)
-                val storedName = "${session.id.take(8)}-${index + 1}-$safeName"
+                val storedName = attachmentStoredName(session.id, uploadId, index, safeName)
                 val relativePath = "$relativeDirectory/$storedName"
                 attachmentProgress = "${index + 1} / ${uniqueAttachments.size} · ${pending.name}"
+                val reader = pending.openReader?.invoke()
                 try {
                     withContext(ioDispatcher()) {
                         sftp.upload(
@@ -1394,11 +1467,11 @@ class AgentBridgeController(
                                 val percent = if (total > 0) (sent * 100 / total).toInt() else 0
                                 attachmentProgress = "${index + 1} / ${uniqueAttachments.size} · $percent%"
                             },
-                            nextChunk = pending.readChunk,
+                            nextChunk = reader?.readChunk ?: pending.readChunk,
                         )
                     }
                 } finally {
-                    pending.close()
+                    reader?.close?.invoke()
                 }
                 AgentAttachment(pending.name, relativePath, pending.size)
             }
@@ -1409,6 +1482,7 @@ class AgentBridgeController(
     }
 
     private fun fail(error: Exception) {
+        flushStreamDeltas()
         TermLog.e("agent") { "bridge ${host.name}: ${error.message}" }
         errorMessage = error.message ?: "Agent Bridge failed"
         reconnecting = false
@@ -1419,6 +1493,14 @@ class AgentBridgeController(
     private fun failPending(error: Exception) {
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()
+    }
+
+    private fun updateMessageDiagnostics() {
+        diagnostics =
+            diagnostics.copy(
+                loadedMessageCount = messages.size,
+                totalMessageCount = currentSession?.messageCount ?: 0,
+            )
     }
 }
 
@@ -1461,6 +1543,8 @@ private fun JsonObject.boolean(name: String): Boolean = this[name]?.jsonPrimitiv
 private fun JsonObject.int(name: String): Int = this[name]?.jsonPrimitive?.intOrNull ?: 0
 
 private fun JsonObject.long(name: String): Long = this[name]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L
+
+private fun JsonObject.longOrNull(name: String): Long? = this[name]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
 
 private fun JsonObject.array(name: String): JsonArray = (this[name] as? JsonArray) ?: JsonArray(emptyList())
 

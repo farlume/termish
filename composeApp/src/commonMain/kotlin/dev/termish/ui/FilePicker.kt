@@ -11,6 +11,13 @@ data class PickedFile(
     val readChunk: () -> ByteArray?,
     /** 未读到 EOF（取消、移除、失败）时主动释放底层文件句柄。允许重复调用。 */
     val close: () -> Unit,
+    /** 为可重试上传重新打开一个独立 reader；旧平台实现为空时退回一次性 reader。 */
+    val openReader: (() -> PickedFileReader?)? = null,
+)
+
+data class PickedFileReader(
+    val readChunk: () -> ByteArray?,
+    val close: () -> Unit,
 )
 
 /** 追加附件并按平台文件标识去重；被拒绝的新句柄立即释放。 */

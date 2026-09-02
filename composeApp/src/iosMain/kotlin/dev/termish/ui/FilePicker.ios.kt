@@ -87,20 +87,18 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit =
                                     val st = alloc<stat>()
                                     if (stat(dst, st.ptr) == 0) size = st.st_size
                                 }
-                                val fd = open(dst, O_RDONLY)
-                                if (fd < 0) return@coordinateReadingItemAtURL
-                                var fileOpen = true
-                                val closeFile = {
-                                    if (fileOpen) {
-                                        fileOpen = false
-                                        close(fd)
+
+                                fun openReader(): PickedFileReader? {
+                                    val fd = open(dst, O_RDONLY)
+                                    if (fd < 0) return null
+                                    var fileOpen = true
+                                    val closeFile = {
+                                        if (fileOpen) {
+                                            fileOpen = false
+                                            close(fd)
+                                        }
                                     }
-                                }
-                                onPicked(
-                                    PickedFile(
-                                        sourceId = url.absoluteString ?: url.path.orEmpty(),
-                                        name = name,
-                                        size = size,
+                                    return PickedFileReader(
                                         readChunk = {
                                             val buf = ByteArray(CHUNK)
                                             val n =
@@ -119,6 +117,17 @@ actual fun rememberFilePicker(onPicked: (PickedFile) -> Unit): () -> Unit =
                                             }
                                         },
                                         close = closeFile,
+                                    )
+                                }
+                                val reader = openReader() ?: return@coordinateReadingItemAtURL
+                                onPicked(
+                                    PickedFile(
+                                        sourceId = url.absoluteString ?: url.path.orEmpty(),
+                                        name = name,
+                                        size = size,
+                                        readChunk = reader.readChunk,
+                                        close = reader.close,
+                                        openReader = ::openReader,
                                     ),
                                 )
                             }

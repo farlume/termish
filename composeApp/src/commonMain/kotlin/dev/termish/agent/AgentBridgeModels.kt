@@ -91,6 +91,12 @@ data class AgentPendingAttachment(
     val size: Long,
     val readChunk: () -> ByteArray?,
     val close: () -> Unit,
+    val openReader: (() -> AgentAttachmentReader?)? = null,
+)
+
+data class AgentAttachmentReader(
+    val readChunk: () -> ByteArray?,
+    val close: () -> Unit,
 )
 
 data class AgentChatMessage(
@@ -108,6 +114,15 @@ data class AgentChatMessage(
     val completedAt: Long? = null,
     val attachments: List<AgentAttachment> = emptyList(),
     val artifacts: List<AgentArtifact> = emptyList(),
+)
+
+data class AgentDiagnostics(
+    val reconnectAttempt: Int = 0,
+    val reconnectCount: Int = 0,
+    val lastRequestLatencyMs: Long? = null,
+    val lastRequestMethod: String? = null,
+    val loadedMessageCount: Int = 0,
+    val totalMessageCount: Int = 0,
 )
 
 enum class AgentInstallPhase {

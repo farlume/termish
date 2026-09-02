@@ -62,7 +62,6 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Menu
@@ -124,16 +123,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -154,6 +148,7 @@ import com.mikepenz.markdown.model.rememberMarkdownState
 import dev.termish.agent.AgentApprovalRequest
 import dev.termish.agent.AgentArtifact
 import dev.termish.agent.AgentAttachment
+import dev.termish.agent.AgentAttachmentReader
 import dev.termish.agent.AgentBridgeAgent
 import dev.termish.agent.AgentBridgeController
 import dev.termish.agent.AgentBridgeSessionInfo
@@ -198,7 +193,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -1141,6 +1135,11 @@ private fun AgentFloatingChrome(
             if (controller.reconnecting) {
                 CircularProgressIndicator(Modifier.size(Sizes.IconSmall), strokeWidth = Sizes.BorderThin)
                 Spacer(Modifier.size(Spacing.Sm))
+                Text(
+                    strings.reconnectingAttempt(controller.diagnostics.reconnectAttempt.coerceAtLeast(1)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             // 终端「+」工具菜单（右上角 ⋮）：Bridge 就绪即显示（不依赖当前会话），
             // 会话改名/删除已收进抽屉的会话 ⋮（原右上角入口移除）
@@ -1771,6 +1770,16 @@ private fun AgentSettings(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Text(
+                                strings.agentDiagnostics(
+                                    controller.diagnostics.loadedMessageCount,
+                                    controller.diagnostics.totalMessageCount,
+                                    controller.diagnostics.lastRequestLatencyMs ?: 0L,
+                                    controller.diagnostics.reconnectCount,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                     OutlinedButton(onUpdateBridge, Modifier.fillMaxWidth()) { Text(strings.updateService) }
@@ -2316,7 +2325,6 @@ private fun AgentChat(
     var attachments by remember(controller.currentSession?.id) { mutableStateOf<List<PickedFile>>(emptyList()) }
     val pickFiles = rememberFilePicker { attachments = appendUniquePickedFile(attachments, it) }
     val strings = LocalAppStrings.current.nativeAgents
-    val scope = rememberCoroutineScope()
     val modelOptions = providerConfig?.models.orEmpty()
     var slashDialog by remember(controller.currentSession?.id) { mutableStateOf<AgentSlashDialog?>(null) }
     var slashError by remember(controller.currentSession?.id) { mutableStateOf("") }
@@ -2335,99 +2343,28 @@ private fun AgentChat(
             }
         }
     }
-    val listState =
-        androidx.compose.foundation.lazy
-            .rememberLazyListState()
     val turns = remember(controller.messages, controller.busy) { buildAgentTurns(controller.messages, controller.busy) }
     var followOutput by remember(controller.currentSession?.id) { mutableStateOf(true) }
-    val atBottom by
-        remember {
-            androidx.compose.runtime.derivedStateOf {
-                !listState.canScrollForward
-            }
-        }
-    val userScrollConnection =
-        remember(listState) {
-            object : NestedScrollConnection {
-                override fun onPreScroll(
-                    available: Offset,
-                    source: NestedScrollSource,
-                ): Offset {
-                    if (source == NestedScrollSource.UserInput) followOutput = false
-                    return Offset.Zero
-                }
-            }
-        }
-    // 手指松开后 fling 仍属于滚动过程。必须等惯性完全结束且列表确实位于底部，
-    // 才恢复自动追尾；否则从底部快速上滑时会在首帧误判并被拉回最新消息。
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
-            .collectLatest { (isScrollInProgress, canScrollForward) ->
-                if (shouldResumeAgentOutputFollow(isScrollInProgress, canScrollForward)) {
-                    followOutput = true
-                }
-            }
-    }
-    // 消息内容（包括流式 delta）变化也要触发追尾；只监听 turns.size 会漏掉
-    // 同一条消息增长，因此生成长回答时滚动位置会停在旧高度。
-    LaunchedEffect(turns, followOutput) {
-        if (turns.isNotEmpty() && followOutput) {
-            listState.scrollToItem(turns.lastIndex, scrollOffset = 1_000_000)
-        }
-    }
-    LaunchedEffect(listState, turns.size, followOutput) {
-        if (!followOutput) return@LaunchedEffect
-        snapshotFlow {
-            val layout = listState.layoutInfo
-            val last = layout.visibleItemsInfo.lastOrNull()
-            Triple(layout.totalItemsCount, last?.index, last?.size)
-        }.collectLatest {
-            if (turns.isNotEmpty()) listState.scrollToItem(turns.lastIndex, scrollOffset = 1_000_000)
-        }
-    }
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().nestedScroll(userScrollConnection),
-                contentPadding = PaddingValues(horizontal = Spacing.Lg, vertical = Spacing.Md),
-                verticalArrangement = Arrangement.spacedBy(Spacing.Xl),
-            ) {
-                if (turns.isEmpty()) {
-                    item {
-                        Text(
-                            strings.welcomeTitle,
-                            Modifier.fillMaxWidth().padding(vertical = Spacing.Xxl),
-                            style = MaterialTheme.typography.titleLarge,
-                        )
-                    }
-                }
-                items(turns, key = { it.id }) { turn ->
-                    val sessionAgent = controller.currentSession?.agent.orEmpty()
-                    AgentTurn(
-                        turn,
-                        preferences.showThinking,
-                        sessionAgent,
-                        controller.agents.firstOrNull { it.id == sessionAgent }?.label ?: strings.assistantLabel,
-                        animateAssistant = shouldAnimateAgentTurn(turn.id, controller.activeLocalTurnId),
-                        onActivityExpand = { followOutput = false },
-                        onOpenArtifact = onOpenArtifact,
-                    )
-                }
-            }
-            if (!atBottom && turns.isNotEmpty()) {
-                FilledTonalIconButton(
-                    onClick = {
-                        followOutput = true
-                        scope.launch {
-                            listState.scrollToItem(turns.lastIndex, scrollOffset = 1_000_000)
-                        }
-                    },
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(Spacing.Md),
-                ) {
-                    Icon(Icons.Default.KeyboardArrowDown, strings.jumpToLatest)
-                }
-            }
+        AgentChatTimeline(
+            turns = turns,
+            followOutput = followOutput,
+            hasOlderMessages = controller.hasOlderMessages,
+            loadingOlderMessages = controller.loadingOlderMessages,
+            onFollowOutputChange = { followOutput = it },
+            onLoadOlderMessages = controller::loadOlderMessages,
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+        ) { turn, onActivityExpand ->
+            val sessionAgent = controller.currentSession?.agent.orEmpty()
+            AgentTurn(
+                turn,
+                preferences.showThinking,
+                sessionAgent,
+                controller.agents.firstOrNull { it.id == sessionAgent }?.label ?: strings.assistantLabel,
+                animateAssistant = shouldAnimateAgentTurn(turn.id, controller.activeLocalTurnId),
+                onActivityExpand = onActivityExpand,
+                onOpenArtifact = onOpenArtifact,
+            )
         }
         AgentComposer(
             input,
@@ -3636,7 +3573,19 @@ private fun SessionActionsSheet(
     }
 }
 
-private fun PickedFile.toAgentAttachment(): AgentPendingAttachment = AgentPendingAttachment(sourceId, name, size, readChunk, close)
+private fun PickedFile.toAgentAttachment(): AgentPendingAttachment =
+    AgentPendingAttachment(
+        sourceId = sourceId,
+        name = name,
+        size = size,
+        readChunk = readChunk,
+        close = close,
+        openReader = {
+            openReader?.invoke()?.let { reader ->
+                AgentAttachmentReader(reader.readChunk, reader.close)
+            }
+        },
+    )
 
 private fun parentRemotePath(path: String): String {
     val normalized = path.trimEnd('/')

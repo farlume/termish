@@ -4,7 +4,10 @@ import json
 from typing import Any, Dict
 
 
-MAX_LINE_BYTES = 1024 * 1024
+# Requests are normally tiny, but a paged history response can contain large tool
+# results. Keep one explicit shared ceiling so a malformed peer cannot grow a
+# StreamReader indefinitely while legitimate history pages still fit.
+MAX_LINE_BYTES = 8 * 1024 * 1024
 
 
 class ProtocolError(Exception):
@@ -24,7 +27,10 @@ def decode_line(raw: bytes) -> Dict[str, Any]:
 
 
 def encode_line(value: Dict[str, Any]) -> bytes:
-    return (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    encoded = (json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    if len(encoded) > MAX_LINE_BYTES:
+        raise ProtocolError("response too large")
+    return encoded
 
 
 def response(request_id: Any, result: Any) -> Dict[str, Any]:

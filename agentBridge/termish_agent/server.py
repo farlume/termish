@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional, Set
 
 from __init__ import PROTOCOL_VERSION, VERSION
 from adapters import bridge_home
-from protocol import ProtocolError, decode_line, encode_line, error_response, response
+from protocol import MAX_LINE_BYTES, ProtocolError, decode_line, encode_line, error_response, response
 from store import SessionStore, redact_sensitive_payload, redact_sensitive_text, sensitive_values
 
 try:
@@ -189,7 +189,7 @@ class BridgeServer:
         path = socket_path()
         if path.exists():
             path.unlink()
-        server = await asyncio.start_unix_server(self.handle, path=str(path), limit=1024 * 1024)
+        server = await asyncio.start_unix_server(self.handle, path=str(path), limit=MAX_LINE_BYTES + 1)
         os.chmod(path, 0o600)
         (runtime_dir() / "agent.pid").write_text(str(os.getpid()), encoding="utf-8")
         (runtime_dir() / "agent.version").write_text(VERSION, encoding="utf-8")

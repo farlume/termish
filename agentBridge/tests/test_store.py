@@ -254,6 +254,86 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([attachment], messages[0]["attachments"])
         self.assertEqual(1, self.adapter.prompts[0].count(".termish/attachments/notes.txt"))
 
+    async def test_attachment_path_must_stay_in_private_attachment_directory(self) -> None:
+        session = self.store.create("codex", self.temp.name, None)
+        unsafe = [
+            {"name": "passwd", "path": "/etc/passwd", "size": 1},
+            {"name": "token", "path": ".termish/attachments/../token", "size": 1},
+        ]
+
+        await self.store.start_prompt(session["sessionId"], "Review this", unsafe)
+        task = self.store.require(session["sessionId"]).task
+        self.assertIsNotNone(task)
+        await task
+
+        self.assertEqual([], self.store.messages(session["sessionId"])[0]["attachments"])
+        self.assertNotIn("/etc/passwd", self.adapter.prompts[0])
+
+    async def test_removing_session_deletes_only_its_recorded_attachments(self) -> None:
+        session = self.store.create("codex", self.temp.name, None)
+        directory = pathlib.Path(self.temp.name) / ".termish" / "attachments"
+        directory.mkdir(parents=True)
+        attached = directory / "owned.txt"
+        unrelated = directory / "unrelated.txt"
+        attached.write_text("owned", encoding="utf-8")
+        unrelated.write_text("keep", encoding="utf-8")
+        attachment = {"name": "owned.txt", "path": ".termish/attachments/owned.txt", "size": 5}
+        self.store.add_message(session["sessionId"], "user", "Review", attachments=[attachment])
+
+        await self.store.remove(session["sessionId"])
+
+        self.assertFalse(attached.exists())
+        self.assertTrue(unrelated.exists())
+
+    async def test_startup_removes_only_expired_unreferenced_attachments(self) -> None:
+        session = self.store.create("codex", self.temp.name, None)
+        directory = pathlib.Path(self.temp.name) / ".termish" / "attachments"
+        directory.mkdir(parents=True)
+        referenced = directory / "referenced.txt"
+        expired = directory / "expired.txt"
+        recent = directory / "recent.txt"
+        for path in (referenced, expired, recent):
+            path.write_text(path.name, encoding="utf-8")
+        old_timestamp = 1
+        os.utime(referenced, (old_timestamp, old_timestamp))
+        os.utime(expired, (old_timestamp, old_timestamp))
+        attachment = {"name": referenced.name, "path": ".termish/attachments/referenced.txt", "size": 1}
+        self.store.add_message(session["sessionId"], "user", "Review", attachments=[attachment])
+        self.store.close()
+
+        async def broadcast(_event):
+            pass
+
+        self.store = store.SessionStore(broadcast)
+
+        self.assertTrue(referenced.exists())
+        self.assertFalse(expired.exists())
+        self.assertTrue(recent.exists())
+
+    async def test_history_pages_return_latest_messages_then_older_messages(self) -> None:
+        session = self.store.create("codex", self.temp.name, None)
+        for index in range(7):
+            self.store.add_message(session["sessionId"], "user", f"message-{index}")
+
+        latest = self.store.messages_page(session["sessionId"], limit=3)
+        older = self.store.messages_page(
+            session["sessionId"],
+            before_seq=latest["oldestMessageSeq"],
+            limit=3,
+        )
+        oldest = self.store.messages_page(
+            session["sessionId"],
+            before_seq=older["oldestMessageSeq"],
+            limit=3,
+        )
+
+        self.assertEqual(["message-4", "message-5", "message-6"], [item["text"] for item in latest["messages"]])
+        self.assertEqual(["message-1", "message-2", "message-3"], [item["text"] for item in older["messages"]])
+        self.assertEqual(["message-0"], [item["text"] for item in oldest["messages"]])
+        self.assertTrue(latest["hasMoreMessages"])
+        self.assertTrue(older["hasMoreMessages"])
+        self.assertFalse(oldest["hasMoreMessages"])
+
     async def test_session_can_be_renamed(self) -> None:
         session = self.store.create("codex", self.temp.name, None)
         renamed = self.store.rename(session["sessionId"], "Release review")

@@ -433,6 +433,10 @@ data class NativeAgentStrings(
     val toolCount: (Int) -> String,
     val failedToolCount: (Int) -> String,
     val jumpToLatest: String,
+    val loadEarlier: String,
+    val loadingEarlier: String,
+    val reconnectingAttempt: (Int) -> String,
+    val agentDiagnostics: (Int, Int, Long, Int) -> String,
     val assistantLabel: String,
     val providers: String,
     val addProvider: String,
@@ -1174,6 +1178,12 @@ private val EnStrings =
                 toolCount = { count -> if (count == 1) "1 tool" else "$count tools" },
                 failedToolCount = { count -> "$count unsuccessful" },
                 jumpToLatest = "Jump to latest",
+                loadEarlier = "Load earlier messages",
+                loadingEarlier = "Loading earlier messages…",
+                reconnectingAttempt = { attempt -> "Reconnecting · attempt $attempt" },
+                agentDiagnostics = { loaded, total, latency, reconnects ->
+                    "$loaded of $total messages loaded · last request $latency ms · $reconnects reconnects"
+                },
                 assistantLabel = "Answer",
                 providers = "Model providers",
                 addProvider = "Add provider",
@@ -1733,6 +1743,12 @@ private val ZhStrings =
                 toolCount = { count -> "$count 个工具" },
                 failedToolCount = { count -> "$count 个未成功" },
                 jumpToLatest = "回到最新",
+                loadEarlier = "加载更早消息",
+                loadingEarlier = "正在加载更早消息…",
+                reconnectingAttempt = { attempt -> "正在重连 · 第 $attempt 次" },
+                agentDiagnostics = { loaded, total, latency, reconnects ->
+                    "已加载 $loaded/$total 条 · 最近请求 $latency ms · 已恢复 $reconnects 次"
+                },
                 assistantLabel = "回答",
                 providers = "模型供应商",
                 addProvider = "添加供应商",

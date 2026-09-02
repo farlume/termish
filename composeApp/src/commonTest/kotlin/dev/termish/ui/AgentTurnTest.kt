@@ -4,7 +4,13 @@ import dev.termish.agent.AgentArtifact
 import dev.termish.agent.AgentChatMessage
 import dev.termish.agent.AgentEventCursor
 import dev.termish.agent.AgentEventDecision
+import dev.termish.agent.AgentNdjsonDecoder
 import dev.termish.agent.AgentPromptEventBuffer
+import dev.termish.agent.AgentStreamBatcher
+import dev.termish.agent.agentReconnectDelayMillis
+import dev.termish.agent.agentRequestTimeoutMillis
+import dev.termish.agent.appendCappedText
+import dev.termish.agent.attachmentStoredName
 import dev.termish.agent.classifyAgentEvent
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -216,6 +222,58 @@ class AgentTurnTest {
         assertTrue(buffer.enqueue("session-a", second))
         assertEquals(listOf(first, second), buffer.drain("session-a"))
         assertFalse(buffer.enqueue("session-a", first))
+    }
+
+    @Test
+    fun ndjsonDecoderHandlesSplitAndMultipleLinesWithoutKeepingConsumedBytes() {
+        val decoder = AgentNdjsonDecoder(maxLineBytes = 64)
+
+        assertEquals(emptyList(), decoder.append("{\"id\":".encodeToByteArray()))
+        assertEquals(
+            listOf("{\"id\":1}", "{\"id\":2}"),
+            decoder.append("1}\r\n{\"id\":2}\npartial".encodeToByteArray()),
+        )
+        assertEquals(listOf("partial-line"), decoder.append("-line\n".encodeToByteArray()))
+    }
+
+    @Test
+    fun ndjsonDecoderRejectsAnUnboundedLine() {
+        val decoder = AgentNdjsonDecoder(maxLineBytes = 8)
+
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            decoder.append("123456789".encodeToByteArray())
+        }
+    }
+
+    @Test
+    fun streamBatcherCoalescesTokensPerActivityAndKeepsActivityOrder() {
+        val batcher = AgentStreamBatcher()
+        batcher.append("assistant", "answer", "turn", 1L, "hel")
+        batcher.append("thinking", "thought", "turn", 2L, "why")
+        batcher.append("assistant", "answer", "turn", 1L, "lo")
+
+        val result = batcher.drain()
+
+        assertEquals(listOf("hello", "why"), result.map { it.text })
+        assertEquals(listOf("answer", "thought"), result.map { it.activityId })
+        assertTrue(batcher.isEmpty)
+    }
+
+    @Test
+    fun protocolPoliciesBoundLogsAndUseOperationSpecificTimeouts() {
+        assertEquals("34567", appendCappedText("123", "4567", 5))
+        assertTrue(agentRequestTimeoutMillis("agents.install") > agentRequestTimeoutMillis("system.hello"))
+        assertEquals(1_000L, agentReconnectDelayMillis(attempt = 0, jitterMillis = 0))
+        assertEquals(30_000L, agentReconnectDelayMillis(attempt = 10, jitterMillis = 10_000))
+    }
+
+    @Test
+    fun attachmentStoredNamesAreScopedToOneUploadBatch() {
+        val first = attachmentStoredName("session-123", "batch-a", 0, "notes.txt")
+        val nextTurn = attachmentStoredName("session-123", "batch-b", 0, "notes.txt")
+
+        assertEquals("session--batch-a-1-notes.txt", first)
+        assertTrue(first != nextTurn)
     }
 
     private fun message(
