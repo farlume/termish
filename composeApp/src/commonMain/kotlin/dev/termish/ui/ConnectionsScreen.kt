@@ -72,6 +72,7 @@ fun ConnectionsScreen(
                     is HostSessionItem.Terminal -> item.controller.host
                     is HostSessionItem.Sftp -> item.host
                     is HostSessionItem.Screen -> item.entry.host
+                    is HostSessionItem.Agent -> item.controller.host
                 }
             query.isBlank() ||
                 host.name.contains(query, ignoreCase = true) ||
@@ -150,6 +151,7 @@ fun ConnectionsScreen(
                             is HostSessionItem.Terminal -> it.controller.sessionId
                             is HostSessionItem.Sftp -> "sftp:${it.host.id}:${it.session.hashCode()}"
                             is HostSessionItem.Screen -> "screen:${it.entry.host.id}:${it.entry.uiState.hashCode()}"
+                            is HostSessionItem.Agent -> "agent:${it.controller.host.id}"
                         }
                     }) { item ->
                         val host =
@@ -157,12 +159,15 @@ fun ConnectionsScreen(
                                 is HostSessionItem.Terminal -> item.controller.host
                                 is HostSessionItem.Sftp -> item.host
                                 is HostSessionItem.Screen -> item.entry.host
+                                is HostSessionItem.Agent -> item.controller.host
                             }
                         val title =
                             when (item) {
                                 is HostSessionItem.Terminal -> item.controller.title
                                 is HostSessionItem.Sftp, is HostSessionItem.Screen ->
                                     host.name.ifBlank { host.hostname }
+                                is HostSessionItem.Agent ->
+                                    item.controller.currentSession?.title ?: host.name.ifBlank { host.hostname }
                             }
                         val active = item.isActive
                         Card(
@@ -183,6 +188,18 @@ fun ConnectionsScreen(
                                                 "${host.username}@${host.hostname} · SFTP"
                                             is HostSessionItem.Screen ->
                                                 "${host.username}@${host.hostname} · ${s.hostsActionScreen}"
+                                            is HostSessionItem.Agent -> {
+                                                val stateLabel =
+                                                    when {
+                                                        item.controller.pendingApprovals.isNotEmpty() ->
+                                                            s.nativeAgents.sessionWaitingApproval
+                                                        item.controller.busy -> s.nativeAgents.sessionRunning
+                                                        item.isConnecting -> s.connStatusConnecting
+                                                        item.isConnected -> s.hostsActive
+                                                        else -> s.connStatusClosed
+                                                    }
+                                                "${host.username}@${host.hostname} · ${s.hostsActionAgents} · $stateLabel"
+                                            }
                                             is HostSessionItem.Terminal -> {
                                                 val launchLabel =
                                                     if (item.controller.launchMode == TerminalLaunchMode.HERDR) {
@@ -229,6 +246,14 @@ fun ConnectionsScreen(
                                                                 StatusColors.Neutral
                                                             }
                                                         is HostSessionItem.Screen -> StatusColors.Connected
+                                                        is HostSessionItem.Agent ->
+                                                            when {
+                                                                item.controller.pendingApprovals.isNotEmpty() ->
+                                                                    StatusColors.Warning
+                                                                item.isConnected -> StatusColors.Connected
+                                                                item.isConnecting -> StatusColors.Warning
+                                                                else -> StatusColors.Neutral
+                                                            }
                                                     },
                                                 ),
                                         )

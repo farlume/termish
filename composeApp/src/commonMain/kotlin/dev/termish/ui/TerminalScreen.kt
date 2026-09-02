@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Monitor
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
@@ -193,6 +194,8 @@ fun TerminalScreen(
     onFavoritesChanged: (Host, List<String>) -> Unit = { _, _ -> },
     /** SFTP 浏览路径即时持久化（崩溃/强杀不丢最后目录）。 */
     onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
+    /** 将终端选中输出和当前目录交给同主机 Agent，内容只作为不可信上下文。 */
+    onAskAgent: (Host, AgentLaunchContext) -> Unit = { _, _ -> },
     /** SFTP 断线重连：重建会话后替换 tab 中的 session（由 AppRoot 实现）。 */
     onReconnectSftp: (SessionTab.Sftp) -> Unit = {},
     /** 屏幕（菜单项）：打开当前主机的远程画面。 */
@@ -325,6 +328,7 @@ fun TerminalScreen(
                         onOpenFavorites = onOpenFavorites,
                         onFavoritesChanged = onFavoritesChanged,
                         onSftpPathChanged = onSftpPathChanged,
+                        onAskAgent = onAskAgent,
                         onOpenScreen = onOpenScreen,
                         screenPip = screenPip,
                         onCloseScreenPip = onCloseScreenPip,
@@ -343,6 +347,7 @@ fun TerminalScreen(
                         onReconnect = { onReconnectSftp(tab) },
                         onFavoritesChanged = { favs -> onFavoritesChanged(tab.host, favs) },
                         onPathChanged = { p -> onSftpPathChanged(tab.host, p) },
+                        onAskAgent = { context -> onAskAgent(tab.host, context) },
                     )
                 is SessionTab.Screen ->
                     ScreenContent(
@@ -468,6 +473,8 @@ private fun TerminalBody(
     onFavoritesChanged: (Host, List<String>) -> Unit = { _, _ -> },
     /** SFTP 浏览路径即时持久化（崩溃/强杀不丢最后目录）。 */
     onSftpPathChanged: (Host, String) -> Unit = { _, _ -> },
+    /** 将终端选中输出和当前目录交给同主机 Agent。 */
+    onAskAgent: (Host, AgentLaunchContext) -> Unit = { _, _ -> },
     /** 屏幕（菜单项）：打开当前主机的远程画面。 */
     onOpenScreen: (Host) -> Unit = {},
     /** 终端页小窗：当前主机活跃屏幕会话的 uiState（点击 = 就地全屏）。 */
@@ -1075,6 +1082,32 @@ private fun TerminalBody(
                         onMenuOpenChange = { toolMenuOpen = it },
                         items =
                             listOf(
+                                CanvasMenuAction(
+                                    id = "agent",
+                                    label = s.nativeAgents.askSelectedOutput,
+                                    icon = Icons.Filled.SmartToy,
+                                    onClick = {
+                                        toolMenuOpen = false
+                                        val selected = controller.selection.selectedText().trim()
+                                        if (selected.isEmpty()) {
+                                            scope.launch { snackbar.showSnackbar(s.nativeAgents.selectOutputFirst) }
+                                        } else {
+                                            scope.launch {
+                                                val wd =
+                                                    runCatching {
+                                                        TerminalGitCommandRunner(controller).fetchWorkdir()
+                                                    }.getOrNull()
+                                                controller.selection.clear()
+                                                controller.frame++
+                                                terminalAgentLaunchContext(
+                                                    selected,
+                                                    wd,
+                                                    s.nativeAgents.terminalContextPrompt,
+                                                )?.let { context -> onAskAgent(controller.host, context) }
+                                            }
+                                        }
+                                    },
+                                ),
                                 CanvasMenuAction(
                                     id = "git",
                                     label = s.git.menuLabel,

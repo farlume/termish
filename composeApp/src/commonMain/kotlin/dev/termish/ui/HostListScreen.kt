@@ -76,6 +76,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import dev.termish.agent.AgentBridgeController
+import dev.termish.agent.AgentBridgeState
 import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.generated.resources.Res
@@ -152,6 +154,23 @@ sealed interface HostSessionItem {
         override val isActive: Boolean get() = true
         override val isConnecting: Boolean get() = entry.session == null
         override val isConnected: Boolean get() = entry.session != null
+    }
+
+    data class Agent(
+        val controller: AgentBridgeController,
+    ) : HostSessionItem {
+        override val hostId: String get() = controller.host.id
+        override val createdAt: Long get() = controller.createdAt
+        override val isActive: Boolean
+            get() =
+                controller.busy ||
+                    controller.pendingApprovals.isNotEmpty() ||
+                    controller.state == AgentBridgeState.CONNECTING ||
+                    controller.state == AgentBridgeState.INSTALLING ||
+                    controller.state == AgentBridgeState.READY
+        override val isConnecting: Boolean
+            get() = controller.state == AgentBridgeState.CONNECTING || controller.state == AgentBridgeState.INSTALLING
+        override val isConnected: Boolean get() = controller.state == AgentBridgeState.READY
     }
 }
 
@@ -334,6 +353,7 @@ fun HostListScreen(
                                         is HostSessionItem.Terminal -> onOpenSession(target.controller)
                                         is HostSessionItem.Sftp -> onOpenSftp(target.host, target.session)
                                         is HostSessionItem.Screen -> onOpenScreenSession(target.entry)
+                                        is HostSessionItem.Agent -> onAgents(host)
                                         null -> onConnect(host)
                                     }
                                 }
@@ -742,6 +762,14 @@ private fun HostMoreMenu(
                         is HostSessionItem.Sftp -> if (item.session != null) s.hostsActive else s.connStatusClosed
                         is HostSessionItem.Screen ->
                             if (item.isConnecting) s.connStatusConnecting else s.hostsActive
+                        is HostSessionItem.Agent ->
+                            when {
+                                item.controller.pendingApprovals.isNotEmpty() -> s.nativeAgents.sessionWaitingApproval
+                                item.controller.busy -> s.nativeAgents.sessionRunning
+                                item.isConnecting -> s.connStatusConnecting
+                                item.isConnected -> s.hostsActive
+                                else -> s.connStatusClosed
+                            }
                     }
                 val statusColor =
                     when (item) {
@@ -761,6 +789,13 @@ private fun HostMoreMenu(
                             }
                         is HostSessionItem.Screen ->
                             if (item.isConnecting) StatusColors.Warning else StatusColors.Connected
+                        is HostSessionItem.Agent ->
+                            when {
+                                item.controller.pendingApprovals.isNotEmpty() -> StatusColors.Warning
+                                item.isConnected -> StatusColors.Connected
+                                item.isConnecting -> StatusColors.Warning
+                                else -> StatusColors.Neutral
+                            }
                     }
                 when (item) {
                     is HostSessionItem.Terminal ->
@@ -830,6 +865,25 @@ private fun HostMoreMenu(
                             onClick = {
                                 open = false
                                 onOpenScreenSession(item.entry)
+                            },
+                        )
+                    is HostSessionItem.Agent ->
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "${item.controller.currentSession?.title ?: s.hostsActionAgents} · " +
+                                        formatSessionCreatedAt(item.createdAt),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            },
+                            leadingIcon = { Icon(Icons.Default.SmartToy, contentDescription = null) },
+                            trailingIcon = {
+                                Text(statusLabel, style = MaterialTheme.typography.labelSmall, color = statusColor)
+                            },
+                            onClick = {
+                                open = false
+                                onAgents()
                             },
                         )
                 }

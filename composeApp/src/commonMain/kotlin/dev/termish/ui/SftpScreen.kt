@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Slideshow
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -325,6 +326,8 @@ fun SftpContent(
     onFavoritesChanged: (List<String>) -> Unit = {},
     /** 浏览路径变更回调（AppRoot 即时持久化，崩溃/强杀不丢）。 */
     onPathChanged: (String) -> Unit = {},
+    /** 将选中远端路径直接交给同主机 Agent；不经手机下载/重新上传。 */
+    onAskAgent: (AgentLaunchContext) -> Unit = {},
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
@@ -820,6 +823,28 @@ fun SftpContent(
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
                     )
+                    IconButton(
+                        onClick = {
+                            val selectedPaths =
+                                visible
+                                    .filter { it.name in state.selection }
+                                    .map { joinPath(path, it.name) }
+                            if (selectedPaths.isNotEmpty()) {
+                                clearSelection()
+                                sftpAgentLaunchContext(
+                                    selectedPaths,
+                                    path,
+                                    s.nativeAgents.fileContextPrompt,
+                                )?.let(onAskAgent)
+                            }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.SmartToy,
+                            contentDescription = s.nativeAgents.askAboutFiles,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                    }
                     TextButton(onClick = { selectAllVisible() }) {
                         Text(s.sftpExt.selectAll, style = MaterialTheme.typography.labelMedium)
                     }

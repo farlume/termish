@@ -38,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -65,6 +66,7 @@ import dev.termish.data.newId
 import dev.termish.data.resolveCredentials
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
+import dev.termish.notify.NotificationEvent
 import dev.termish.screen.MAX_SCREEN_RECONNECT_ATTEMPTS
 import dev.termish.screen.ScreenSession
 import dev.termish.screen.ScreenSessionMessages
@@ -130,6 +132,7 @@ private fun HomeTabItem(
     mono: FontFamily,
     modifier: Modifier = Modifier,
     badge: Int = 0,
+    badgeAlert: Boolean = false,
     onClick: () -> Unit,
 ) {
     val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -141,8 +144,10 @@ private fun HomeTabItem(
             badge = {
                 if (badge > 0) {
                     Badge(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        containerColor =
+                            if (badgeAlert) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        contentColor =
+                            if (badgeAlert) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
                     ) {
                         Text(if (badge > 99) "99+" else "$badge", fontFamily = mono)
                     }
@@ -169,6 +174,7 @@ private sealed interface Screen {
 
     data class Agents(
         val hostId: String,
+        val context: AgentLaunchContext? = null,
     ) : Screen
 
     /** 直接持有 controller 引用：会话由 SessionManager 管理，跨页面存活。 */
@@ -297,6 +303,7 @@ fun AppRoot(repository: HostRepository) {
     /** Agent 控制连接跨页面保留；弹窗也必须由 AppRoot 持有，不能捕获已销毁页面状态。 */
     var agentAuth by remember { mutableStateOf<Pair<String, AuthPromptRequest>?>(null) }
     var agentHostKey by remember { mutableStateOf<Pair<String, HostKeyRequest>?>(null) }
+    val agentControllers = remember { mutableStateMapOf<String, AgentBridgeController>() }
     val agentControllerPool =
         remember {
             IdleResourcePool<String, String, AgentBridgeController>(
@@ -311,8 +318,16 @@ fun AppRoot(repository: HostRepository) {
                         agentHostKey?.second?.deferred?.complete(false)
                         agentHostKey = null
                     }
+                    if (agentControllers[controller.host.id] === controller) {
+                        agentControllers.remove(controller.host.id)
+                    }
                     controller.close()
                     TermLog.i("agent") { "idle connection closed ${controller.host.name}" }
+                },
+                // 页面离开后可以回收空闲控制连接，但远端任务运行中或等待审批时
+                // 必须继续监听事件，否则用户收不到完成/审批通知。
+                canCloseResource = { controller ->
+                    !controller.busy && controller.pendingApprovals.isEmpty()
                 },
             )
         }
@@ -357,7 +372,29 @@ fun AppRoot(repository: HostRepository) {
                         return accepted
                     }
                 }
-            AgentBridgeController(host, repository, callbacks, scope)
+            AgentBridgeController(host, repository, callbacks, scope).also { controller ->
+                controller.onApprovalRequested = { approval ->
+                    val strings = currentStrings.value.nativeAgents
+                    val title = approval.title.ifBlank { strings.approvalRequired }
+                    NotificationCenter.post(
+                        NotificationEvent.AGENT_TASK,
+                        "Termish",
+                        strings.approvalNotification(host.name, title),
+                        id = "agent-approval:${host.id}".hashCode(),
+                    )
+                }
+                controller.onTaskSettled = { session ->
+                    val strings = currentStrings.value.nativeAgents
+                    val title = session?.title?.ifBlank { strings.title } ?: strings.title
+                    NotificationCenter.post(
+                        NotificationEvent.AGENT_TASK,
+                        "Termish",
+                        strings.taskCompletedNotification(host.name, title),
+                        id = "agent-complete:${host.id}".hashCode(),
+                    )
+                }
+                agentControllers[host.id] = controller
+            }
         }
 
     lateinit var applyScreenStreamConfig: (Host, Int, String, Boolean) -> Unit
@@ -961,10 +998,15 @@ fun AppRoot(repository: HostRepository) {
     }
 
     val terminalTheme = TerminalThemes.ALL.getOrElse(settings.terminalThemeIndex) { TerminalThemes.ALL[0] }
+    val agentSessionItems =
+        agentControllers.values
+            .filter { it.currentSession != null || it.busy || it.pendingApprovals.isNotEmpty() }
+            .map { HostSessionItem.Agent(it) }
     val activeSessionCount =
         sessionManager.sessions.count { isActiveStatus(it.status) } +
             sessionManager.sftpSessions.count { it.session != null } +
-            screenSessions.size
+            screenSessions.size +
+            agentSessionItems.count { it.isActive }
 
     CompositionLocalProvider(
         LocalAppStrings provides appStrings,
@@ -1057,6 +1099,10 @@ fun AppRoot(repository: HostRepository) {
                                                     mono,
                                                     Modifier.weight(1f),
                                                     badge = activeSessionCount,
+                                                    badgeAlert =
+                                                        agentSessionItems.any {
+                                                            it.controller.pendingApprovals.isNotEmpty()
+                                                        },
                                                 ) {
                                                     homeTab = HomeTab.CONNECTIONS
                                                 }
@@ -1094,7 +1140,8 @@ fun AppRoot(repository: HostRepository) {
                                                                         it.createdAt,
                                                                     )
                                                                 } +
-                                                                screenSessions.map { HostSessionItem.Screen(it) }
+                                                                screenSessions.map { HostSessionItem.Screen(it) } +
+                                                                agentSessionItems
                                                         ).groupBy { it.hostId },
                                                     onAdd = { navigate(Screen.Edit(null)) },
                                                     onEdit = { navigate(Screen.Edit(it.id)) },
@@ -1116,6 +1163,7 @@ fun AppRoot(repository: HostRepository) {
                                                         // 断开该主机全部会话：终端断开保留 + SFTP 释放（与「全部关闭」一致）
                                                         sessionManager.closeAllForHost(host.id)
                                                         closeScreenForHost(host)
+                                                        agentControllerPool.remove(host.id)
                                                     },
                                                     onOpenSession = { controller ->
                                                         // 卡片点击 = 用当前配置连这台主机：配置/凭据已变更的旧会话不复用，
@@ -1155,10 +1203,12 @@ fun AppRoot(repository: HostRepository) {
                                                         // 关闭该主机全部会话：终端断开保留 + SFTP 释放
                                                         sessionManager.closeAllForHost(host.id)
                                                         closeScreenForHost(host)
+                                                        agentControllerPool.remove(host.id)
                                                     },
                                                     onDelete = { host ->
                                                         sessionManager.closeForHost(host.id)
                                                         closeScreenForHost(host)
+                                                        agentControllerPool.remove(host.id)
                                                         SecretStore.delete(
                                                             SECRET_SERVICE,
                                                             secretAccountFor(host.id, "password"),
@@ -1184,7 +1234,8 @@ fun AppRoot(repository: HostRepository) {
                                                                     it.createdAt,
                                                                 )
                                                             } +
-                                                            screenSessions.map { HostSessionItem.Screen(it) },
+                                                            screenSessions.map { HostSessionItem.Screen(it) } +
+                                                            agentSessionItems,
                                                     onOpen = { item ->
                                                         when (item) {
                                                             is HostSessionItem.Terminal -> {
@@ -1207,6 +1258,8 @@ fun AppRoot(repository: HostRepository) {
                                                                 navigate(Screen.Terminal)
                                                             }
                                                             is HostSessionItem.Screen -> showScreenSession(item.entry)
+                                                            is HostSessionItem.Agent ->
+                                                                navigate(Screen.Agents(item.controller.host.id))
                                                         }
                                                     },
                                                     onClose = { item ->
@@ -1240,6 +1293,8 @@ fun AppRoot(repository: HostRepository) {
                                                                 }
                                                             }
                                                             is HostSessionItem.Screen -> closeScreenForHost(item.entry.host)
+                                                            is HostSessionItem.Agent ->
+                                                                agentControllerPool.remove(item.controller.host.id)
                                                         }
                                                     },
                                                 )
@@ -1299,6 +1354,7 @@ fun AppRoot(repository: HostRepository) {
                                     host = host,
                                     repository = repository,
                                     controller = agentController,
+                                    initialContext = s.context,
                                     onRelease = { agentControllerPool.release(host.id) },
                                     onBack = ::navigateBack,
                                     // 屏幕远控（复用终端页推流基础设施）：会话条目/回调
@@ -1507,6 +1563,8 @@ fun AppRoot(repository: HostRepository) {
                                     },
                                     // 浏览路径即时持久化：导航即保存（退后台保存为兜底）
                                     onSftpPathChanged = { _, _ -> sessionManager.persistNow() },
+                                    // 终端输出/SFTP 远端路径直达同主机 Agent，不经过剪贴板或文件中转。
+                                    onAskAgent = { host, context -> navigate(Screen.Agents(host.id, context)) },
                                     // SFTP 断线重连：重建会话替换 tab（保留 uiState 的路径/列表）
                                     onReconnectSftp = { tab ->
                                         // session 可空（进程重启恢复条目）：host.id + 引用双重匹配，

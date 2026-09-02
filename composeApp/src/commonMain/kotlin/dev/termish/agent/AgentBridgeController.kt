@@ -55,6 +55,13 @@ class AgentBridgeController(
     private val callbacks: SshCallbacks,
     private val scope: CoroutineScope,
 ) {
+    /** 控制连接首次创建时间；用于与终端/SFTP/画面一起展示在统一会话中心。 */
+    val createdAt: Long = Clock.System.now().toEpochMilliseconds()
+
+    /** 页面可见与否无关的关键事件；AppRoot 据此发送受用户设置控制的后台通知。 */
+    var onApprovalRequested: ((AgentApprovalRequest) -> Unit)? = null
+    var onTaskSettled: ((AgentBridgeSessionInfo?) -> Unit)? = null
+
     var state by mutableStateOf(AgentBridgeState.IDLE)
         private set
     var errorMessage by mutableStateOf<String?>(null)
@@ -1142,6 +1149,7 @@ class AgentBridgeController(
             "approval_request" -> {
                 val approval = parseApproval(event) ?: return
                 pendingApprovals = pendingApprovals.filterNot { it.id == approval.id } + approval
+                onApprovalRequested?.invoke(approval)
             }
             "approval_resolved" -> {
                 val approvalId = event.string("approvalId")
@@ -1163,6 +1171,7 @@ class AgentBridgeController(
                 activeLocalTurnId = null
             }
             "settled" -> {
+                val wasBusy = busy
                 busy = false
                 activeLocalTurnId = null
                 val completedAt = Clock.System.now().toEpochMilliseconds()
@@ -1170,6 +1179,7 @@ class AgentBridgeController(
                     messages.map {
                         if (it.running) it.copy(running = false, completedAt = completedAt) else it
                     }
+                if (wasBusy) onTaskSettled?.invoke(currentSession)
                 scope.launch { refreshSessions() }
             }
             "install_output" -> {

@@ -256,6 +256,7 @@ fun AgentScreen(
     host: Host,
     repository: HostRepository,
     controller: AgentBridgeController,
+    initialContext: AgentLaunchContext? = null,
     /** 离开页面后由 AppRoot 启动一分钟闲置计时；超时前再次进入会取消释放。 */
     onRelease: () -> Unit,
     onBack: () -> Unit,
@@ -284,6 +285,7 @@ fun AgentScreen(
         controller = controller,
         repository = repository,
         initialPreferences = repository.loadAgentPreferences(host.id),
+        initialContext = initialContext,
         onSavePreferences = { repository.saveAgentPreferences(host.id, it) },
         onInstallBridge = { scope.launch { controller.installBridge(Res.readBytes("files/termish-agent.pyz")) } },
         onExit = onBack,
@@ -302,6 +304,7 @@ private fun AgentWorkspace(
     controller: AgentBridgeController,
     repository: HostRepository,
     initialPreferences: AgentWorkspacePreferences,
+    initialContext: AgentLaunchContext?,
     onSavePreferences: (AgentWorkspacePreferences) -> Unit,
     onInstallBridge: () -> Unit,
     onExit: () -> Unit,
@@ -319,6 +322,8 @@ private fun AgentWorkspace(
     val drawerState = androidx.compose.material3.rememberDrawerState(DrawerValue.Closed)
     var page by remember { mutableStateOf(AgentWorkspacePage.CHAT) }
     var preferences by remember { mutableStateOf(initialPreferences) }
+    var pendingInitialPrompt by remember(initialContext) { mutableStateOf(initialContext?.prompt.orEmpty()) }
+    var launchDirectory by remember(initialContext) { mutableStateOf(initialContext?.directory) }
     var selectedAgent by remember { mutableStateOf(initialPreferences.defaultAgent) }
     var directoryPickerOpen by remember { mutableStateOf(false) }
     var sessionActions by remember { mutableStateOf<AgentBridgeSessionInfo?>(null) }
@@ -604,6 +609,9 @@ private fun AgentWorkspace(
                                                 preferences.providerByAgent[selectedAgent],
                                             ),
                                             voiceSettings,
+                                            pendingInitialPrompt,
+                                            launchDirectory,
+                                            { pendingInitialPrompt = "" },
                                             { directoryPickerOpen = true },
                                             { page = AgentWorkspacePage.SETTINGS },
                                             { message -> scope.launch { snackbar.showSnackbar(message) } },
@@ -616,6 +624,8 @@ private fun AgentWorkspace(
                                             providers.firstOrNull { it.id == session?.provider },
                                             providerRuntime(session?.agent.orEmpty(), session?.provider),
                                             voiceSettings,
+                                            initialPrompt = pendingInitialPrompt,
+                                            onInitialPromptConsumed = { pendingInitialPrompt = "" },
                                             onOpenSettings = { page = AgentWorkspacePage.SETTINGS },
                                             onOpenArtifact = { artifact ->
                                                 fileBrowserStartPath = parentRemotePath(artifact.remotePath)
@@ -697,6 +707,7 @@ private fun AgentWorkspace(
             preferences.defaultDirectory,
             { directoryPickerOpen = false },
             {
+                launchDirectory = it
                 savePreferences(preferences.copy(defaultDirectory = it))
                 directoryPickerOpen = false
             },
@@ -912,6 +923,13 @@ private fun AgentApprovalDialog(
                         it,
                         style = MaterialTheme.typography.bodySmall,
                         fontFamily = monospaceFontFamily(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if ("allow_once" in approval.options && "allow_session" in approval.options) {
+                    Text(
+                        strings.approvalSessionScopeHint,
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1233,12 +1251,15 @@ private fun AgentHome(
     providers: List<AgentProvider>,
     provider: AgentProviderRuntime?,
     voiceSettings: AppSettings,
+    initialPrompt: String,
+    initialDirectory: String?,
+    onInitialPromptConsumed: () -> Unit,
     onChooseDirectory: () -> Unit,
     onOpenSettings: () -> Unit,
     onFeedback: (String) -> Unit,
 ) {
     val strings = LocalAppStrings.current.nativeAgents
-    var input by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf(initialPrompt) }
     var attachments by remember { mutableStateOf<List<PickedFile>>(emptyList()) }
     val pickFiles = rememberFilePicker { attachments = appendUniquePickedFile(attachments, it) }
     val available = controller.agents.filter { it.available && it.supported }
@@ -1253,6 +1274,11 @@ private fun AgentHome(
         }
     var slashDialog by remember { mutableStateOf<AgentSlashDialog?>(null) }
     var slashError by remember { mutableStateOf("") }
+
+    LaunchedEffect(initialPrompt) {
+        if (initialPrompt.isNotEmpty()) onInitialPromptConsumed()
+    }
+    val conversationDirectory = initialDirectory ?: preferences.defaultDirectory
 
     fun runSlashCommand(command: String) {
         when (agentSlashAction(command)) {
@@ -1315,7 +1341,7 @@ private fun AgentHome(
             attachments,
             pickFiles,
             { attachments = removePickedFile(attachments, it) },
-            preferences.defaultDirectory,
+            conversationDirectory,
             onChooseDirectory,
             controller.agents.firstOrNull { it.id == selectedAgent }?.label,
             providerConfig?.name,
@@ -1329,7 +1355,7 @@ private fun AgentHome(
             {
                 controller.startConversation(
                     selectedAgent,
-                    preferences.defaultDirectory.ifBlank { null },
+                    conversationDirectory.ifBlank { null },
                     selectedModel.ifBlank { null },
                     provider,
                     input.trim().ifBlank { strings.attachmentPrompt },
@@ -1351,7 +1377,7 @@ private fun AgentHome(
             listOf(
                 "${strings.defaultAgent}: ${controller.agents.firstOrNull { it.id == selectedAgent }?.label ?: selectedAgent}",
                 "${strings.defaultModel}: ${selectedModel.ifBlank { strings.builtInProvider }}",
-                "${strings.defaultDirectory}: ${preferences.defaultDirectory}",
+                "${strings.defaultDirectory}: $conversationDirectory",
                 "${strings.providers}: ${providerConfig?.name ?: strings.builtInProvider}",
             ).joinToString("\n"),
         errorText = slashError,
@@ -2317,17 +2343,23 @@ private fun AgentChat(
     providerConfig: AgentProvider?,
     provider: AgentProviderRuntime?,
     voiceSettings: AppSettings,
+    initialPrompt: String,
+    onInitialPromptConsumed: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenArtifact: (AgentArtifact) -> Unit,
     onFeedback: (String) -> Unit,
 ) {
-    var input by remember(controller.currentSession?.id) { mutableStateOf("") }
+    var input by remember(controller.currentSession?.id) { mutableStateOf(initialPrompt) }
     var attachments by remember(controller.currentSession?.id) { mutableStateOf<List<PickedFile>>(emptyList()) }
     val pickFiles = rememberFilePicker { attachments = appendUniquePickedFile(attachments, it) }
     val strings = LocalAppStrings.current.nativeAgents
     val modelOptions = providerConfig?.models.orEmpty()
     var slashDialog by remember(controller.currentSession?.id) { mutableStateOf<AgentSlashDialog?>(null) }
     var slashError by remember(controller.currentSession?.id) { mutableStateOf("") }
+
+    LaunchedEffect(initialPrompt) {
+        if (initialPrompt.isNotEmpty()) onInitialPromptConsumed()
+    }
 
     fun runSlashCommand(command: String) {
         when (agentSlashAction(command)) {

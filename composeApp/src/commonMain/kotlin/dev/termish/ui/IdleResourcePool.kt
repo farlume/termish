@@ -15,6 +15,7 @@ internal class IdleResourcePool<K : Any, S, V : Any>(
     private val scope: CoroutineScope,
     private val idleTimeoutMillis: Long,
     private val closeResource: (V) -> Unit,
+    private val canCloseResource: (V) -> Boolean = { true },
 ) {
     private data class Entry<S, V>(
         val signature: S,
@@ -45,11 +46,19 @@ internal class IdleResourcePool<K : Any, S, V : Any>(
         entry.closeJob =
             scope.launch {
                 delay(idleTimeoutMillis)
+                while (entries[key] === entry && !canCloseResource(entry.value)) {
+                    delay(idleTimeoutMillis)
+                }
                 if (entries[key] === entry) {
                     entries.remove(key)
                     closeEntry(entry)
                 }
             }
+    }
+
+    /** 显式结束某个资源（连接页关闭、删除主机），不等待闲置计时。 */
+    fun remove(key: K) {
+        entries.remove(key)?.let(::closeEntry)
     }
 
     fun closeAll() {
