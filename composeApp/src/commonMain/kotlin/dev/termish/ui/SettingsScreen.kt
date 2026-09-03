@@ -58,8 +58,12 @@ import dev.termish.data.SECRET_SERVICE
 import dev.termish.data.SecretStore
 import dev.termish.data.ThemeMode
 import dev.termish.data.asrKeyAccount
+import dev.termish.notify.NotificationPermissionController
+import dev.termish.notify.NotificationPermissionState
 import dev.termish.ui.theme.TerminalThemes
+import dev.termish.util.BackgroundProtectionState
 import dev.termish.util.TermLog
+import dev.termish.util.openApplicationSettings
 
 // ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 入口待补充） ----
 private const val WEBSITE_URL = "https://termish.dev"
@@ -93,6 +97,10 @@ fun SettingsScreen(
     onChange: (AppSettings) -> Unit,
     /** 片段/标签管理页读写仓库。 */
     repository: HostRepository = HostRepository(),
+    notificationPermissionState: NotificationPermissionState,
+    notificationPermissionController: NotificationPermissionController,
+    onNotificationPermissionStateChange: (NotificationPermissionState) -> Unit,
+    backgroundProtectionState: BackgroundProtectionState,
     /** 当前打开的二级页（AppRoot 统一管理：返回链 + 全屏隐藏 tab）。 */
     subPage: SettingsSubPage? = null,
     /** 打开/关闭二级页（null = 关闭）。 */
@@ -159,7 +167,14 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(
                     s.settingsNotifications,
-                    if (notificationEnabled) s.settingsOn else s.settingsOff,
+                    if (
+                        notificationEnabled &&
+                        notificationPermissionState == NotificationPermissionState.GRANTED
+                    ) {
+                        s.settingsOn
+                    } else {
+                        s.settingsOff
+                    },
                 ) { onOpenSub(SettingsSubPage.NOTIFICATION) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(
@@ -242,6 +257,18 @@ fun SettingsScreen(
                     autoReconnect = it
                     persist()
                 }
+                if (backgroundProtectionState != BackgroundProtectionState.NOT_APPLICABLE) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                    SettingsOptionItem(
+                        s.permissions.backgroundProtection,
+                        if (backgroundProtectionState == BackgroundProtectionState.SYSTEM_EXEMPT) {
+                            s.permissions.backgroundProtectionExempt
+                        } else {
+                            s.permissions.backgroundProtectionManaged
+                        },
+                        onClick = ::openApplicationSettings,
+                    )
+                }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsSwitchItem(s.settingsVerifyHostKey, verifyHostKey) {
                     verifyHostKey = it
@@ -302,6 +329,9 @@ fun SettingsScreen(
         SettingsNotificationScreen(
             enabled = notificationEnabled,
             disabledEvents = notificationDisabledEvents,
+            permissionState = notificationPermissionState,
+            permissionController = notificationPermissionController,
+            onPermissionStateChange = onNotificationPermissionStateChange,
             onChangeEnabled = {
                 notificationEnabled = it
                 persist()

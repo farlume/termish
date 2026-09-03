@@ -1,6 +1,6 @@
 package dev.termish.ui
 
-import dev.termish.data.ConnectionMode
+import dev.termish.util.ForegroundSshRecovery
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -14,8 +14,8 @@ class SessionRecoveryTest {
                 activeSessionIds = setOf("same-host-session-1"),
                 autoReconnect = true,
                 status = ConnStatus.CLOSED,
-                connectionMode = ConnectionMode.SSH,
-                forceSshReconnect = false,
+                usesMoshTransport = false,
+                recovery = ForegroundSshRecovery.KEEP,
             ),
         )
         assertEquals(
@@ -25,14 +25,29 @@ class SessionRecoveryTest {
                 activeSessionIds = setOf("same-host-session-1"),
                 autoReconnect = true,
                 status = ConnStatus.CLOSED,
-                connectionMode = ConnectionMode.SSH,
-                forceSshReconnect = false,
+                usesMoshTransport = false,
+                recovery = ForegroundSshRecovery.KEEP,
             ),
         )
     }
 
     @Test
-    fun staleSshSocketIsRebuiltWhenPlatformCannotKeepItAlive() {
+    fun androidServiceLossVerifiesSshBeforeReconnecting() {
+        assertEquals(
+            BackgroundReconnectAction.VERIFY,
+            backgroundReconnectAction(
+                sessionId = "ssh-1",
+                activeSessionIds = setOf("ssh-1"),
+                autoReconnect = true,
+                status = ConnStatus.CONNECTED,
+                usesMoshTransport = false,
+                recovery = ForegroundSshRecovery.VERIFY,
+            ),
+        )
+    }
+
+    @Test
+    fun suspendedPlatformRebuildsSshDirectly() {
         assertEquals(
             BackgroundReconnectAction.REBUILD,
             backgroundReconnectAction(
@@ -40,8 +55,8 @@ class SessionRecoveryTest {
                 activeSessionIds = setOf("ssh-1"),
                 autoReconnect = true,
                 status = ConnStatus.CONNECTED,
-                connectionMode = ConnectionMode.SSH,
-                forceSshReconnect = true,
+                usesMoshTransport = false,
+                recovery = ForegroundSshRecovery.REBUILD,
             ),
         )
     }
@@ -55,8 +70,23 @@ class SessionRecoveryTest {
                 activeSessionIds = setOf("mosh-1"),
                 autoReconnect = true,
                 status = ConnStatus.CONNECTED,
-                connectionMode = ConnectionMode.MOSH,
-                forceSshReconnect = true,
+                usesMoshTransport = true,
+                recovery = ForegroundSshRecovery.REBUILD,
+            ),
+        )
+    }
+
+    @Test
+    fun disabledAutoReconnectNeverRecoversInBackground() {
+        assertEquals(
+            BackgroundReconnectAction.NONE,
+            backgroundReconnectAction(
+                sessionId = "ssh-1",
+                activeSessionIds = setOf("ssh-1"),
+                autoReconnect = false,
+                status = ConnStatus.CLOSED,
+                usesMoshTransport = false,
+                recovery = ForegroundSshRecovery.REBUILD,
             ),
         )
     }

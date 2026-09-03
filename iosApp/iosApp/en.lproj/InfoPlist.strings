@@ -1,2 +1,3 @@
 /* English: local network permission copy (system picks by language) */
 "NSLocalNetworkUsageDescription" = "Termish connects over the local network to the SSH/Mosh servers you configure (NAS, Mac, etc.) for remote terminal and file transfer.";
+"NSMicrophoneUsageDescription" = "Termish uses the microphone only while you hold the voice-input button to convert speech into terminal text.";

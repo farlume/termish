@@ -4,6 +4,7 @@ import com.russhwolf.settings.PropertiesSettings
 import java.util.Properties
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -15,6 +16,11 @@ class HostRepositoryTest {
         id: String,
         name: String = "host-$id",
     ) = Host(id = id, name = name, hostname = "$id.example.com", username = "root")
+
+    @Test
+    fun freshInstallNotificationsRequireOptIn() {
+        assertFalse(repo().loadSettings().notificationEnabled)
+    }
 
     @Test
     fun hostsCrud() {

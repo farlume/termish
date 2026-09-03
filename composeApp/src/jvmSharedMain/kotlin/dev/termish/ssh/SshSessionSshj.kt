@@ -4,6 +4,7 @@ import java.io.StringReader
 import java.security.MessageDigest
 import java.security.PublicKey
 import java.util.Base64
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -14,6 +15,7 @@ import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.common.Buffer
 import net.schmizz.sshj.common.DisconnectReason
 import net.schmizz.sshj.common.KeyType
+import net.schmizz.sshj.connection.ConnectionException
 import net.schmizz.sshj.connection.channel.AbstractChannel
 import net.schmizz.sshj.connection.channel.direct.Session
 import net.schmizz.sshj.connection.channel.direct.SessionChannel
@@ -620,7 +622,37 @@ class SshSessionSshj(
         }
     }
 
-    override fun isActive(): Boolean = !closed.get()
+    override fun checkAlive(timeoutMillis: Long): Boolean {
+        if (!isActive()) return false
+        return try {
+            // SSH_MSG_IGNORE 只能证明本地 write 没立即失败；带 want-reply 的全局请求
+            // 必须等服务器返回 REQUEST_SUCCESS/FAILURE，才能识别休眠后半开的 TCP。
+            // OpenSSH 不识别该请求时会返回 FAILURE，同样是有效的存活确认。
+            client.connection
+                .sendGlobalRequest("keepalive@openssh.com", true, byteArrayOf())
+                .retrieve(timeoutMillis.coerceAtLeast(1L), TimeUnit.MILLISECONDS)
+            isActive()
+        } catch (e: ConnectionException) {
+            // OpenSSH 对未知全局请求返回 REQUEST_FAILURE；sshj 将它包装成异常，
+            // 但收到这条响应本身已经证明双向 SSH 链路存活。超时/传输异常的
+            // 文案不同，仍按失败处理。
+            val serverRejectedRequest =
+                e.message?.contains("Global request [global req for keepalive@openssh.com] failed") == true
+            if (serverRejectedRequest && isActive()) return true
+            TermLog.w("ssh") { "health check failed: ${e.message}" }
+            false
+        } catch (e: Exception) {
+            TermLog.w("ssh") { "health check failed: ${e.message}" }
+            false
+        }
+    }
+
+    override fun isActive(): Boolean =
+        !closed.get() &&
+            client.isConnected &&
+            client.isAuthenticated &&
+            client.transport.isRunning &&
+            shell?.isOpen == true
 
     // ---------- 指纹 ----------
 

@@ -1,5 +1,7 @@
 package dev.termish.notify
 
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import platform.Foundation.NSURL
 import platform.UIKit.UIApplication
 import platform.UIKit.UIApplicationOpenSettingsURLString
@@ -9,6 +11,8 @@ import platform.UserNotifications.UNAuthorizationOptionSound
 import platform.UserNotifications.UNMutableNotificationContent
 import platform.UserNotifications.UNNotificationRequest
 import platform.UserNotifications.UNUserNotificationCenter
+import platform.darwin.dispatch_async
+import platform.darwin.dispatch_get_main_queue
 
 private val center: UNUserNotificationCenter get() = UNUserNotificationCenter.currentNotificationCenter()
 
@@ -37,9 +41,36 @@ actual fun openNotificationSettings() {
     url?.let { UIApplication.sharedApplication.openURL(it, emptyMap<Any?, Any?>(), null) }
 }
 
-/** 请求通知权限（首次打开通知开关时调用）。 */
-actual fun requestNotificationPermission() {
-    center.requestAuthorizationWithOptions(
-        UNAuthorizationOptionAlert or UNAuthorizationOptionSound or UNAuthorizationOptionBadge,
-    ) { _, _ -> }
-}
+@Composable
+actual fun rememberNotificationPermissionController(): NotificationPermissionController =
+    remember {
+        object : NotificationPermissionController {
+            override fun refresh(onResult: (NotificationPermissionState) -> Unit) {
+                center.getNotificationSettingsWithCompletionHandler { settings ->
+                    val state =
+                        when (settings.authorizationStatus.toInt()) {
+                            1 -> NotificationPermissionState.DENIED
+                            2, 3, 4 -> NotificationPermissionState.GRANTED
+                            else -> NotificationPermissionState.UNKNOWN
+                        }
+                    dispatch_async(dispatch_get_main_queue()) { onResult(state) }
+                }
+            }
+
+            override fun request(onResult: (NotificationPermissionState) -> Unit) {
+                center.requestAuthorizationWithOptions(
+                    UNAuthorizationOptionAlert or UNAuthorizationOptionSound or UNAuthorizationOptionBadge,
+                ) { granted, _ ->
+                    dispatch_async(dispatch_get_main_queue()) {
+                        onResult(
+                            if (granted) {
+                                NotificationPermissionState.GRANTED
+                            } else {
+                                NotificationPermissionState.DENIED
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }

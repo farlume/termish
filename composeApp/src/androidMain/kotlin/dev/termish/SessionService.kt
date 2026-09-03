@@ -16,11 +16,11 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * SSH 会话前台服务：防止切后台时进程被系统回收导致连接断开。
- * 多个会话通过引用计数共享一个前台服务。
+ * 多个会话按 sessionId 幂等登记，共享一个前台服务。
  */
 class SessionService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
@@ -38,7 +38,7 @@ class SessionService : Service() {
     private val renewWakeLock =
         object : Runnable {
             override fun run() {
-                if (activeSessions.get() > 0) scheduleRenew()
+                if (desiredSessionIds.isNotEmpty()) scheduleRenew()
             }
         }
 
@@ -61,27 +61,19 @@ class SessionService : Service() {
         flags: Int,
         startId: Int,
     ): Int {
-        if (intent?.action == ACTION_STOP) {
-            val n = activeSessions.updateAndGet { it.coerceAtLeast(1) - 1 }
-            Log.i(TAG, "stop: activeSessions=$n")
-            if (n == 0) {
-                releaseKeepAliveLocks()
-                handler.removeCallbacks(renewWakeLock)
-                stopSelf()
-            }
+        val sessionId = intent?.getStringExtra(EXTRA_SESSION_ID)
+        Log.i(TAG, "sync: action=${intent?.action} session=$sessionId activeSessions=${desiredSessionIds.size}")
+        // 以调用方已同步更新的目标集合为准，而不是按 Intent 到达顺序增减计数。
+        // 同一 session 在重连时会紧邻发送 stop/start；即使旧 stop 最后才被处理，
+        // 只要新连接仍在目标集合里，就绝不能把服务停掉。
+        if (desiredSessionIds.isEmpty()) {
+            releaseKeepAliveLocks()
+            handler.removeCallbacks(renewWakeLock)
+            stopSelfResult(startId)
             return START_NOT_STICKY
         }
         if (intent == null) {
-            // START_STICKY 重启：进程被杀后计数已归零，没有活跃会话就不该残留
-            // 一个空转的前台服务 + wakelock；进程活着但服务被杀时计数仍有效，正常恢复。
-            if (activeSessions.get() <= 0) {
-                Log.w(TAG, "restarted with no active sessions, stopping")
-                stopSelf()
-                return START_NOT_STICKY
-            }
-            Log.i(TAG, "restarted by system, activeSessions=${activeSessions.get()}")
-        } else {
-            Log.i(TAG, "start: activeSessions=${activeSessions.incrementAndGet()}")
+            Log.i(TAG, "restarted by system, activeSessions=${desiredSessionIds.size}")
         }
         startForegroundCompat()
         isRunning = true
@@ -95,9 +87,9 @@ class SessionService : Service() {
         startId: Int,
         fgsType: Int,
     ) {
-        // Android 15：dataSync 前台服务有 6 小时上限，超时后系统调用这里。
-        // 保活到此为止，释放锁并退出；用户回前台时由生命周期钩子自动重连。
-        Log.w(TAG, "foreground service timed out (Android 15 dataSync 6h limit)")
+        // 防御性处理：若系统对当前前台服务类型触发超时，立即释放资源。
+        // 用户回前台时会重新登记会话，并先验证 SSH 健康状态。
+        Log.w(TAG, "foreground service timed out type=$fgsType")
         releaseKeepAliveLocks()
         handler.removeCallbacks(renewWakeLock)
         stopSelf()
@@ -107,7 +99,6 @@ class SessionService : Service() {
         handler.removeCallbacks(renewWakeLock)
         releaseKeepAliveLocks()
         nextRenewAt = 0
-        activeSessions.set(0)
         isRunning = false
         Log.i(TAG, "destroyed")
         super.onDestroy()
@@ -115,7 +106,7 @@ class SessionService : Service() {
 
     private fun startForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            startForeground(NOTIF_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(NOTIF_ID, buildNotification())
         }
@@ -190,33 +181,49 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session"
         private const val NOTIF_ID = 1
         private const val ACTION_STOP = "dev.termish.SESSION_STOP"
+        private const val EXTRA_SESSION_ID = "session_id"
         private const val RENEW_INTERVAL_MS = 8 * 60 * 60 * 1000L
 
-        /** 活跃会话计数：多会话并发 start/stop 时必须是原子的（曾用 @Volatile Int，并发会丢计数）。 */
-        private val activeSessions = AtomicInteger(0)
+        /**
+         * 活跃会话登记：按 sessionId 幂等增删，避免同一会话重复 start 导致引用计数
+         * 泄漏，或重连期间交错 start/stop 让服务提前退出。
+         */
+        private val desiredSessionIds = ConcurrentHashMap.newKeySet<String>()
 
         /**
-         * 前台服务是否真的在运行。服务被系统停掉（Android 15 dataSync 6h 超时、
-         * 进程内服务被杀）后为 false，上层据此重新拉起保活。
+         * 前台服务是否真的在运行。服务被系统或厂商省电策略停掉后为 false，
+         * 上层据此重新登记仍活跃的会话。
          */
         @Volatile
         var isRunning = false
             private set
 
-        fun start(ctx: Context) {
-            isRunning = true
+        fun start(
+            ctx: Context,
+            sessionId: String,
+        ) {
+            if (!desiredSessionIds.add(sessionId) && isRunning) return
             try {
-                ctx.startForegroundService(Intent(ctx, SessionService::class.java))
+                ctx.startForegroundService(
+                    Intent(ctx, SessionService::class.java).putExtra(EXTRA_SESSION_ID, sessionId),
+                )
             } catch (e: Exception) {
-                isRunning = false
+                // 保留目标登记：当前后台限制可能是暂时的，回到前台时会再次同步。
                 Log.e(TAG, "startForegroundService failed", e)
             }
         }
 
-        fun stop(ctx: Context) {
-            if (activeSessions.get() <= 0) return
+        fun stop(
+            ctx: Context,
+            sessionId: String,
+        ) {
+            if (!desiredSessionIds.remove(sessionId)) return
             try {
-                ctx.startService(Intent(ctx, SessionService::class.java).setAction(ACTION_STOP))
+                ctx.startService(
+                    Intent(ctx, SessionService::class.java)
+                        .setAction(ACTION_STOP)
+                        .putExtra(EXTRA_SESSION_ID, sessionId),
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "stop via startService failed", e)
             }

@@ -19,14 +19,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.termish.notify.NotificationEvent
+import dev.termish.notify.NotificationPermissionController
+import dev.termish.notify.NotificationPermissionState
 import dev.termish.notify.openNotificationSettings
-import dev.termish.notify.requestNotificationPermission
 import dev.termish.util.monospaceFontFamily
 
 /**
@@ -37,11 +36,29 @@ import dev.termish.util.monospaceFontFamily
 fun SettingsNotificationScreen(
     enabled: Boolean,
     disabledEvents: Set<String>,
+    permissionState: NotificationPermissionState,
+    permissionController: NotificationPermissionController,
+    onPermissionStateChange: (NotificationPermissionState) -> Unit,
     onChangeEnabled: (Boolean) -> Unit,
     onChangeEvent: (String, Boolean) -> Unit,
     onBack: () -> Unit,
 ) {
     val s = LocalAppStrings.current
+    val effectiveEnabled = enabled && permissionState == NotificationPermissionState.GRANTED
+
+    fun setEnabled(next: Boolean) {
+        if (!next) {
+            onChangeEnabled(false)
+        } else if (permissionState == NotificationPermissionState.GRANTED) {
+            onChangeEnabled(true)
+        } else {
+            permissionController.request { state ->
+                onPermissionStateChange(state)
+                onChangeEnabled(state == NotificationPermissionState.GRANTED)
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp),
@@ -63,9 +80,7 @@ fun SettingsNotificationScreen(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        val next = !enabled
-                        onChangeEnabled(next)
-                        if (next) requestNotificationPermission()
+                        setEnabled(!effectiveEnabled)
                     }.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -76,11 +91,8 @@ fun SettingsNotificationScreen(
                     modifier = Modifier.weight(1f),
                 )
                 Switch(
-                    checked = enabled,
-                    onCheckedChange = {
-                        onChangeEnabled(it)
-                        if (it) requestNotificationPermission()
-                    },
+                    checked = effectiveEnabled,
+                    onCheckedChange = ::setEnabled,
                 )
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
@@ -125,12 +137,22 @@ fun SettingsNotificationScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    s.settingsNotificationsSystem,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f),
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        s.settingsNotificationsSystem,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        when (permissionState) {
+                            NotificationPermissionState.GRANTED -> s.permissions.notificationGranted
+                            NotificationPermissionState.DENIED -> s.permissions.notificationDenied
+                            NotificationPermissionState.UNKNOWN -> s.permissions.notificationUnknown
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                    )
+                }
             }
         }
     }

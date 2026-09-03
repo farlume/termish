@@ -218,6 +218,7 @@ data class AppStrings(
     val settingsNotificationsEnabled: String,
     val settingsNotificationsEvents: String,
     val settingsNotificationsSystem: String,
+    val permissions: PermissionStrings,
     /** 通用开/关值（通知行显示）。 */
     val settingsOn: String,
     val settingsOff: String,
@@ -277,6 +278,8 @@ data class AppStrings(
     val terminalCopied: String,
     val terminalPasted: String,
     val terminalReconnectingN: (Int) -> String,
+    val terminalRestoringAfterBackgroundN: (Int) -> String,
+    val terminalRestoringAfterNetworkChangeN: (Int) -> String,
     /** mosh 链路失联提示：距上次收到对端包的秒数（会话保持中，恢复自动续传）。 */
     val terminalMoshLostContact: (Int) -> String,
     val terminalConnected: String,
@@ -482,6 +485,25 @@ data class NativeAgentStrings(
 
 /** 语音输入文案（同 GitStrings：嵌套子类缓解 JVM 255 参数上限）。 */
 @Immutable
+data class PermissionStrings(
+    val notificationGranted: String,
+    val notificationDenied: String,
+    val notificationUnknown: String,
+    val backgroundProtection: String,
+    val backgroundProtectionExempt: String,
+    val backgroundProtectionManaged: String,
+    val backgroundTitle: String,
+    val backgroundBody: String,
+    val backgroundGenericHint: String,
+    val backgroundOppoHint: String,
+    val backgroundXiaomiHint: String,
+    val backgroundVivoHint: String,
+    val backgroundSamsungHint: String,
+    val openSettings: String,
+    val notNow: String,
+)
+
+@Immutable
 data class VoiceStrings(
     /** 设置页入口（通用组）。 */
     val settingsVoice: String,
@@ -489,6 +511,8 @@ data class VoiceStrings(
     val settingsVoiceTitle: String,
     /** 总开关行。 */
     val settingsVoiceEnabled: String,
+    /** 麦克风永久拒绝后的系统设置入口。 */
+    val settingsMicrophonePermission: String,
     /** 使用说明。 */
     val settingsVoiceHint: String,
     /** API Key 输入框 label。 */
@@ -922,6 +946,24 @@ private val EnStrings =
         settingsNotificationsEnabled = "Enable notifications",
         settingsNotificationsEvents = "Events",
         settingsNotificationsSystem = "System notification settings",
+        permissions =
+            PermissionStrings(
+                notificationGranted = "System permission allowed",
+                notificationDenied = "System permission required",
+                notificationUnknown = "System permission not requested",
+                backgroundProtection = "Background connection protection",
+                backgroundProtectionExempt = "System optimization relaxed",
+                backgroundProtectionManaged = "Needs confirmation",
+                backgroundTitle = "Keep SSH connected in the background",
+                backgroundBody = "Some Android devices suspend network access a few seconds after Termish leaves the foreground. Allow unrestricted background activity to keep active SSH sessions connected. This can increase battery use.",
+                backgroundGenericHint = "In App info, open Battery and choose Unrestricted or Allow background activity.",
+                backgroundOppoHint = "On OPPO, OnePlus, and realme: Battery usage → Allow background activity → Fully allow background behavior.",
+                backgroundXiaomiHint = "On Xiaomi, Redmi, and POCO: Battery saver → No restrictions; enable Autostart if available.",
+                backgroundVivoHint = "On vivo and iQOO: Battery → Background power consumption management → Allow high background usage.",
+                backgroundSamsungHint = "On Samsung: Battery → Background usage limits → Never sleeping apps, then add Termish.",
+                openSettings = "Open settings",
+                notNow = "Not now",
+            ),
         settingsOn = "On",
         settingsOff = "Off",
         settingsDiagnostics = "Diagnostics",
@@ -971,6 +1013,7 @@ private val EnStrings =
                 settingsVoice = "Voice input",
                 settingsVoiceTitle = "Voice input",
                 settingsVoiceEnabled = "Enable voice input",
+                settingsMicrophonePermission = "Microphone permission settings",
                 settingsVoiceHint = "Hold the mic key in the terminal toolbar to speak; release to send the recognized text as terminal input. Powered by Volcano Engine streaming ASR (Doubao Voice).",
                 settingsVoiceApiKey = "API Key",
                 settingsVoiceApiKeyHint = "Get it from Volcano Engine console → Speech → API Key management.",
@@ -1287,6 +1330,8 @@ private val EnStrings =
         terminalCopied = "Copied",
         terminalPasted = "Pasted",
         terminalReconnectingN = { "Connection lost, reconnecting (attempt $it)…" },
+        terminalRestoringAfterBackgroundN = { "Background connection expired, restoring (attempt $it)…" },
+        terminalRestoringAfterNetworkChangeN = { "Network changed, restoring connection (attempt $it)…" },
         terminalMoshLostContact = { "No contact from server for $it s — session held, resumes on network recovery" },
         terminalConnected = "Connected",
         terminalLinkLost = "No contact",
@@ -1513,6 +1558,24 @@ private val ZhStrings =
         settingsNotificationsEnabled = "开启通知",
         settingsNotificationsEvents = "通知事件",
         settingsNotificationsSystem = "系统通知设置",
+        permissions =
+            PermissionStrings(
+                notificationGranted = "系统权限已允许",
+                notificationDenied = "需要系统通知权限",
+                notificationUnknown = "尚未请求系统权限",
+                backgroundProtection = "后台连接保护",
+                backgroundProtectionExempt = "系统优化已放宽",
+                backgroundProtectionManaged = "需要确认",
+                backgroundTitle = "保持 SSH 后台连接",
+                backgroundBody = "部分 Android 手机会在 Termish 切到后台几秒后暂停网络。允许后台活动可让活跃 SSH 会话保持连接，但会增加一定耗电。",
+                backgroundGenericHint = "请在应用详情中进入“电池”，选择“不受限制”或“允许后台活动”。",
+                backgroundOppoHint = "OPPO、一加、realme：应用耗电管理 → 允许后台活动 → 完全允许后台行为。",
+                backgroundXiaomiHint = "小米、Redmi、POCO：省电策略 → 无限制；如有“自启动”也请开启。",
+                backgroundVivoHint = "vivo、iQOO：电池 → 后台耗电管理 → 允许后台高耗电。",
+                backgroundSamsungHint = "三星：电池 → 后台使用限制 → 从不自动休眠的应用，添加 Termish。",
+                openSettings = "去设置",
+                notNow = "暂不",
+            ),
         settingsOn = "开",
         settingsOff = "关",
         settingsDiagnostics = "诊断",
@@ -1562,6 +1625,7 @@ private val ZhStrings =
                 settingsVoice = "语音输入",
                 settingsVoiceTitle = "语音输入",
                 settingsVoiceEnabled = "启用语音输入",
+                settingsMicrophonePermission = "麦克风权限设置",
                 settingsVoiceHint = "按住终端工具栏的麦克风键说话，松手自动把识别出的文字发送到终端。由火山引擎流式语音识别（豆包语音）提供能力。",
                 settingsVoiceApiKey = "API Key",
                 settingsVoiceApiKeyHint = "在火山引擎控制台「语音技术 → API Key 管理」中获取。",
@@ -1866,6 +1930,8 @@ private val ZhStrings =
         terminalCopied = "已复制",
         terminalPasted = "已粘贴",
         terminalReconnectingN = { "连接中断，正在重连（第 $it 次）…" },
+        terminalRestoringAfterBackgroundN = { "后台连接已失效，正在恢复（第 $it 次）…" },
+        terminalRestoringAfterNetworkChangeN = { "网络已变化，正在恢复连接（第 $it 次）…" },
         terminalMoshLostContact = { "与服务器失去联系 $it 秒——会话保持中，网络恢复后自动续传" },
         terminalConnected = "已连接",
         terminalLinkLost = "失联中",

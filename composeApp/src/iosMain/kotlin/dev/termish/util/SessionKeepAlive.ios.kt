@@ -1,11 +1,11 @@
 package dev.termish.util
 
 actual object SessionKeepAlive {
-    actual fun onSessionStart() {}
+    actual fun onSessionStart(sessionId: String) {}
 
-    actual fun onSessionEnd() {}
+    actual fun onSessionEnd(sessionId: String) {}
 
     actual fun isActive(): Boolean = true
 
-    actual fun requiresSshReconnectOnForeground(): Boolean = true
+    actual fun foregroundSshRecovery(): ForegroundSshRecovery = ForegroundSshRecovery.REBUILD
 }

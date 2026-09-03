@@ -224,6 +224,15 @@ interface SshSession {
     /** 主动关闭会话。 */
     fun close()
 
+    /**
+     * 对已建立的 SSH 传输做端到端健康检查。
+     *
+     * [isActive] 只代表客户端对象尚未主动关闭，设备休眠或网络切换后 TCP 可能
+     * 已经成为半开连接。支持的平台应发送需要服务器响应的 SSH 请求，并在
+     * [timeoutMillis] 内确认；默认实现仅供没有主动探测能力的平台保守兜底。
+     */
+    fun checkAlive(timeoutMillis: Long = 2_500L): Boolean = isActive()
+
     fun isActive(): Boolean
 }
 

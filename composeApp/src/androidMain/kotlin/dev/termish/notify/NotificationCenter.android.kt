@@ -6,6 +6,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.core.app.NotificationCompat
 import dev.termish.AppContext
 import dev.termish.MainActivity
@@ -83,11 +87,42 @@ actual fun openNotificationSettings() {
     context.startActivity(intent)
 }
 
-/** 请求通知权限（Android 13+；从设置页打开通知开关时调用）。 */
-actual fun requestNotificationPermission() {
-    val activity = AppContext.currentActivity ?: return
-    if (Build.VERSION.SDK_INT >= 33) {
-        activity.requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001)
+private class NotificationPermissionCallback {
+    var onResult: ((NotificationPermissionState) -> Unit)? = null
+}
+
+@Composable
+actual fun rememberNotificationPermissionController(): NotificationPermissionController {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val pending = remember { NotificationPermissionCallback() }
+    val launcher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            pending.onResult?.invoke(
+                if (granted) NotificationPermissionState.GRANTED else NotificationPermissionState.DENIED,
+            )
+            pending.onResult = null
+        }
+    return remember(context, launcher) {
+        object : NotificationPermissionController {
+            override fun refresh(onResult: (NotificationPermissionState) -> Unit) {
+                val granted =
+                    Build.VERSION.SDK_INT < 33 ||
+                        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+                onResult(
+                    if (granted) NotificationPermissionState.GRANTED else NotificationPermissionState.DENIED,
+                )
+            }
+
+            override fun request(onResult: (NotificationPermissionState) -> Unit) {
+                if (Build.VERSION.SDK_INT < 33) {
+                    onResult(NotificationPermissionState.GRANTED)
+                    return
+                }
+                pending.onResult = onResult
+                launcher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 }
 

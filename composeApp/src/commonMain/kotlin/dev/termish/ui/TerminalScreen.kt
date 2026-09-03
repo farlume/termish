@@ -1004,7 +1004,14 @@ private fun TerminalBody(
                     visible = controller.status == ConnStatus.CONNECTING,
                     text =
                         if (controller.reconnectCount > 0) {
-                            s.terminalReconnectingN(controller.reconnectCount)
+                            when (controller.reconnectCause) {
+                                SessionReconnectCause.FOREGROUND_RESUME ->
+                                    s.terminalRestoringAfterBackgroundN(controller.reconnectCount)
+                                SessionReconnectCause.NETWORK_CHANGED ->
+                                    s.terminalRestoringAfterNetworkChangeN(controller.reconnectCount)
+                                SessionReconnectCause.CONNECTION_LOST, null ->
+                                    s.terminalReconnectingN(controller.reconnectCount)
+                            }
                         } else {
                             s.terminalConnecting
                         },

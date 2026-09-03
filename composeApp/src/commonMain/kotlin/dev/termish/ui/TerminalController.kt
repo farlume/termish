@@ -42,6 +42,12 @@ import kotlinx.datetime.Clock
 
 enum class ConnStatus { IDLE, CONNECTING, AUTH, CONNECTED, CLOSED, ERROR }
 
+enum class SessionReconnectCause {
+    CONNECTION_LOST,
+    NETWORK_CHANGED,
+    FOREGROUND_RESUME,
+}
+
 /** mosh 链路失联提示阈值（秒）：双方心跳约 3s，5s 避免单包丢失抖动。
  *  失联 banner 与状态点共用。 */
 internal const val LINK_LOST_THRESHOLD_SECONDS = 5
@@ -112,6 +118,10 @@ class TerminalController(
 
     /** 当前重连尝试次数：>0 且状态为 CONNECTING 时表示正在自动重连。 */
     var reconnectCount by mutableStateOf(0)
+        internal set
+
+    /** 最近一次自动恢复原因；仅在重连期间展示，连接成功或手动关闭后清空。 */
+    var reconnectCause by mutableStateOf<SessionReconnectCause?>(null)
         internal set
 
     /** mosh 链路失联秒数（0=健康；达到阈值时 UI 显示「失去联系」banner，会话仍保持）。 */
@@ -241,6 +251,9 @@ class TerminalController(
 
     /** 自动重连的延迟任务：close() 时取消，防止关闭后仍被延迟协程拉起。 */
     internal var reconnectJob: Job? = null
+
+    /** 无损健康检查任务：前台恢复/网络变化共用，避免同一连接并发探测。 */
+    internal var healthCheckJob: Job? = null
 
     /** Mosh 主题注入：非空表示本会话开启（见 SessionConnector.prepareThemeSync）。 */
     internal var moshThemePayload: ByteArray? = null
@@ -376,77 +389,87 @@ class TerminalController(
     /** 是否允许自动重连（由打开会话时的设置决定）。 */
     val autoReconnectEnabled: Boolean get() = autoReconnect
 
-    internal fun callbacks(trace: TermTrace.Span? = null) =
-        object : SshCallbacks {
-            override fun onTraceStep(step: String) {
-                trace?.step(step)
-            }
+    internal fun callbacks(
+        trace: TermTrace.Span? = null,
+        generation: Int = connectionGeneration,
+    ) = object : SshCallbacks {
+        override fun onTraceStep(step: String) {
+            trace?.step(step)
+        }
 
-            override suspend fun onOutput(data: ByteArray) {
-                enqueueOutput(data)
-            }
+        override suspend fun onOutput(data: ByteArray) {
+            if (generation == connectionGeneration) enqueueOutput(data)
+        }
 
-            override suspend fun onStderr(data: ByteArray) {
-                enqueueOutput(data)
-            }
+        override suspend fun onStderr(data: ByteArray) {
+            if (generation == connectionGeneration) enqueueOutput(data)
+        }
 
-            override fun onExitStatus(status: Int) {
-                exitStatus = status
-            }
+        override fun onExitStatus(status: Int) {
+            if (generation == connectionGeneration) exitStatus = status
+        }
 
-            override fun onClosed(reason: String?) {
-                if (swallowClosed) return // Mosh 成功路径主动关闭引导通道
-                if (status == ConnStatus.CLOSED) return // 用户主动断开
-                connector.onUnexpectedClose(reason)
+        override fun onClosed(reason: String?) {
+            if (generation != connectionGeneration) {
+                TermLog.d("ssh") { "ignore stale close ${host.name} generation=$generation current=$connectionGeneration" }
+                return
             }
+            if (swallowClosed) return // Mosh 成功路径主动关闭引导通道
+            if (status == ConnStatus.CLOSED) return // 用户主动断开
+            connector.onUnexpectedClose(reason)
+        }
 
-            override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
-                val req = AuthPromptRequest(prompt)
-                authPrompt = req
-                // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
-                val r = awaitAuthPromptAnswer(req.deferred)
-                if (authPrompt === req && r == null) authPrompt = null
-                return r
-            }
+        override suspend fun onPrompt(prompt: AuthPrompt): List<String>? {
+            if (generation != connectionGeneration) return null
+            val req = AuthPromptRequest(prompt)
+            authPrompt = req
+            // 超时按取消处理：弹窗随页面销毁/长期无人应答时不让连接协程悬挂
+            val r = awaitAuthPromptAnswer(req.deferred)
+            if (authPrompt === req && r == null) authPrompt = null
+            return if (generation == connectionGeneration) r else null
+        }
 
-            override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
-                // 优先读仓库里最新保存的指纹：连接成功后 touchConnected 只写了仓库，
-                // 内存中的 Host（AppRoot hosts 状态/本控制器）不会刷新，直接读 host 的
-                // 话同一进程内首次连接后每次重连都会看到 null 而重复弹信任窗。
-                val known =
-                    repository.getHost(host.id)?.knownHostFingerprint
-                        ?: host.knownHostFingerprint
-                if (known != null) {
-                    if (known == hostKey.fingerprintSha256) {
-                        TermLog.d("ssh") { "hostkey ok ${host.name} ${hostKey.algorithm}" }
-                        return true
-                    }
-                    // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
-                    // 改为弹窗让用户核对新旧指纹后决定。
-                    TermLog.w("ssh") { "hostkey CHANGED ${host.name}: $known -> ${hostKey.fingerprintSha256}" }
-                    val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
-                    hostKeyPrompt = req
-                    val ok = awaitHostKeyAnswer(req)
-                    // 接受即采纳新指纹：即使后续认证失败也不重复弹窗（TOFU 信任的是主机密钥）
-                    if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
-                    return ok
-                }
-                // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
-                if (!repository.loadSettings().verifyHostKeyOnFirstUse) {
-                    TermLog.d("ssh") { "hostkey trust-on-first-use skipped (setting off) ${host.name}" }
+        override fun verifyHostKey(hostKey: HostKeyInfo): Boolean {
+            if (generation != connectionGeneration) return false
+            // 优先读仓库里最新保存的指纹：连接成功后 touchConnected 只写了仓库，
+            // 内存中的 Host（AppRoot hosts 状态/本控制器）不会刷新，直接读 host 的
+            // 话同一进程内首次连接后每次重连都会看到 null 而重复弹信任窗。
+            val known =
+                repository.getHost(host.id)?.knownHostFingerprint
+                    ?: host.knownHostFingerprint
+            if (known != null) {
+                if (known == hostKey.fingerprintSha256) {
+                    TermLog.d("ssh") { "hostkey ok ${host.name} ${hostKey.algorithm}" }
                     return true
                 }
-                // TOFU：首次连接由用户确认
-                TermLog.d("ssh") { "hostkey TOFU prompt ${host.name} ${hostKey.fingerprintSha256}" }
-                val req = HostKeyRequest(hostKey)
+                // 指纹已变更：不再硬失败（否则改地址/服务器换钥后永远连不上、且无重置入口），
+                // 改为弹窗让用户核对新旧指纹后决定。
+                TermLog.w("ssh") { "hostkey CHANGED ${host.name}: $known -> ${hostKey.fingerprintSha256}" }
+                val req = HostKeyRequest(hostKey, changed = true, previousFingerprint = known)
                 hostKeyPrompt = req
                 val ok = awaitHostKeyAnswer(req)
-                // 点信任即记录指纹，与认证成败解耦：否则认证失败（如密码错）时
-                // 每次连接都重复弹授信窗
+                if (generation != connectionGeneration) return false
+                // 接受即采纳新指纹：即使后续认证失败也不重复弹窗（TOFU 信任的是主机密钥）
                 if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
                 return ok
             }
+            // 首次连接：用户关闭了「首次连接确认」则直接信任（设置里仍可看到指纹）
+            if (!repository.loadSettings().verifyHostKeyOnFirstUse) {
+                TermLog.d("ssh") { "hostkey trust-on-first-use skipped (setting off) ${host.name}" }
+                return true
+            }
+            // TOFU：首次连接由用户确认
+            TermLog.d("ssh") { "hostkey TOFU prompt ${host.name} ${hostKey.fingerprintSha256}" }
+            val req = HostKeyRequest(hostKey)
+            hostKeyPrompt = req
+            val ok = awaitHostKeyAnswer(req)
+            if (generation != connectionGeneration) return false
+            // 点信任即记录指纹，与认证成败解耦：否则认证失败（如密码错）时
+            // 每次连接都重复弹授信窗
+            if (ok) repository.recordHostKey(host.id, hostKey.fingerprintSha256)
+            return ok
         }
+    }
 
     /** 等待主机密钥确认并兜底清弹窗状态（正常应答已被 respondToHostKey 清过，超时按拒绝）。 */
     private fun awaitHostKeyAnswer(req: HostKeyRequest): Boolean {
@@ -513,20 +536,31 @@ class TerminalController(
     }
 
     internal fun startKeepAlive() {
-        // keepAliveActive 只挡同进程内的重复计数；前台服务被系统停掉（Android 15
-        // dataSync 6h 超时、服务被杀）后 isActive() 为 false，必须重新拉起服务
+        // Android 按 sessionId 幂等登记；服务被系统停掉后 isActive() 为 false，
+        // 即使控制器仍记得 keepAliveActive，也要重新登记并拉起服务。
         if (!keepAliveActive || !SessionKeepAlive.isActive()) {
             keepAliveActive = true
-            SessionKeepAlive.onSessionStart()
+            SessionKeepAlive.onSessionStart(sessionId)
         }
+    }
+
+    /** 保活服务重建后按 sessionId 重新登记；Android 幂等，其他平台为空操作。 */
+    internal fun restoreKeepAliveRegistration() {
+        if (keepAliveActive && isConnected()) SessionKeepAlive.onSessionStart(sessionId)
     }
 
     internal fun stopKeepAlive() {
         if (keepAliveActive) {
             keepAliveActive = false
-            SessionKeepAlive.onSessionEnd()
+            SessionKeepAlive.onSessionEnd(sessionId)
         }
     }
+
+    /** 前台恢复或默认网络变化时静默探测；健康连接不会改变 UI 状态。 */
+    internal fun verifySshConnection(cause: SessionReconnectCause) = connector.verifySshConnection(cause)
+
+    /** 平台明确无法保留 socket（iOS 挂起）时主动重建，并显示真实恢复语义。 */
+    internal fun forceReconnect(cause: SessionReconnectCause) = connector.forceReconnect(cause)
 
     fun close() {
         // 先使所有在途建连失效；它们即使在底层阻塞调用返回，
@@ -539,6 +573,9 @@ class TerminalController(
         // 取消挂起的自动重连，防止 close 后延迟任务又拉起连接
         reconnectJob?.cancel()
         reconnectJob = null
+        healthCheckJob?.cancel()
+        healthCheckJob = null
+        reconnectCause = null
         // 完成挂起的认证/主机密钥弹窗，释放阻塞在 await 上的 SSH 线程
         authPrompt?.let {
             authPrompt = null

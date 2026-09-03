@@ -86,9 +86,11 @@ data class AppSettings(
     /** OSC 52：允许远端程序写系统剪贴板（nvim/tmux 复制会同步到本机）。 */
     val osc52Clipboard: Boolean = true,
     /** 通知总开关（后台事件通知，如连接断开/重连失败）。 */
-    val notificationEnabled: Boolean = true,
+    val notificationEnabled: Boolean = false,
     /** 被关闭的通知事件 id（见 NotificationEvent）；空 = 全部开启。 */
     val notificationDisabledEvents: Set<String> = emptySet(),
+    /** Android 首次建立 SSH 后是否已展示后台连接保护说明。 */
+    val backgroundProtectionPrompted: Boolean = false,
     /** 语音输入总开关（终端工具栏与 Agent 输入框麦克风键）。 */
     val voiceInputEnabled: Boolean = false,
     /**

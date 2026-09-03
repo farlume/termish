@@ -1,5 +1,6 @@
 package dev.termish.notify
 
+import androidx.compose.runtime.Composable
 import dev.termish.data.AppSettings
 import dev.termish.util.TermLog
 import kotlin.concurrent.Volatile
@@ -77,5 +78,18 @@ expect fun showPlatformNotification(
 /** 打开系统通知设置页（设置页「通知」入口）。 */
 expect fun openNotificationSettings()
 
-/** 请求通知权限（Android 13+；打开通知开关时调用）。 */
-expect fun requestNotificationPermission()
+enum class NotificationPermissionState {
+    UNKNOWN,
+    GRANTED,
+    DENIED,
+}
+
+/** 通知权限控制器：支持异步查询、申请以及系统设置返回后的状态刷新。 */
+interface NotificationPermissionController {
+    fun refresh(onResult: (NotificationPermissionState) -> Unit)
+
+    fun request(onResult: (NotificationPermissionState) -> Unit)
+}
+
+@Composable
+expect fun rememberNotificationPermissionController(): NotificationPermissionController

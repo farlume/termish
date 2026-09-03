@@ -87,6 +87,7 @@ class SshjIntegrationTest {
 
         assertNotNull(infoRef.get())
         assertContains(infoRef.get()!!.hostKey!!.fingerprintSha256, "SHA256:")
+        assertTrue(session.checkAlive(2_500), "服务器应响应 SSH 全局请求健康探测")
 
         session.sendData("echo Termish_SSHJ_OK\nexit 0\n".encodeToByteArray())
 

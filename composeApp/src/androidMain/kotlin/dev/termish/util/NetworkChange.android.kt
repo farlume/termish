@@ -16,8 +16,8 @@ import androidx.compose.ui.platform.LocalContext
 private const val LOST_CONFIRM_MS = 1_000L
 
 /**
- * Android：监听默认网络变化。网络切换（Wi-Fi ↔ 流量、断线重连）时立即回调，
- * 让上层快速重连 SSH/Mosh，而不是等 TCP 超时才发现。
+ * Android：监听默认网络变化。网络切换（Wi-Fi ↔ 流量、同类型网络更换、VPN）
+ * 时通知上层验证 SSH；Mosh 继续依靠协议自身的漫游能力。
  */
 @Composable
 actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Unit {
@@ -29,10 +29,11 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
     val latestOnChange by rememberUpdatedState(onChange)
     val unregister =
         remember(cm) {
-            // 传输类型基线（-1=未知）；注册后系统会立即回调一次 onAvailable，只记录不触发
+            // 默认网络与传输类型基线；注册后系统会立即回调一次，只记录不触发。
+            var lastNetwork: Network? = null
             var lastTransport = -1
-            var lastLostAt = 0L // LOST 节流：与切换节流分开，避免吞掉紧随的 TRANSPORT_CHANGED
-            var lastSwitchAt = 0L // TRANSPORT_CHANGED 节流
+            var lastLostAt = 0L // LOST 节流：与切换节流分开，避免吞掉紧随的默认网络变化
+            var lastSwitchAt = 0L // DEFAULT_NETWORK_CHANGED 节流
             val callbackHandler = Handler(Looper.getMainLooper())
             var pendingLost: Runnable? = null
 
@@ -50,20 +51,31 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
                     else -> 3
                 }
 
-            fun handleTransport(t: Int) {
+            fun notifyNetworkChanged() {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastSwitchAt >= 3_000) {
+                    lastSwitchAt = now
+                    latestOnChange(NetworkChangeKind.DEFAULT_NETWORK_CHANGED)
+                }
+            }
+
+            fun handleNetwork(
+                network: Network,
+                t: Int,
+            ) {
                 if (t == -1) return // capabilities 未就绪：等 onCapabilitiesChanged 再判，避免假"传输切换"
-                if (lastTransport == -1) {
+                if (lastNetwork == null || lastTransport == -1) {
+                    lastNetwork = network
                     lastTransport = t // 首次注册回调：建立基线，不触发
                     return
                 }
-                if (t != lastTransport) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastSwitchAt >= 3_000) { // 防抖动：3 秒内只触发一次
-                        lastSwitchAt = now
-                        latestOnChange(NetworkChangeKind.TRANSPORT_CHANGED)
-                    }
-                }
+                // Network handle 改变可覆盖同为 Wi-Fi 的 AP/网络更换；只看 transport
+                // 会漏掉这种 IP 变化。capabilities 在同一 handle 上抖动时，只有
+                // transport 真变化才需要验证旧 SSH。
+                val changed = network != lastNetwork || t != lastTransport
+                lastNetwork = network
                 lastTransport = t
+                if (changed) notifyNetworkChanged()
             }
 
             val callback =
@@ -75,7 +87,7 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
                         cancelPendingLost()
                         // onAvailable 时 capabilities 未必就绪（会拿到 null）；真正就绪后
                         // onCapabilitiesChanged 还会回调一次，由它兜底判定，不会丢事件
-                        handleTransport(transportOf(cm.getNetworkCapabilities(network)))
+                        handleNetwork(network, transportOf(cm.getNetworkCapabilities(network)))
                     }
 
                     override fun onCapabilitiesChanged(
@@ -83,7 +95,7 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
                         caps: NetworkCapabilities,
                     ) {
                         cancelPendingLost()
-                        handleTransport(transportOf(caps))
+                        handleNetwork(network, transportOf(caps))
                     }
 
                     override fun onLost(network: Network) {
@@ -95,8 +107,8 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
                                 val active = cm.activeNetwork
                                 if (active != null) {
                                     // 旧默认网络已丢，但新默认网络已经可用：这是切换而非
-                                    // 完全断网。交给传输类型判断，不发 LOST。
-                                    handleTransport(transportOf(cm.getNetworkCapabilities(active)))
+                                    // 完全断网。交给默认网络判断，不发 LOST。
+                                    handleNetwork(active, transportOf(cm.getNetworkCapabilities(active)))
                                     return@Runnable
                                 }
                                 val now = SystemClock.elapsedRealtime()
@@ -107,7 +119,7 @@ actual fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Un
                             }
                         pendingLost = confirmLost
                         callbackHandler.postDelayed(confirmLost, LOST_CONFIRM_MS)
-                        // 不重置 lastTransport：新网络出现后仍能识别传输类型变化。
+                        // 不重置基线：新网络出现后仍能识别默认网络变化。
                     }
                 }
             cm.registerDefaultNetworkCallback(callback, callbackHandler)

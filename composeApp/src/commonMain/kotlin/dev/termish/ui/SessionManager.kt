@@ -2,13 +2,13 @@ package dev.termish.ui
 
 import androidx.compose.runtime.mutableStateListOf
 import dev.termish.crypto.Sha256
-import dev.termish.data.ConnectionMode
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.HostRepository.RecentSftpEntry
 import dev.termish.data.HostRepository.RecentTerminalEntry
 import dev.termish.data.resolveCredentials
 import dev.termish.ssh.SftpSession
+import dev.termish.util.ForegroundSshRecovery
 import dev.termish.util.TermLog
 import dev.termish.util.base64Encode
 import kotlinx.datetime.Clock
@@ -33,6 +33,7 @@ data class SftpSessionEntry(
 internal enum class BackgroundReconnectAction {
     NONE,
     RECONNECT,
+    VERIFY,
     REBUILD,
 }
 
@@ -42,15 +43,18 @@ internal fun backgroundReconnectAction(
     activeSessionIds: Set<String>,
     autoReconnect: Boolean,
     status: ConnStatus,
-    connectionMode: ConnectionMode,
-    forceSshReconnect: Boolean,
+    usesMoshTransport: Boolean,
+    recovery: ForegroundSshRecovery,
 ): BackgroundReconnectAction =
     when {
         sessionId !in activeSessionIds || !autoReconnect -> BackgroundReconnectAction.NONE
-        forceSshReconnect &&
-            connectionMode == ConnectionMode.SSH &&
-            (status == ConnStatus.CONNECTED || status == ConnStatus.AUTH) -> BackgroundReconnectAction.REBUILD
         status == ConnStatus.CLOSED || status == ConnStatus.ERROR -> BackgroundReconnectAction.RECONNECT
+        recovery == ForegroundSshRecovery.REBUILD &&
+            !usesMoshTransport &&
+            (status == ConnStatus.CONNECTED || status == ConnStatus.AUTH) -> BackgroundReconnectAction.REBUILD
+        recovery == ForegroundSshRecovery.VERIFY &&
+            !usesMoshTransport &&
+            status == ConnStatus.CONNECTED -> BackgroundReconnectAction.VERIFY
         else -> BackgroundReconnectAction.NONE
     }
 
@@ -86,11 +90,10 @@ class SessionManager(
     /**
      * 回前台：把退后台期间掉线的活跃会话自动重连（保留缓冲）。
      *
-     * [forceSshReconnect] 用于 iOS 挂起或 Android 保活服务被系统停止的场景：
-     * socket 可能已失效，但 reader 尚未恢复到足以触发 onClosed，状态仍假装
-     * CONNECTED。主动关旧代再重连可避免回前台后第一次输入才发现连接已死。
+     * [recovery] 由平台决定：iOS 挂起后直接重建；Android 保活服务被停止时
+     * 只做端到端探测，避免把健康 socket 误杀；desktop 保持原连接。
      */
-    fun reconnectDroppedSessions(forceSshReconnect: Boolean = false) {
+    fun reconnectDroppedSessions(recovery: ForegroundSshRecovery = ForegroundSshRecovery.KEEP) {
         if (activeAtBackground.isEmpty()) return
         val ids = activeAtBackground.toSet()
         activeAtBackground.clear()
@@ -101,20 +104,28 @@ class SessionManager(
                     activeSessionIds = ids,
                     autoReconnect = controller.autoReconnectEnabled,
                     status = controller.status,
-                    connectionMode = controller.host.connectionMode,
-                    forceSshReconnect = forceSshReconnect,
+                    usesMoshTransport = controller.moshSession != null,
+                    recovery = recovery,
                 )
             ) {
                 BackgroundReconnectAction.REBUILD -> {
                     TermLog.i("session") { "foreground rebuild ${controller.host.name} session=${controller.sessionId}" }
-                    controller.close()
-                    controller.reconnect()
+                    controller.forceReconnect(SessionReconnectCause.FOREGROUND_RESUME)
                 }
 
                 BackgroundReconnectAction.RECONNECT -> controller.reconnect()
+                BackgroundReconnectAction.VERIFY -> {
+                    TermLog.i("session") { "foreground verify ${controller.host.name} session=${controller.sessionId}" }
+                    controller.verifySshConnection(SessionReconnectCause.FOREGROUND_RESUME)
+                }
                 BackgroundReconnectAction.NONE -> Unit
             }
         }
+    }
+
+    /** Android 保活服务重建后重新登记所有仍连接的会话；sessionId 集合保证幂等。 */
+    fun restoreKeepAliveRegistrations() {
+        sessions.forEach { it.restoreKeepAliveRegistration() }
     }
 
     /** 恢复上次运行时留下的会话列表（进程死亡连接必死，恢复为未连接状态，点击重连）。

@@ -46,7 +46,9 @@ import dev.termish.data.AsrProvider
 import dev.termish.data.AsrProviderType
 import dev.termish.data.newId
 import dev.termish.util.monospaceFontFamily
+import dev.termish.util.openApplicationSettings
 import dev.termish.voice.VolcAsrProtocol
+import dev.termish.voice.rememberMicPermissionRequester
 
 /** 火山引擎语音识别控制台 API Key 管理页。 */
 private const val VOLC_ASR_CONSOLE_URL =
@@ -71,10 +73,19 @@ fun SettingsVoiceScreen(
 ) {
     val s = LocalAppStrings.current
     val uriHandler = LocalUriHandler.current
+    val micPermission = rememberMicPermissionRequester()
     // 编辑弹窗状态：null = 关闭；否则编辑该 provider（新建时 id 为空）
     var editing by remember { mutableStateOf<AsrProvider?>(null) }
     var isNew by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<AsrProvider?>(null) }
+
+    fun setEnabled(next: Boolean) {
+        if (!next) {
+            onChangeEnabled(false)
+        } else {
+            micPermission.request { granted -> onChangeEnabled(granted) }
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(
@@ -96,7 +107,7 @@ fun SettingsVoiceScreen(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .clickable { onChangeEnabled(!enabled) }
+                    .clickable { setEnabled(!enabled) }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -106,7 +117,22 @@ fun SettingsVoiceScreen(
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
                     modifier = Modifier.weight(1f),
                 )
-                Switch(checked = enabled, onCheckedChange = { onChangeEnabled(it) })
+                Switch(checked = enabled, onCheckedChange = ::setEnabled)
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = ::openApplicationSettings)
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    s.voice.settingsMicrophonePermission,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 

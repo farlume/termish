@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Cable
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.HorizontalDivider
@@ -31,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -67,6 +69,8 @@ import dev.termish.data.resolveCredentials
 import dev.termish.data.secretAccountFor
 import dev.termish.notify.NotificationCenter
 import dev.termish.notify.NotificationEvent
+import dev.termish.notify.NotificationPermissionState
+import dev.termish.notify.rememberNotificationPermissionController
 import dev.termish.screen.MAX_SCREEN_RECONNECT_ATTEMPTS
 import dev.termish.screen.ScreenSession
 import dev.termish.screen.ScreenSessionMessages
@@ -81,14 +85,19 @@ import dev.termish.ssh.SshConnection
 import dev.termish.ssh.createSftpSession
 import dev.termish.ui.theme.TerminalThemes
 import dev.termish.ui.theme.TermishTheme
+import dev.termish.util.BackgroundProtectionVendor
 import dev.termish.util.LocalTerminalFont
 import dev.termish.util.SessionKeepAlive
 import dev.termish.util.TermLog
 import dev.termish.util.TerminalFont
+import dev.termish.util.backgroundProtectionState
+import dev.termish.util.backgroundProtectionVendor
 import dev.termish.util.ioDispatcher
 import dev.termish.util.monospaceFontFamily
 import dev.termish.util.observeAppLifecycle
 import dev.termish.util.observeNetworkChange
+import dev.termish.util.openApplicationSettings
+import dev.termish.util.shouldShowBackgroundProtectionGuide
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -255,6 +264,11 @@ fun AppRoot(repository: HostRepository) {
         if (migrated != stored) repository.saveSettings(migrated)
     }
     val settings by repository.appSettings.collectAsState()
+    val notificationPermissionController = rememberNotificationPermissionController()
+    var notificationPermissionState by remember { mutableStateOf(NotificationPermissionState.UNKNOWN) }
+    var backgroundProtection by remember { mutableStateOf(backgroundProtectionState()) }
+    val backgroundVendor = remember { backgroundProtectionVendor() }
+    var showBackgroundProtectionGuide by remember { mutableStateOf(false) }
     var hosts by remember { mutableStateOf(repository.listHosts()) }
     val navigation = remember { NavigationStack<Screen>(Screen.Home) }
     val screen = navigation.current
@@ -273,6 +287,10 @@ fun AppRoot(repository: HostRepository) {
     // 连接错误文案随语言即时切换：SessionManager 跨重组复用，须经 State 取最新值
     val currentStrings = rememberUpdatedState(appStrings)
     val sessionManager = remember { SessionManager(repository, strings = { currentStrings.value }) }
+
+    LaunchedEffect(notificationPermissionController) {
+        notificationPermissionController.refresh { notificationPermissionState = it }
+    }
 
     /** 终端页当前显示的 tab（SSH 会话或 SFTP，同主机多会话切换用）。 */
     var currentTab by remember { mutableStateOf<SessionTab?>(null) }
@@ -929,7 +947,7 @@ fun AppRoot(repository: HostRepository) {
     // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
     val disposeNetwork =
         observeNetworkChange { kind ->
-            // 网络事件：SSH 断开/切换都重连；mosh 断网与传输切换都靠 UDP 漫游自愈，不重建
+            // 网络事件：SSH 对默认网络变化先探测再决定是否重连；mosh 靠 UDP 漫游自愈
             // （实现与 NetworkChangeKind 注释一致：mosh 仅客户端异常退出时才走自动重连）
             sessionManager.sessions.forEach { it.onNetworkChanged(kind) }
         }
@@ -957,16 +975,15 @@ fun AppRoot(repository: HostRepository) {
                 TermLog.d("life") { "foreground=$foreground" }
                 NotificationCenter.foreground = foreground
                 if (foreground) {
-                    sessionManager.reconnectDroppedSessions(
-                        forceSshReconnect = SessionKeepAlive.requiresSshReconnectOnForeground(),
-                    )
-                    // 保活服务被杀（Android 15 dataSync 6h 超时等）但仍有活跃会话时，
-                    // 回前台立即重新拉起，避免 wakelock 缺失导致锁屏断连。
-                    // 只对【已连接】会话拉起：disconnect 的会话保留在列表里，误拉起会
-                    // 造成计数无对应 stop 的服务空转；待重连的会话由 startKeepAlive 自己拉。
-                    if (sessionManager.sessions.any { it.isConnected() } && !SessionKeepAlive.isActive()) {
-                        SessionKeepAlive.onSessionStart()
+                    notificationPermissionController.refresh { notificationPermissionState = it }
+                    backgroundProtection = backgroundProtectionState()
+                    // 先读取恢复策略再重建服务登记：Android 的 VERIFY 依据是“后台期间
+                    // 服务曾被停”，登记恢复后 isActive 会变化，但仍需验证旧 socket。
+                    val recovery = SessionKeepAlive.foregroundSshRecovery()
+                    if (!SessionKeepAlive.isActive()) {
+                        sessionManager.restoreKeepAliveRegistrations()
                     }
+                    sessionManager.reconnectDroppedSessions(recovery)
                 } else {
                     sessionManager.noteBackgrounded()
                     // 退后台即保存最新 SFTP 浏览路径：杀 App 重进后恢复到上次目录
@@ -1007,6 +1024,27 @@ fun AppRoot(repository: HostRepository) {
             sessionManager.sftpSessions.count { it.session != null } +
             screenSessions.size +
             agentSessionItems.count { it.isActive }
+    val hasConnectedSshSession =
+        sessionManager.sessions.any { it.status == ConnStatus.CONNECTED && it.moshSession == null }
+
+    LaunchedEffect(
+        hasConnectedSshSession,
+        settings.backgroundProtectionPrompted,
+        backgroundProtection,
+        backgroundVendor,
+    ) {
+        if (
+            shouldShowBackgroundProtectionGuide(
+                state = backgroundProtection,
+                vendor = backgroundVendor,
+                alreadyPrompted = settings.backgroundProtectionPrompted,
+                hasConnectedSshSession = hasConnectedSshSession,
+            )
+        ) {
+            repository.updateSettings { it.copy(backgroundProtectionPrompted = true) }
+            showBackgroundProtectionGuide = true
+        }
+    }
 
     CompositionLocalProvider(
         LocalAppStrings provides appStrings,
@@ -1307,6 +1345,12 @@ fun AppRoot(repository: HostRepository) {
                                                         repository.saveSettings(new)
                                                     },
                                                     repository = repository,
+                                                    notificationPermissionState = notificationPermissionState,
+                                                    notificationPermissionController = notificationPermissionController,
+                                                    onNotificationPermissionStateChange = {
+                                                        notificationPermissionState = it
+                                                    },
+                                                    backgroundProtectionState = backgroundProtection,
                                                     subPage = settingsSubPage,
                                                     onOpenSub = { settingsSubPage = it },
                                                 )
@@ -1657,8 +1701,56 @@ fun AppRoot(repository: HostRepository) {
                     }
                 }
 
+                if (showBackgroundProtectionGuide) {
+                    BackgroundProtectionDialog(
+                        vendor = backgroundVendor,
+                        onOpenSettings = {
+                            showBackgroundProtectionGuide = false
+                            openApplicationSettings()
+                        },
+                        onDismiss = { showBackgroundProtectionGuide = false },
+                    )
+                }
+
                 TermishSnackbarHost(snackbarHostState, Modifier.align(Alignment.BottomCenter))
             }
         }
     }
+}
+
+@Composable
+private fun BackgroundProtectionDialog(
+    vendor: BackgroundProtectionVendor,
+    onOpenSettings: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val s = LocalAppStrings.current
+    val vendorHint =
+        when (vendor) {
+            BackgroundProtectionVendor.OPPO_FAMILY -> s.permissions.backgroundOppoHint
+            BackgroundProtectionVendor.XIAOMI_FAMILY -> s.permissions.backgroundXiaomiHint
+            BackgroundProtectionVendor.VIVO_FAMILY -> s.permissions.backgroundVivoHint
+            BackgroundProtectionVendor.SAMSUNG -> s.permissions.backgroundSamsungHint
+            BackgroundProtectionVendor.GENERIC -> s.permissions.backgroundGenericHint
+        }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(s.permissions.backgroundTitle) },
+        text = {
+            Column {
+                Text(s.permissions.backgroundBody)
+                Text(
+                    vendorHint,
+                    modifier = Modifier.padding(top = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenSettings) { Text(s.permissions.openSettings) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(s.permissions.notNow) }
+        },
+    )
 }

@@ -11,6 +11,7 @@ import dev.termish.ssh.SessionInfo
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshExecChannel
 import dev.termish.ssh.SshSession
+import dev.termish.util.NetworkChangeKind
 import java.util.Properties
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -105,12 +106,14 @@ class TerminalControllerTest {
         var connectError: Throwable? = null,
         var commandHandler: (String) -> String? = { null },
         var execFactory: ((String) -> SshExecChannel?)? = null,
+        var healthy: Boolean = true,
     ) : SshSession {
         lateinit var callbacks: SshCallbacks
         val sent = mutableListOf<ByteArray>()
         val execCommands = mutableListOf<String>()
         var closed = false
         var resized = 0
+        val healthChecks = AtomicInteger()
 
         override fun connectAndStart(
             columns: Int,
@@ -161,6 +164,11 @@ class TerminalControllerTest {
         }
 
         override fun isActive(): Boolean = !closed
+
+        override fun checkAlive(timeoutMillis: Long): Boolean {
+            healthChecks.incrementAndGet()
+            return !closed && healthy
+        }
     }
 
     private fun controller(
@@ -382,6 +390,76 @@ class TerminalControllerTest {
 
         assertEquals(ConnStatus.CONNECTING, c.status)
         assertEquals(1, c.reconnectCount)
+        c.destroy()
+    }
+
+    @Test
+    fun healthyForegroundVerificationKeepsCurrentSession() {
+        val (c, fake, _) = controller(FakeSsh())
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        c.verifySshConnection(SessionReconnectCause.FOREGROUND_RESUME)
+        runBlocking {
+            withTimeout(5_000) {
+                while (fake.healthChecks.get() == 0) delay(10)
+            }
+        }
+
+        assertEquals(ConnStatus.CONNECTED, c.status)
+        assertTrue(c.session === fake)
+        assertFalse(fake.closed)
+        assertEquals(0, c.reconnectCount)
+        c.destroy()
+    }
+
+    @Test
+    fun failedForegroundVerificationRebuildsExactlyOnce() {
+        val first = FakeSsh(healthy = false)
+        val second = FakeSsh()
+        val factoryCalls = AtomicInteger()
+        val c =
+            TerminalController(host(), "pw", null, repo(), true) { _, callbacks ->
+                when (factoryCalls.getAndIncrement()) {
+                    0 -> first.also { it.callbacks = callbacks }
+                    else -> second.also { it.callbacks = callbacks }
+                }
+            }
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+
+        c.verifySshConnection(SessionReconnectCause.FOREGROUND_RESUME)
+        runBlocking {
+            withTimeout(5_000) {
+                while (factoryCalls.get() < 2 || c.status != ConnStatus.CONNECTED) delay(10)
+            }
+        }
+
+        assertEquals(1, first.healthChecks.get())
+        assertTrue(first.closed)
+        assertTrue(c.session === second)
+        assertEquals(2, factoryCalls.get())
+        assertEquals(0, c.reconnectCount)
+        assertNull(c.reconnectCause)
+        c.destroy()
+    }
+
+    @Test
+    fun networkChangeVerifiesHealthySshWithoutDisconnecting() {
+        val (c, fake, _) = controller(FakeSsh())
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        c.networkImmuneUntilMs = 0L
+
+        c.onNetworkChanged(NetworkChangeKind.DEFAULT_NETWORK_CHANGED)
+        runBlocking {
+            withTimeout(5_000) {
+                while (fake.healthChecks.get() == 0) delay(10)
+            }
+        }
+
+        assertEquals(ConnStatus.CONNECTED, c.status)
+        assertFalse(fake.closed)
         c.destroy()
     }
 

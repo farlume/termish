@@ -65,6 +65,12 @@ internal class SessionConnector(
         /** 网络切换主动重连的防抖窗口。 */
         private const val NETWORK_DEBOUNCE_MS = 15_000L
 
+        /** 前台/网络回调后先让系统默认网络稳定，再做 SSH 端到端心跳。 */
+        private const val HEALTH_CHECK_SETTLE_MS = 500L
+
+        /** SSH 健康探测等待服务器响应的上限。 */
+        private const val HEALTH_CHECK_TIMEOUT_MS = 2_500L
+
         /** 连接保持稳定后重连计数归零的观察期（mosh「连上即退」防循环）。 */
         private const val MOSH_STABLE_RESET_MS = 30_000L
 
@@ -108,6 +114,7 @@ internal class SessionConnector(
         c.lastRows = rows
         c.reconnectAttempts = 0
         c.reconnectCount = 0
+        c.reconnectCause = null
         c.errorMessage = null
         // 重连时重置：降级重连（moshDegradedToSsh）的 SSH 输出要正常进显示
         c.moshDisplayTakeover = false
@@ -179,7 +186,7 @@ internal class SessionConnector(
                     }
                     ConnectionMode.SSH -> {}
                 }
-                val s = c.sessionFactory(newConnection(), c.callbacks(trace))
+                val s = c.sessionFactory(newConnection(), c.callbacks(trace, generation))
                 if (!isCurrentGeneration(generation)) {
                     closeStaleSession(s)
                     return@launch
@@ -288,7 +295,7 @@ internal class SessionConnector(
         try {
             if (!isCurrentGeneration(generation)) return
             // 1. SSH 连接 + shell（引导通道；降级时变显示通道，Mosh 成功时关闭）
-            val s = existingSession ?: c.sessionFactory(newConnection(), c.callbacks())
+            val s = existingSession ?: c.sessionFactory(newConnection(), c.callbacks(generation = generation))
             if (existingSession == null) {
                 if (!isCurrentGeneration(generation)) {
                     closeStaleSession(s)
@@ -824,6 +831,7 @@ internal class SessionConnector(
         c.lastOutputAtMs = c.nowMs()
         c.reconnectAttempts = 0
         c.reconnectCount = 0
+        c.reconnectCause = null
         c.errorMessage = null
         c.startKeepAlive()
         c.networkImmuneUntilMs = c.nowMs() + NETWORK_IMMUNE_MS
@@ -1019,6 +1027,7 @@ internal class SessionConnector(
         val wasConnected = c.status == ConnStatus.CONNECTED || c.status == ConnStatus.AUTH
         if (c.autoReconnect && wasConnected && c.reconnectAttempts < RECONNECT_SSH_MAX) {
             c.reconnectAttempts++
+            if (c.reconnectCause == null) c.reconnectCause = SessionReconnectCause.CONNECTION_LOST
             c.session = null
             c.status = ConnStatus.CONNECTING
             c.reconnectCount = c.reconnectAttempts
@@ -1054,21 +1063,72 @@ internal class SessionConnector(
     }
 
     /**
-     * 网络切换（Wi-Fi ↔ 流量等）时由平台层调用：
-     * - SSH：主动断开旧连接，走 onClosed 的自动重连路径（重置计数，避免等 TCP 超时）；
-     * - Mosh：UDP 客户端 IP 变化后无法恢复，直接重建（重新 SSH bootstrap）。
+     * 静默验证当前 SSH 是否真正可用。服务停止、默认网络变化都只是风险信号，
+     * 不能直接证明 TCP 已死；只有服务器未在时限内响应 SSH 请求才重建连接。
+     */
+    fun verifySshConnection(cause: SessionReconnectCause) {
+        if (!c.autoReconnect || c.status != ConnStatus.CONNECTED || c.moshSession != null) return
+        if (c.healthCheckJob?.isActive == true) {
+            TermLog.d("ssh") { "health check coalesced ${c.host.name} cause=$cause" }
+            return
+        }
+        val generation = c.connectionGeneration
+        val target = c.session ?: return
+        c.healthCheckJob =
+            c.scope.launch {
+                try {
+                    delay(HEALTH_CHECK_SETTLE_MS)
+                    if (!isCurrentSession(generation, target) || c.status != ConnStatus.CONNECTED) return@launch
+                    val startedAt = c.nowMs()
+                    val healthy = runCatching { target.checkAlive(HEALTH_CHECK_TIMEOUT_MS) }.getOrDefault(false)
+                    if (!isCurrentSession(generation, target) || c.status != ConnStatus.CONNECTED) return@launch
+                    if (healthy) {
+                        TermLog.i("ssh") {
+                            "health check ok ${c.host.name} cause=$cause in ${c.nowMs() - startedAt}ms"
+                        }
+                    } else {
+                        TermLog.w("ssh") {
+                            "health check failed ${c.host.name} cause=$cause in ${c.nowMs() - startedAt}ms; reconnect"
+                        }
+                        // 清当前任务引用，避免 forceReconnect -> close() 取消自己后
+                        // 影响紧接着启动的新一代连接。
+                        c.healthCheckJob = null
+                        forceReconnect(cause)
+                    }
+                } finally {
+                    c.healthCheckJob = null
+                }
+            }
+    }
+
+    /** 明确失效后的受控重建：旧代回调按 generation 丢弃，缓冲与输入状态保留。 */
+    fun forceReconnect(cause: SessionReconnectCause) {
+        if (!c.autoReconnect) return
+        TermLog.i("ssh") { "force reconnect ${c.host.name} cause=$cause status=${c.status}" }
+        c.close()
+        c.reconnectCause = cause
+        c.reconnectAttempts = 1
+        c.reconnectCount = 1
+        c.errorMessage = null
+        doConnect()
+    }
+
+    /**
+     * 默认网络变化（Wi-Fi ↔ 流量、同类型网络更换、VPN 开关）时由平台层调用：
+     * - SSH：先做带响应的健康探测，仅在旧 TCP 已失效时重连；
+     * - Mosh：保留现有会话，由协议从新源地址继续漫游。
      */
     fun onNetworkChanged(kind: NetworkChangeKind) {
         TermLog.i("net") { "network event $kind status=${c.status} immune=${c.nowMs() < c.networkImmuneUntilMs}" }
         if (!c.autoReconnect) return
-        // mosh：断网与跨网络切换都【不重建】——UDP 无连接 + 服务器从客户端新源
+        // mosh：断网与默认网络切换都【不重建】——UDP 无连接 + 服务器从客户端新源
         // 地址学习回包目标 + 端口轮换，mosh 会在网络变化后自行恢复（原生 mosh
         // 的漫游能力）。只有客户端异常退出（onExit）才走自动重连。
         if (c.moshSession != null) return
-        // 单独收到 LOST 不主动拆 SSH：部分 Android ROM 在 App 退后台数秒后会
+        // 单独收到 LOST 不探测 SSH：部分 Android ROM 在 App 退后台数秒后会
         // 暂时撤销默认网络回调，但已有 TCP socket 和前台服务仍然有效。此时关
         // session 会造成“切其他 App，回来必重新连接”。真正的网络切换由后续
-        // TRANSPORT_CHANGED 处理；socket 确实死亡则 reader/onClosed 自行重连。
+        // DEFAULT_NETWORK_CHANGED 处理；socket 确实死亡则 reader/onClosed 自行重连。
         // 这也允许短暂 Wi-Fi 中断后在 IP 未变化时沿用原 TCP 连接。
         if (kind == NetworkChangeKind.LOST) {
             TermLog.i("net") { "LOST: keep socket ${c.host.name}, wait for transport change or onClosed" }
@@ -1076,19 +1136,16 @@ internal class SessionConnector(
         }
         val now = c.nowMs()
         if (now < c.networkImmuneUntilMs) {
-            TermLog.d("net") { "TRANSPORT: 免疫期内跳过 ${c.host.name}" }
+            TermLog.d("net") { "DEFAULT_NETWORK_CHANGED: 免疫期内跳过 ${c.host.name}" }
             return
         }
-        if (now - c.lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) {
-            TermLog.d("net") { "TRANSPORT: 防抖跳过 ${c.host.name}" }
+        if (c.lastNetworkReconnectAtMs != 0L && now - c.lastNetworkReconnectAtMs < NETWORK_DEBOUNCE_MS) {
+            TermLog.d("net") { "DEFAULT_NETWORK_CHANGED: 防抖跳过 ${c.host.name}" }
             return
         }
         c.lastNetworkReconnectAtMs = now
         when (c.status) {
-            ConnStatus.CONNECTED -> {
-                c.reconnectAttempts = 0
-                c.session?.close()
-            }
+            ConnStatus.CONNECTED -> verifySshConnection(SessionReconnectCause.NETWORK_CHANGED)
             // 连接/重连已在途中：网络刚切换，等当前流程完成即可（不重置计数）
             ConnStatus.CONNECTING, ConnStatus.AUTH -> {}
             else -> {}
