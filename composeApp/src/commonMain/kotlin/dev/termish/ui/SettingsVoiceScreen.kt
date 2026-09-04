@@ -78,12 +78,13 @@ fun SettingsVoiceScreen(
     var editing by remember { mutableStateOf<AsrProvider?>(null) }
     var isNew by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<AsrProvider?>(null) }
+    var showDataDisclosure by remember { mutableStateOf(false) }
 
     fun setEnabled(next: Boolean) {
         if (!next) {
             onChangeEnabled(false)
         } else {
-            micPermission.request { granted -> onChangeEnabled(granted) }
+            showDataDisclosure = true
         }
     }
 
@@ -215,8 +216,38 @@ fun SettingsVoiceScreen(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            TextButton(onClick = { uriHandler.openUri(PRIVACY_POLICY_URL) }) {
+                Text(
+                    s.permissions.privacyPolicy,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             Box(Modifier.height(24.dp))
         }
+    }
+
+    if (showDataDisclosure) {
+        AlertDialog(
+            onDismissRequest = { showDataDisclosure = false },
+            title = { Text(s.voice.dataDisclosureTitle) },
+            text = { Text(s.voice.dataDisclosureBody) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDataDisclosure = false
+                        micPermission.request { granted -> onChangeEnabled(granted) }
+                    },
+                ) {
+                    Text(s.voice.dataDisclosureAgree)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDataDisclosure = false }) {
+                    Text(s.voice.dataDisclosureCancel)
+                }
+            },
+        )
     }
 
     // 添加 / 编辑弹窗

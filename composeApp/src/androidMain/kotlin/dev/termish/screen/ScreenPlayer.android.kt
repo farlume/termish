@@ -622,8 +622,9 @@ actual fun probeDecoderMaxFps(
             if (Build.VERSION.SDK_INT >= 29 && !info.isHardwareAccelerated) continue
             runCatching {
                 val caps = info.getCapabilitiesForType(DECODER_MIME)
+                val videoCapabilities = caps.videoCapabilities ?: return@runCatching
                 val fps =
-                    caps.videoCapabilities
+                    videoCapabilities
                         .getSupportedFrameRatesFor(width, height)
                         .upper
                         .toInt()

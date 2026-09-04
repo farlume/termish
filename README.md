@@ -395,7 +395,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   (AES-GCM) / iOS Keychain / dev-only file store
 - Host keys: TOFU (trust on first use) with fingerprint confirmation; strict
   verification for known hosts
-- No telemetry, no analytics, no network calls except your SSH connections
+- No telemetry or analytics. Network traffic is limited to the SSH/Mosh hosts,
+  speech-recognition provider, and remote Agent model providers you configure
 - Agent Bridge exposes no TCP listener: its private Unix socket is mode `0600`,
   while deployment and protocol traffic stay inside the verified SSH channel
 
@@ -403,17 +404,17 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 
 ## Known Limitations
 
-- **Android 15 foreground-service timeout**: the 6-hour `dataSync` limit ends
-  background keepalive; returning to the app auto-reconnects
+- **Vendor background restrictions**: some Android vendors may still suspend
+  SSH keepalive unless unrestricted background activity is enabled for Termish;
+  returning to the app health-checks the connection and reconnects when needed
 - **iOS backgrounding**: the app is suspended and sockets drop; active sessions
   auto-reconnect on return — pair with `tmux`/Mosh for server-side continuity
 - **Desktop secrets** live in a plaintext properties file under `~/.termish`
   (dev/test harness only — mobile builds use Keystore/Keychain)
 - **Native Agent chat** currently requires `python3` on the remote. Codex,
-  Claude Code, Gemini CLI, OpenCode, and Pi are supported. Existing Agent
-  permission configuration is preserved, but interactive approval requests are
-  not yet bridged to the phone: auto-approved actions run, while headless modes
-  that cannot surface a request fail closed or return an explicit error
+  Claude Code, Gemini CLI, OpenCode, and Pi are supported. Supported interactive
+  approvals and questions are bridged to the phone; operations a provider's
+  headless protocol cannot represent fail closed or return an explicit error
 - **iOS builds** run on the maintainer's private Xcode Cloud (see
   `iosApp/ci_scripts/ci_post_clone.sh`). GitHub Actions also runs an iOS
   framework smoke build for shared/iOS pull requests and release tags.

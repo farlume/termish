@@ -108,9 +108,9 @@ KmpMoshSession 事件循环协程（Default 线程）
 
 ## 会话保活与网络事件
 
-- Android：`SessionService` 引用计数前台服务 + PARTIAL_WAKE_LOCK，续期按绝对时刻排班（防保活空洞）；Android 15 `dataSync` 6 小时超时后优雅退出，回前台自动重连。
+- Android：`SessionService` 使用 `connectedDevice` 前台服务 + PARTIAL_WAKE_LOCK；按 `sessionId` 幂等登记活跃会话，最后一个会话关闭后停止。回前台先做 SSH 健康检查，失效时才重连。
 - iOS：后台挂起即断线，回前台 `SessionManager.reconnectDroppedSessions()` 自动重连（缓冲保留）。
-- 网络切换：SSH 在「新网络就绪」事件下主动断开走快速重连（30s 免疫期 + 15s 防抖 + 单调钟）；mosh 不重建，靠 UDP 漫游自愈。
+- 网络切换：SSH 在「新网络就绪」事件下先做健康检查，仅失效时快速重连（30s 免疫期 + 15s 防抖 + 单调钟）；mosh 不重建，靠 UDP 漫游自愈。
 
 ## 持久化
 

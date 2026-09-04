@@ -197,6 +197,7 @@ enum class SettingsSubPage {
     DIAGNOSTICS,
     SNIPPETS,
     VOICE,
+    PRIVACY,
 }
 
 /** 屏幕会话条目（远程画面推流）。 */

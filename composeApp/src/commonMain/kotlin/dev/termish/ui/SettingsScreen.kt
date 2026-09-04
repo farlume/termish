@@ -69,6 +69,7 @@ import dev.termish.util.openApplicationSettings
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
 private const val CONTACT_EMAIL = "ttermish@gmail.com"
+internal const val PRIVACY_POLICY_URL = "https://termish.dev/privacy"
 
 private fun themeModeLabel(
     mode: ThemeMode,
@@ -283,6 +284,8 @@ fun SettingsScreen(
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsWebsite, WEBSITE_HOST) { uriHandler.openUri(WEBSITE_URL) }
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                SettingsOptionItem(s.permissions.privacyPolicy, "") { onOpenSub(SettingsSubPage.PRIVACY) }
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                 SettingsOptionItem(s.settingsContact, CONTACT_EMAIL) { uriHandler.openUri("mailto:$CONTACT_EMAIL") }
             }
 
@@ -400,6 +403,13 @@ fun SettingsScreen(
             },
             onBack = { onOpenSub(null) },
         )
+    }
+    AnimatedVisibility(
+        visible = subPage == SettingsSubPage.PRIVACY,
+        enter = slideInHorizontally(initialOffsetX = { it }) + fadeIn(animationSpec = tween(240)),
+        exit = slideOutHorizontally(targetOffsetX = { it }) + fadeOut(animationSpec = tween(200)),
+    ) {
+        SettingsPrivacyScreen(onBack = { onOpenSub(null) })
     }
     if (showLanguageDialog) {
         val codes = listOf("", "zh", "en")

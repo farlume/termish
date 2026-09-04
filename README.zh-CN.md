@@ -324,7 +324,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - 密码与私钥绝不落盘明文——Android Keystore（AES-GCM）/ iOS Keychain /
   仅开发用途的文件存储
 - 主机密钥：TOFU（首次使用信任）+ 指纹确认；已知主机严格校验
-- 无遥测、无分析，除你的 SSH 连接外没有任何网络请求
+- 无遥测、无分析；网络仅连接你配置的 SSH/Mosh 主机、语音识别服务商，
+  以及由远端 Agent 使用的模型服务商
 - Agent Bridge 不监听 TCP：私有 Unix socket 权限为 `0600`，部署与协议流量
   全部留在经过主机密钥校验的 SSH 通道内
 
@@ -332,16 +333,15 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## 已知限制
 
-- **Android 15 前台服务超时**：`dataSync` 6 小时上限结束后台保活；
-  回到应用自动重连
+- **厂商后台限制**：部分 Android 厂商仍可能在未给 Termish 开启“完全允许后台
+  行为”时暂停 SSH 保活；回到应用会先健康检查，必要时自动重连
 - **iOS 后台挂起**：应用被挂起、socket 断开；活跃会话回前台自动重连——
   配合 `tmux`/Mosh 做服务端连续性
 - **桌面端密钥**存放在 `~/.termish` 下的明文 properties 文件
   （仅开发/测试 harness——移动端构建用 Keystore/Keychain）
 - **原生 Agent 对话**目前要求远端已有 `python3`。支持 Codex、Claude Code、
-  Gemini CLI、OpenCode 与 Pi。Termish 会保留 Agent 已有的权限配置，但尚未把
-  交互式审批桥接到手机：无需审批或已自动放行的操作会直接执行；无头协议无法
-  上报审批时会安全拒绝或返回明确错误
+  Gemini CLI、OpenCode 与 Pi。支持的交互式审批和提问会桥接到手机；服务商无头
+  协议无法表达的操作会安全拒绝或返回明确错误
 - **iOS 构建**走维护者私有的 Xcode Cloud（见
   `iosApp/ci_scripts/ci_post_clone.sh`）；GitHub Actions 也会在共享/iOS 代码
   PR 和发版 tag 上执行 framework 冒烟构建。贡献者本地验证 UI：
