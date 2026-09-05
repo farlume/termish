@@ -112,7 +112,10 @@ def publish(client, config: dict, release: dict, directory: Path, latest_tag) ->
         "version_name": tag[1:],
         "published_at": release["published_at"],
         "release_url": release["html_url"],
-        "download_url": assets["apk"]["url"],
+        # COS default domains cannot distribute APKs; the public download uses
+        # the original GitHub Release asset, while COS retains the archive.
+        "download_url": assets["apk"]["github_url"],
+        "cos_download_url": assets["apk"]["url"],
         "github_download_url": assets["apk"]["github_url"],
         "sha256": assets["apk"]["sha256"],
         "sha256sums_url": public_url(base, checksum_key),
