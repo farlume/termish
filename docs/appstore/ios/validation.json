@@ -1,0 +1,208 @@
+{
+  "app_version": "1.7.1",
+  "build": "35",
+  "capture_device": "iPhone 11 Pro Max Simulator",
+  "runtime": "iOS 26.5",
+  "app_store_slot": "iPhone 6.5-inch",
+  "verified_on": "2026-09-05",
+  "result": "PASS",
+  "files": [
+    {
+      "file": "en/01-hosts.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 165265,
+      "sha256": "cbbaa39e0a16b61b5c13a1f20fe69d58f39f8c50b246825dc1d63caff8fd8471"
+    },
+    {
+      "file": "en/02-terminal.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 631733,
+      "sha256": "8d4e719aedb6a356200038e468ba3429e659c337ed5294af30d9f8484a52b71a"
+    },
+    {
+      "file": "en/03-sftp.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 177299,
+      "sha256": "8ba6f0381d0a21426dfd546bd8d3bf72e34b8bc3be86da9c70715a1c61bf9b37"
+    },
+    {
+      "file": "en/05-settings.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 225831,
+      "sha256": "e68668c72f6d20bd1087a05299cd152f59ed4a758f762320b8b027d8e2f69a38"
+    },
+    {
+      "file": "en/06-theme.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 354130,
+      "sha256": "5cae32d1518354efdf79a04ddff494770cac0084998e28c8f89539ef0e1990a7"
+    },
+    {
+      "file": "en/07-herdr-editor.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 434611,
+      "sha256": "b7376ebd10e25a43e7899a0fe6d4a3d103f689111f1e304fec5ae572236fa08e"
+    },
+    {
+      "file": "en/08-herdr-workspace.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 243202,
+      "sha256": "d9d035c393f99261c1fa0708f072bcebca834499e1e8f5e8d2fd9d78fa7bfc6a"
+    },
+    {
+      "file": "zh/01-hosts.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 157448,
+      "sha256": "34eee557ed01050bc943147fba2ecacfb05db614ec2c10f8c4d8c534cf3daf2b"
+    },
+    {
+      "file": "zh/02-terminal.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 625381,
+      "sha256": "a3d60cb380b7f08ac30ca77487147284735df2052c144cd51838803c40d726cb"
+    },
+    {
+      "file": "zh/03-sftp.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 178961,
+      "sha256": "57907303b6d4140a49e0e742516fa3bf74104ac1c66e87bdfeaae65ac4b5d7c2"
+    },
+    {
+      "file": "zh/04-preview.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 228671,
+      "sha256": "d4352f5cf8178c79fca12a14c03fc3fd99bb780542827ac4cdf1664ad0581d97"
+    },
+    {
+      "file": "zh/05-settings.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 199799,
+      "sha256": "ff3b3a8d5879ff8953a939f3d9a0f273442f9f3afe0fc5cc1cf16b4957e4209f"
+    },
+    {
+      "file": "zh/06-theme.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 349886,
+      "sha256": "858689e4337eb0cf31d03e9a563d715b590852850ba2ccc573b50becae25e25a"
+    },
+    {
+      "file": "zh/07-herdr-editor.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 434611,
+      "sha256": "b7376ebd10e25a43e7899a0fe6d4a3d103f689111f1e304fec5ae572236fa08e"
+    },
+    {
+      "file": "zh/08-herdr-workspace.jpg",
+      "kind": "screenshot",
+      "width": 1242,
+      "height": 2688,
+      "format": "jpeg",
+      "alpha": false,
+      "bytes": 243202,
+      "sha256": "d9d035c393f99261c1fa0708f072bcebca834499e1e8f5e8d2fd9d78fa7bfc6a"
+    },
+    {
+      "file": "zh/app-preview.mp4",
+      "kind": "app-preview",
+      "width": 886,
+      "height": 1920,
+      "format": "mp4",
+      "codec": "h264",
+      "profile": "High",
+      "level": 40,
+      "fps": "30",
+      "field_order": "progressive",
+      "video_bit_rate": 9926607,
+      "duration": 27.008,
+      "audio": {
+        "codec": "aac",
+        "channels": 2,
+        "sample_rate": 48000,
+        "bit_rate": 256163,
+        "content": "silence"
+      },
+      "bytes": 34399706,
+      "sha256": "e59d67493eb83ffe5c0d7ab103efdf725a3a8be3170074b0a474a7ba51724eb0"
+    },
+    {
+      "file": "en/app-preview.mp4",
+      "kind": "app-preview",
+      "width": 886,
+      "height": 1920,
+      "format": "mp4",
+      "codec": "h264",
+      "profile": "High",
+      "level": 40,
+      "fps": "30",
+      "field_order": "progressive",
+      "video_bit_rate": 9931704,
+      "duration": 29.014,
+      "audio": {
+        "codec": "aac",
+        "channels": 2,
+        "sample_rate": 48000,
+        "bit_rate": 256152,
+        "content": "silence"
+      },
+      "bytes": 36966164,
+      "sha256": "31ee3ca862a41199dde46f3cb220a62d30acf1cd7da0dd61f7a1e02f4fb31d3b"
+    }
+  ],
+  "includes_herdr": true
+}
