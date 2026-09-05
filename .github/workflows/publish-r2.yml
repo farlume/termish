@@ -1,0 +1,50 @@
+name: Publish Release to R2
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag，例如 v1.7.1；留空同步最新正式版"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-r2
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Upload release files and version metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: r2-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/r2-requirements.txt
+      - name: Install R2 SDK
+        run: python -m pip install -r scripts/r2-requirements.txt
+      - name: Test release tooling
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Upload release to R2 and verify public downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PREFIX: ${{ vars.R2_PREFIX || 'downloads' }}
+          R2_PUBLIC_BASE_URL: ${{ vars.R2_PUBLIC_BASE_URL }}
+        run: python scripts/publish_r2.py --tag "$RELEASE_TAG"

@@ -225,12 +225,12 @@ jobs:
           done
           echo "✅ Release $TAG 完成"
 
-  publish-cos:
-    name: Sync published release to COS
+  publish-r2:
+    name: Sync published release to R2
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [release]
     permissions:
       contents: read
-    uses: ./.github/workflows/publish-cos.yml
+    uses: ./.github/workflows/publish-r2.yml
     with:
       tag: ${{ github.ref_name }}

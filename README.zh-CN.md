@@ -314,8 +314,8 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## 发布同步
 
-发布后可通过 GitHub Environment 密钥自动把版本信息和正式安装包同步到腾讯云 COS，
-配置方法与下载直链见 [COS 发布工作流](docs/cos-release.md)。
+发布后可通过 GitHub Environment 密钥自动把版本信息和正式安装包同步到 Cloudflare R2，
+配置方法与下载直链见 [R2 发布工作流](docs/r2-release.md)。
 
 ## 安全模型
 

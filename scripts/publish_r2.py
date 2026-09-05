@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Mirror a published GitHub release to COS; publish version.json last."""
+"""Mirror a published GitHub release to R2; verify downloads before announcing it."""
 
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -11,7 +12,10 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
 
 
 TAG = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
@@ -29,28 +33,52 @@ def validate_release(release: dict) -> str:
 
 
 def required_config(env: dict) -> dict:
-    names = ("COS_SECRET_ID", "COS_SECRET_KEY", "COS_REGION", "COS_BUCKET")
+    names = ("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_ACCOUNT_ID", "R2_BUCKET", "R2_PUBLIC_BASE_URL")
     missing = [name for name in names if not env.get(name, "").strip()]
     if missing:
-        raise ValueError("Configure GitHub Environment cos-release: " + ", ".join(missing))
-    prefix = env.get("COS_PREFIX", "downloads").strip("/")
+        raise ValueError("Configure GitHub Environment r2-release: " + ", ".join(missing))
+    prefix = env.get("R2_PREFIX", "downloads").strip().strip("/")
     if any(part in (".", "..", "") for part in prefix.split("/")):
-        raise ValueError("COS_PREFIX must be a non-empty relative object prefix")
-    bucket, region = env["COS_BUCKET"].strip(), env["COS_REGION"].strip()
-    if not re.fullmatch(r"[a-z0-9-]+-[0-9]+", bucket):
-        raise ValueError("COS_BUCKET must include its numeric APPID")
-    if not re.fullmatch(r"[a-z]+-[a-z0-9-]+", region):
-        raise ValueError("Invalid COS_REGION")
-    base = env.get("COS_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    base = base or f"https://{bucket}.cos.{region}.myqcloud.com"
+        raise ValueError("R2_PREFIX must be a non-empty relative object prefix")
+    bucket, account = env["R2_BUCKET"].strip(), env["R2_ACCOUNT_ID"].strip()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]", bucket):
+        raise ValueError("R2_BUCKET must be a 3-63 character bucket name")
+    if not re.fullmatch(r"[a-fA-F0-9]{32}", account):
+        raise ValueError("R2_ACCOUNT_ID must be the 32-character Cloudflare account ID")
+    base = env["R2_PUBLIC_BASE_URL"].strip().rstrip("/")
     url = urlsplit(base)
-    if url.scheme != "https" or not url.netloc or url.username or url.password or url.query or url.fragment:
-        raise ValueError("COS_PUBLIC_BASE_URL must be an HTTPS base URL without credentials or a query")
-    return {"bucket": bucket, "region": region, "prefix": prefix, "base": base}
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment or url.path:
+        raise ValueError("R2_PUBLIC_BASE_URL must be an HTTPS bucket domain without a path, credentials or query")
+    if url.hostname == "r2.cloudflarestorage.com" or url.hostname.endswith(".r2.cloudflarestorage.com"):
+        raise ValueError("R2_PUBLIC_BASE_URL must be a public custom domain or r2.dev URL, not the private S3 API endpoint")
+    return {"bucket": bucket, "endpoint": f"https://{account}.r2.cloudflarestorage.com", "prefix": prefix, "base": base}
 
 
 def public_url(base: str, key: str) -> str:
     return base + "/" + quote(key, safe="/")
+
+
+def verify_public_object(url: str, expected: bytes):
+    """Read the public URL without credentials and verify its entire contents."""
+    for attempt in range(3):
+        try:
+            with urlopen(Request(url, headers={"Cache-Control": "no-cache"}), timeout=30) as response:
+                digest, size = hashlib.sha256(), 0
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > len(expected):
+                        raise ValueError("Public download size exceeds the release asset")
+                    digest.update(chunk)
+                if size != len(expected) or digest.digest() != hashlib.sha256(expected).digest():
+                    raise ValueError("Public download checksum does not match the release asset")
+            print(f"Verified public download {url}")
+            return
+        except (URLError, OSError, ValueError) as error:
+            if isinstance(error, HTTPError):
+                error.close()
+            if attempt == 2:
+                raise RuntimeError(f"Public download verification failed: {url}. Check R2 public access, domain and cache settings.") from error
+            time.sleep(attempt + 1)
 
 
 def verify_assets(release: dict, directory: Path) -> dict:
@@ -92,12 +120,14 @@ def publish(client, config: dict, release: dict, directory: Path, latest_tag) ->
     def put(key: str, body: bytes, content_type: str, *, immutable=False, filename=None):
         options = {"ContentDisposition": f'attachment; filename="{filename}"'} if filename else {}
         client.put_object(
-            Bucket=config["bucket"], Key=key, Body=body, EnableMD5=True,
+            Bucket=config["bucket"], Key=key, Body=body,
+            ContentMD5=base64.b64encode(hashlib.md5(body).digest()).decode(),
             ContentType=content_type,
             CacheControl="public, max-age=31536000, immutable" if immutable else "no-cache",
             **options,
         )
         print(f"Uploaded {key}")
+        verify_public_object(public_url(base, key), body)
 
     assets = {}
     for extension, asset in files.items():
@@ -112,20 +142,17 @@ def publish(client, config: dict, release: dict, directory: Path, latest_tag) ->
         "version_name": tag[1:],
         "published_at": release["published_at"],
         "release_url": release["html_url"],
-        # COS default domains cannot distribute APKs; the public download uses
-        # the original GitHub Release asset, while COS retains the archive.
-        "download_url": assets["apk"]["github_url"],
-        "cos_download_url": assets["apk"]["url"],
+        "download_url": assets["apk"]["url"],
         "github_download_url": assets["apk"]["github_url"],
         "sha256": assets["apk"]["sha256"],
         "sha256sums_url": public_url(base, checksum_key),
         "assets": assets,
     }
     encoded = (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode()
-    put(f"{archive}/release.json", encoded, "application/json; charset=utf-8", immutable=True)
+    put(f"{archive}/release.json", encoded, "application/json; charset=utf-8")
 
     # Re-query GitHub after uploading the archive: manually replaying an older tag
-    # must not roll the website back. Workflows serialize all COS uploads.
+    # must not roll the website back. Workflows serialize all R2 uploads.
     if latest_tag() != tag:
         print(f"Archived {tag}; latest download pointers were not changed")
         return metadata
@@ -155,14 +182,20 @@ def main():
     release = github_release(repo, args.tag)
     tag = validate_release(release)
 
-    from qcloud_cos import CosConfig, CosS3Client
+    import boto3
+    from botocore.config import Config
 
-    client = CosS3Client(CosConfig(
-        Region=config["region"], SecretId=os.environ["COS_SECRET_ID"],
-        SecretKey=os.environ["COS_SECRET_KEY"], Token=os.environ.get("COS_SESSION_TOKEN") or None,
-        Scheme="https",
-    ))
-    with tempfile.TemporaryDirectory(prefix="termish-cos-") as temp:
+    client = boto3.client(
+        "s3", endpoint_url=config["endpoint"], region_name="auto",
+        aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+        config=Config(
+            signature_version="s3v4", request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+            retries={"mode": "standard", "max_attempts": 3},
+        ),
+    )
+    with tempfile.TemporaryDirectory(prefix="termish-r2-") as temp:
         subprocess.run([
             "gh", "release", "download", tag, "--repo", repo, "--dir", temp,
             "--pattern", f"Termish-{tag[1:]}-release.apk",
@@ -172,7 +205,7 @@ def main():
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a") as report:
-            report.write(f"COS archive uploaded: {tag}\n\n[Release APK]({metadata['download_url']})\n")
+            report.write(f"R2 release uploaded and public downloads verified: {tag}\n\n[Release APK]({metadata['download_url']})\n")
 
 
 if __name__ == "__main__":
