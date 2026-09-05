@@ -68,6 +68,8 @@ downloads/
 
 官网读取 `version.json` 的 `download_url` 即可直接下载 GitHub Release 正式 APK；`github_download_url` 保留为同地址的兼容字段。`cos_download_url` 和 `assets.*.url` 是 COS 归档地址。固定对象 `/downloads/termish.apk` 同样来自正式 Release，通过 COS 下载时也需要上述域名和读取配置。
 
+GitHub 仓库为私有时，Release 直链也只对有仓库访问权限的用户可用，匿名访问会返回 404。面向公众分发时，可让官网使用已配置自定义域名和读取权限的 `cos_download_url`，或使用单独的公开发行仓库；上传成功并不代表公开下载已可用。
+
 所有文件先校验 GitHub Release 的 SHA256SUMS，再写入版本归档。只有最新正式版会更新固定入口，并且最后写入 `version.json`，避免版本信息先更新而包尚未上传。版本归档长期缓存，固定入口和 JSON 使用 `Cache-Control: no-cache`；CDN 应尊重这些响应头。
 
 ## 本地验证
