@@ -59,7 +59,7 @@ Termish 是一款为手机打造的 SSH 与 Mosh 终端，也是连接远程开�
   识别服务商
 • 无广告、无统计分析、无遥测
 
-Termish 项目主页：https://github.com/ttermish/termish
+Termish 官网：https://termish.dev
 隐私政策：https://termish.dev/privacy
 ```
 
@@ -113,7 +113,7 @@ Security and privacy
   configure only while you hold the microphone button
 • No ads, analytics, or telemetry
 
-Project: https://github.com/ttermish/termish
+Website: https://termish.dev
 Privacy policy: https://termish.dev/privacy
 ```
 

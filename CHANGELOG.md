@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### 变更
+
+- **项目分发与文档**：项目原始源码与文档改为闭源、保留所有权利；移除公开贡献入口与相关宣传，保留第三方组件许可，Android 下载入口统一到固定下载域名
+
 ## [1.7.1] - 2026-09-05
 
 ### 移除
@@ -295,7 +299,7 @@
 
 ### 变更
 
-- **移除设置页「支持作者」打赏入口**：收款码为个人资产，开源后不在 App/仓库
+- **移除设置页「支持作者」打赏入口**：收款码为个人资产，不随 App/仓库
   公开（支付宝/微信收款码、docs/donate/ 一并移除）
 
 ## [1.1.8] - 2026-08-20
@@ -367,7 +371,7 @@
 
 ### 变更
 
-- **开源仓库卫生清理**：去源码注释与 AI 测试用例中的个人基础设施
+- **仓库信息清理**：去源码注释与 AI 测试用例中的个人基础设施
   信息（部署机公网 IP、个人域名、内网 IP 占位化）；NOTICE 补全运行时
   依赖声明（Kotlin/Compose、kotlinx-*、multiplatform-settings、
   AndroidX、slf4j、MIT），新增 LICENSES/MIT.txt；回退误提交的个人
@@ -379,7 +383,7 @@
 
 - **Xcode Cloud Archive 签名配置**：仓库保留 `CODE_SIGNING_ALLOWED=YES`
   与空 `DEVELOPMENT_TEAM`，Team ID 改由 Xcode Cloud 环境变量注入，
-  既满足云端归档签名，又避免把个人 Team ID 写进开源仓库
+  既满足云端归档签名，又避免把个人 Team ID 写进仓库
 
 ## [1.1.1] - 2026-08-19
 
@@ -431,8 +435,7 @@
 - **纯 Kotlin mosh 客户端**（`dev.termish.mosh`）：自研 AES-128-OCB（L 表约定对齐协议规格，含独立标准测试向量）、SSP 状态同步（分片/重组/
   乱序恢复/ACK/throwaway/prospective resend）、zlib 分片压缩、RTT 估计
   （Jacobson/Karels）、UDP 直连与 15s 连通性超时。影子终端复用自研纯 Kotlin
-  终端模拟器，渲染帧率上限 50fps。解决原生 mosh-client（GPLv3）与项目 MIT
-  许可的冲突。
+  终端模拟器，渲染帧率上限 50fps，无需依赖原生 mosh-client 二进制。
 - 本地回显预测（prediction overlay）：高 RTT 下按 mosh 触发阈值在确认态分叉上
   预测渲染，echo_ack 收编，打字即时性对齐原生 mosh-client
 - Mosh 全端支持：SSH 引导启动 `mosh-server`、固定 UDP 端口（NAS/端口转发场景）、

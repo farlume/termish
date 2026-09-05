@@ -44,7 +44,7 @@ iosApp/Pods/
 iosApp/Podfile.lock
 iosApp/iosApp.xcworkspace/
 
-# AI adb 测试资产（用例/产物，开源前移出仓库——含 demo 凭据与内网测试主机）
+# AI adb 本地测试资产（用例/产物不入库——含 demo 凭据与内网测试主机）
 .aiadb/
 
 # pi 编辑器个人配置（设置/本地扩展，不入库）

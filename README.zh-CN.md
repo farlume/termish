@@ -10,7 +10,6 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
   <img src="docs/screenshots/hosts-zh.png" width="230" alt="主机列表" />
@@ -29,9 +28,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/ttermish/termish/releases/latest">
+  <a href="https://download.termish.dev/downloads/termish.apk">
     <img alt="Download for Android"
-         src="https://img.shields.io/badge/Android-APK%20%C2%B7%20AAB-10B981?style=for-the-badge&logo=android&logoColor=white" />
+         src="https://img.shields.io/badge/Android-APK-10B981?style=for-the-badge&logo=android&logoColor=white" />
   </a>
   <a href="#构建与测试">
     <img alt="iOS local build"
@@ -41,12 +40,13 @@
 
 ## 下载
 
-从 [Releases 发布页](https://github.com/ttermish/termish/releases/latest) 获取最新构建：
+以下固定链接始终指向最新版本：
 
-- **Android** — 签名 APK（侧载需允许“安装未知来源应用”）与 AAB
+- **Android** — [签名 APK](https://download.termish.dev/downloads/termish.apk)
+  （侧载需允许“安装未知来源应用”）与 [AAB](https://download.termish.dev/downloads/termish.aab)
 - **iOS** — 未公开分发；本地构建（见 [构建与测试](#构建与测试)）
 
-每个发布附 SHA-256 校验和。想要 CI 产物的 debug APK？见 [安装](#安装)。
+下载后可使用 [SHA-256 校验和](https://download.termish.dev/downloads/SHA256SUMS) 验证文件。
 
 ### 也可以用浏览器
 
@@ -66,7 +66,7 @@
 - [安全模型](#安全模型)
 - [已知限制](#已知限制)
 - [路线图](#路线图)
-- [参与贡献](#参与贡献)
+- [联系与反馈](#联系与反馈)
 
 ## 为什么是 Termish？
 
@@ -87,7 +87,6 @@ Termish 讲的是普通 SSH 客户端讲不了的两个故事。
 - **本地优先、隐私设计**——直连你的服务器：无需账号、无云同步、无遥测、
   不经过任何第三方。密钥只进系统保险库（Keystore / Keychain）；
   你的 agent 会话只属于你
-- **开源且永久免费**——MIT 协议、代码可审计、无订阅、无功能墙
 - **组合态输入法一等公民**——拼音、假名、谚文永不上线，候选栏完整可用（见下）
 - **触屏 TUI 输入**——固定 CTRL/ALT/ESC 工具行，tap/drag 映射为终端鼠标事件，
   agent TUI（herdr/codex/claude/vim/htop）在手机上顺手可用
@@ -229,7 +228,7 @@ flowchart TB
 
 ## 安装
 
-- **Android**：从 Releases 页下载签名 APK/AAB（或 CI 产物的 debug APK）。
+- **Android**：下载并安装 [最新版签名 APK](https://download.termish.dev/downloads/termish.apk)。
 - **iOS**：CI 不发包，需本地构建：`make ios-native && make ios-framework`，
   再用 Xcode 打开 `iosApp/iosApp.xcodeproj` 跑到模拟器或真机。
 
@@ -260,7 +259,7 @@ flowchart TB
 
 ## 文档
 
-面向贡献者的深水文档（每份开头有英文摘要）：
+内部开发参考文档（每份开头有英文摘要）：
 
 - [docs/architecture.md](docs/architecture.md) —— 模块布局、expect/actual 接缝、线程模型
 - [docs/terminal-emulator.md](docs/terminal-emulator.md) —— 缓冲模型（COW/行级同步）、
@@ -340,7 +339,7 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   协议无法表达的操作会安全拒绝或返回明确错误
 - **iOS 构建**走维护者私有的 Xcode Cloud（见
   `iosApp/ci_scripts/ci_post_clone.sh`）；GitHub Actions 也会在共享/iOS 代码
-  PR 和发版 tag 上执行 framework 冒烟构建。贡献者本地验证 UI：
+  PR 和发版 tag 上执行 framework 冒烟构建。开发时在本地验证 UI：
   `make ios-native && make ios-framework`，
   再用 Xcode 构建运行
 
@@ -359,16 +358,11 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [ ] E2EE 跨设备同步
 - [ ] 后期：横屏双栏、kana/hangul 输入法、深链
 
-## 参与贡献
+## 联系与反馈
 
-欢迎提 Issue 和 PR——完整指引见 [CONTRIBUTING.md](CONTRIBUTING.md)。几个要点：
-
-- `term/` 是零平台依赖的纯 Kotlin——任何转义序列或 buffer 行为改动都要在
-  `commonTest/` 加单测
-- 平台代码只放在 `ssh/SshSession` 与 `util/` 等 expect/actual 接缝之后
-- 设计 token 集中在 `ui/theme/`——新 UI 代码不要写临时 dp/alpha 字面量
-- README.md 与 README.zh-CN.md 保持同步；`term/` 或 `mosh/` 的行为改动同步更新
-  对应的 docs 文档
+访问 [termish.dev](https://termish.dev)，或通过
+[ttermish@gmail.com](mailto:ttermish@gmail.com) 联系技术支持、反馈问题。
+安全问题请参阅 [SECURITY.md](SECURITY.md)。
 
 ## 致谢
 
@@ -392,7 +386,7 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## 许可证
 
-Termish 以 [MIT License](LICENSE) 发布。
+Termish 为闭源软件，保留所有权利，见 [LICENSE](LICENSE)。
 内置 JetBrains Mono 字体单独以 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt) 授权。
 
 第三方组件许可：见 [NOTICE](NOTICE) 与 [LICENSES/](LICENSES/) 目录。

@@ -64,6 +64,15 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
   README shows 6 per language (3×2: hosts/settings/theme on top,
   terminal×2 + sftp below)
 
+## 文档维护
+
+- `README.md`（英文）与 `README.zh-CN.md`（中文）同步维护结构与事实性内容
+- `docs/` 为内部开发文档，正文中文、开头英文摘要
+- `term/`、`mosh/`、输入交互的行为变更同步更新 `docs/terminal-emulator.md`、
+  `docs/mosh.md`、`docs/input-pipeline.md` 中对应的说明
+- 项目原始源码与文档为闭源、保留所有权利；第三方版权声明及 `NOTICE`、
+  `LICENSES/` 和资源内附带的许可证必须保留
+
 ## Development workflow（开发工作流）
 
 分层验证，由快到慢，逐级上升；**日常迭代全走 debug + 模拟器，release 只在功能里程碑/准备验收时构建**：

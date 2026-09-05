@@ -34,10 +34,10 @@ Termish 是一款为手机打造的 SSH + Mosh 终端——会话在 WiFi 切换
 - 触控：CTRL/ALT/ESC 功能键栏，TUI 鼠标上报（vim/htop 可触控）
 - 服务器端会话：启动命令支持 tmux，断线重连回到原现场
 
-Termish 开源（MIT），代码可审计：github.com/ttermish/termish
+Termish 官网：https://termish.dev
 ```
 
-- **推广文本**（170 字符，可随时改不发审）：`开源 SSH + Mosh 终端。会话漫游不断线，中文输入法友好，远端 AI agent 工作台。`
+- **推广文本**（170 字符，可随时改不发审）：`移动 SSH + Mosh 终端。会话漫游不断线，中文输入法友好，远端 AI agent 工作台。`
 
 ## 商店信息（en，可选英文站）
 
@@ -55,9 +55,9 @@ Termish 开源（MIT），代码可审计：github.com/ttermish/termish
 | 类别 | 工具（Developer Tools 备选） |
 | 价格 | 免费 |
 | 隐私政策 URL | https://termish.dev/privacy（先上线该页面） |
-| 支持 URL | https://termish.dev（或 GitHub Issues） |
+| 支持 URL | https://termish.dev |
 | 营销 URL | https://termish.dev |
-| 技术支持邮箱 | README 上的联系邮箱 |
+| 技术支持邮箱 | ttermish@gmail.com |
 | 年龄分级 | 全部选"无"→ 4+ |
 | 版权 | `2026 Termish Project` |
 | Sign in with Apple | 不适用（App 无账号体系；SSH 服务器凭据不属于 App 登录） |
@@ -118,4 +118,3 @@ Mosh 模式使用（商店描述已注明）。
 - 可选语音输入会将录音加密发送至用户配置的识别服务商（目前为火山引擎）
 - 远程 Agent 可能把提示词/附件发给用户配置的模型服务商，均不经 Termish 服务器
 - 详细政策以 `docs/appstore/privacy-policy.md` 和线上 `/privacy` 为准
-- 开源可审计：github.com/ttermish/termish（MIT）

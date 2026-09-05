@@ -11,7 +11,6 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
   <img src="docs/screenshots/hosts-en.png" width="230" alt="Hosts" />
@@ -30,9 +29,9 @@
 </p>
 
 <p>
-  <a href="https://github.com/ttermish/termish/releases/latest">
+  <a href="https://download.termish.dev/downloads/termish.apk">
     <img alt="Download for Android"
-         src="https://img.shields.io/badge/Android-APK%20%C2%B7%20AAB-10B981?style=for-the-badge&logo=android&logoColor=white" />
+         src="https://img.shields.io/badge/Android-APK-10B981?style=for-the-badge&logo=android&logoColor=white" />
   </a>
   <a href="#build--test">
     <img alt="iOS local build"
@@ -42,13 +41,14 @@
 
 ## Download
 
-Get the latest build from the [Releases page](https://github.com/ttermish/termish/releases/latest):
+These links always point to the latest release:
 
-- **Android** — signed APK (sideload: allow “install unknown apps”) and AAB
+- **Android** — [signed APK](https://download.termish.dev/downloads/termish.apk)
+  (sideload: allow “install unknown apps”) and
+  [AAB](https://download.termish.dev/downloads/termish.aab)
 - **iOS** — not published; build locally (see [Build & Test](#build--test))
 
-Every release ships with SHA-256 checksums. Prefer a debug APK from CI
-artifacts? See [Install](#install).
+Verify downloads with the [SHA-256 checksums](https://download.termish.dev/downloads/SHA256SUMS).
 
 ### Also on the web
 
@@ -68,7 +68,7 @@ needs no sshd. `npm install -g @termish/web` → [termish.dev/web](https://termi
 - [Security Model](#security-model)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
-- [Contributing](#contributing)
+- [Support](#support)
 
 ## Why Termish?
 
@@ -94,8 +94,6 @@ iOS). All the effort goes where it matters — the terminal experience.
   account, no cloud sync, no telemetry, no third-party hop. Secrets live only
   in the platform vault (Keystore / Keychain); your agent sessions belong to
   you
-- **Open source & free forever** — MIT licensed, auditable, no subscriptions,
-  no feature walls
 - **Composition-safe IME** — pinyin, kana and hangul never leak to the wire;
   candidate bars fully work (see below)
 - **Touch-first TUI input** — fixed CTRL/ALT/ESC toolbar, tap/drag mapped to
@@ -286,8 +284,8 @@ browser for desktop workflows while the phone stays native.
 
 ## Install
 
-- **Android**: download the signed APK/AAB from the Releases page (or the debug
-  APK from CI artifacts).
+- **Android**: download and install the
+  [latest signed APK](https://download.termish.dev/downloads/termish.apk).
 - **iOS**: not published in CI — build locally:
   `make ios-native && make ios-framework`, then open `iosApp/iosApp.xcodeproj`
   in Xcode and run on a simulator or device.
@@ -328,7 +326,7 @@ browser for desktop workflows while the phone stays native.
 
 ## Documentation
 
-Deep dives for contributors (English summary at the top of each file):
+Internal development reference (English summary at the top of each file):
 
 - [docs/architecture.md](docs/architecture.md) — module layout, expect/actual
   seams, threading model
@@ -416,7 +414,7 @@ version metadata, and direct release downloads.
 - **iOS builds** run on the maintainer's private Xcode Cloud (see
   `iosApp/ci_scripts/ci_post_clone.sh`). GitHub Actions also runs an iOS
   framework smoke build for shared/iOS pull requests and release tags.
-  Contributors verify UI behavior locally:
+  Verify UI behavior locally during development:
   `make ios-native && make ios-framework`, then build & run from Xcode
 
 ## Roadmap
@@ -435,17 +433,11 @@ version metadata, and direct release downloads.
 - [ ] E2EE cross-device sync
 - [ ] Later: landscape dual-pane, kana/hangul IME, deep links
 
-## Contributing
+## Support
 
-Issues and PRs are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-full guide. A few pointers:
-
-- `term/` is pure Kotlin with no platform deps — add a unit test for any escape
-  sequence or buffer behavior you touch (`commonTest/`)
-- Keep platform code behind the `ssh/SshSession` and `util/` expect/actual seams
-- Design tokens live in `ui/theme/` — no ad-hoc dp/alpha values in new UI code
-- README.md and README.zh-CN.md are kept in sync; behavior changes to `term/`
-  or `mosh/` update the matching docs file
+Visit [termish.dev](https://termish.dev) or contact
+[ttermish@gmail.com](mailto:ttermish@gmail.com) for support and feedback.
+For security issues, see [SECURITY.md](SECURITY.md).
 
 ## Acknowledgments
 
@@ -470,7 +462,7 @@ full guide. A few pointers:
 
 ## License
 
-Termish is released under the [MIT License](LICENSE).
+Termish is proprietary software. All rights reserved; see [LICENSE](LICENSE).
 Bundled JetBrains Mono is licensed separately under
 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt).
 

@@ -7,8 +7,8 @@
 
 ## 为什么自研
 
-mosh 官方客户端是 GPLv3，与本项目 MIT 许可冲突。`dev.termish.mosh` 是纯 Kotlin
-实现（SSP 协议 + AES-128-OCB + zlib 分片 + UDP 直连），不需要任何 GPL 原生二进制。
+为共享 Android/iOS 的协议实现，`dev.termish.mosh` 使用纯 Kotlin
+实现 SSP 协议、AES-128-OCB、zlib 分片与 UDP 直连，不依赖官方客户端原生二进制。
 实现基于公开的协议行为规格与线上报文格式，与官方客户端保持线上兼容。
 
 ## 实现依据
@@ -24,7 +24,7 @@ mosh 分两层，边界刻意保持干净：
 - **协议层（零依赖，可独立提取为库）**：`MoshTransport` / `UserStream` /
   `Fragmentation` / `Messages` / `Ocb` / `Aes` / `MoshCrypto` / `KmpMoshSession`
   ——不 import `dev.termish.term`，只依赖 Kotlin 标准库与 kotlinx。
-  若未来要单独发布 mosh 客户端库/供他人复用，此层直接拆模块即可。
+  需要在其他内部模块复用时，可将此层拆为独立模块。
 - **影子层（必然依赖终端模拟器）**：`ShadowTerminal` / `PredictionLayer` 复用
   `term/` 模拟器维护服务端帧缓冲镜像——mosh 协议要求客户端持有终端状态；
   复用自研模拟器而非另写一套是刻意决策（行为同源 + 行级增量同步红利），

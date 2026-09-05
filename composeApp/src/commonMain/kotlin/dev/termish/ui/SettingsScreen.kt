@@ -65,7 +65,7 @@ import dev.termish.util.BackgroundProtectionState
 import dev.termish.util.TermLog
 import dev.termish.util.openApplicationSettings
 
-// ---- 关于区外链（官网 / 联系邮箱；文档/GitHub 入口待补充） ----
+// ---- 关于区外链（官网 / 联系邮箱） ----
 private const val WEBSITE_URL = "https://termish.dev"
 private const val WEBSITE_HOST = "termish.dev"
 private const val CONTACT_EMAIL = "ttermish@gmail.com"
