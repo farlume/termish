@@ -127,7 +127,7 @@ def publish(client, config: dict, release: dict, directory: Path, latest_tag) ->
             Bucket=config["bucket"], Key=key, Body=body,
             ContentMD5=base64.b64encode(hashlib.md5(body).digest()).decode(),
             ContentType=content_type,
-            CacheControl="public, max-age=31536000, immutable" if immutable else "no-cache",
+            CacheControl="public, max-age=31536000, immutable" if immutable else "no-store, max-age=0",
             **options,
         )
         print(f"Uploaded {key}")

@@ -69,7 +69,9 @@ class PublishR2Test(unittest.TestCase):
         self.assertEqual(result["download_url"], "https://downloads.example.com/downloads/releases/v1.7.1/Termish-1.7.1-release.apk")
         self.assertTrue(result["github_download_url"].endswith("/Termish-1.7.1-release.apk"))
         self.assertEqual(self.client.objects["downloads/termish.apk"]["Body"], (self.directory / "Termish-1.7.1-release.apk").read_bytes())
-        self.assertEqual(self.client.objects["downloads/version.json"]["CacheControl"], "no-cache")
+        for key in ("downloads/version.json", "downloads/release.json", "downloads/termish.apk", "downloads/termish.aab"):
+            self.assertEqual(self.client.objects[key]["CacheControl"], "no-store, max-age=0")
+        self.assertEqual(self.client.objects["downloads/releases/v1.7.1/Termish-1.7.1-release.apk"]["CacheControl"], "public, max-age=31536000, immutable")
         self.assertEqual(self.public_check.call_count, 9)
         for uploaded in self.client.objects.values():
             self.assertEqual(uploaded["ContentMD5"], base64.b64encode(hashlib.md5(uploaded["Body"]).digest()).decode())

@@ -22,7 +22,7 @@
 ]
 ```
 
-公开下载不需要放行写入操作。不要为 `/downloads/version.json`、`/downloads/release.json` 和稳定下载对象设置强制长期缓存；使用响应中的 `Cache-Control`。
+公开下载不需要放行写入操作。固定 APK/AAB、版本 JSON 和固定校验和使用 `Cache-Control: no-store, max-age=0`，避免自定义域名的浏览器缓存时间设置让最新版下载仍命中旧包。按版本归档的安装包和校验和长期缓存。Cloudflare 缓存规则应尊重这些响应头，不要对固定入口强制缓存。
 
 ## GitHub Environment 配置
 
