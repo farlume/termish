@@ -36,7 +36,7 @@ reinstall: ## 卸载后重装（gradle reinstallDebug，治签名冲突）
 
 .PHONY: test
 test: ## 单元测试 + 集成测试（sshd/mosh 不在时自动 SKIP）
-	$(GRADLEW) agentBridgeTest :composeApp:desktopTest
+	$(GRADLEW) agentBridgeTest :composeApp:testDebugUnitTest
 
 .PHONY: test-integration
 test-integration: ## 集成测试：自动起 sshd 后跑（gradle testIntegration）
@@ -57,7 +57,7 @@ release: ## 构建已签名 release APK + AAB（先校验签名机密）
 	@echo "产物: composeApp/build/outputs/{apk,bundle}/release/"
 
 .PHONY: bump
-bump: ## 三平台版本号联动，用法: make bump V=1.0.1（预览: DRY=1）
+bump: ## Android / iOS 版本号联动，用法: make bump V=1.0.1（预览: DRY=1）
 	./scripts/bump-version.sh $(if $(DRY),--dry-run,) $(V)
 
 ## ---------- iOS（一次性原生依赖） ----------

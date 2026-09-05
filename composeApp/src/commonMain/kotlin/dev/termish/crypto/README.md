@@ -25,7 +25,7 @@
 
 - Android：随 App 打包的完整 BouncyCastle（`TermishApplication.kt` 的
   `installFullBouncyCastle`——Android 自带阉割版 BC 缺 X25519 / Ed25519）
-- iOS / Desktop JVM：系统安全框架 / JDK 内置 Provider
+- iOS：系统安全框架
 
 ## 例外：mosh 传输加密（`dev.termish.mosh`）
 

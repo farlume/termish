@@ -113,7 +113,7 @@ mosh-server 会**吞掉**远端 TUI 发出的 OSC 10/11 颜色查询——查询
 ## 测试
 
 - 单元测试（`commonTest/mosh/`）：`OcbTest`（独立标准解密向量，非自洽 round-trip）、`SspTest`、`TransportTest`、`PredictionTest`。
-- **无 mosh-server 集成测试**：CI 未安装 mosh-server，desktopTest 只覆盖 sshj/SFTP 集成。改动 MoshTransport/KmpMoshSession 的收发逻辑时，建议本地起真实 mosh-server 手动验证（或先跑单测 + 桌面端连真实主机）。
+- **无 mosh-server 集成测试**：CI 未安装 mosh-server，androidUnitTest 只覆盖 sshj/SFTP 集成。改动 MoshTransport/KmpMoshSession 的收发逻辑时，建议本地起真实 mosh-server 手动验证（或先跑单测 + Android/iOS 端连真实主机）。
 
 ## 已知取舍
 

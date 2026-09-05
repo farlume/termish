@@ -1,6 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import org.jetbrains.compose.desktop.application.dsl.TargetFormat
-import java.nio.file.Files
 import java.util.Base64
 import java.util.Properties
 
@@ -27,8 +25,6 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_17)
         }
     }
-
-    jvm("desktop")
 
     val nativeRoot = rootProject.file("iosApp/native")
     val libssh2Def = project.file("src/nativeInterop/cinterop/libssh2.def")
@@ -76,21 +72,10 @@ kotlin {
     }
 
     sourceSets {
-        val desktopMain by getting
         val androidMain by getting
-        val desktopTest by getting
+        val androidUnitTest by getting
 
-        // Android 与 desktop 共享的 JVM SSH 引擎（sshj）
-        val jvmSharedMain by creating {
-            dependsOn(commonMain.get())
-            dependencies {
-                implementation(libs.sshj)
-            }
-        }
-        desktopMain.dependsOn(jvmSharedMain)
-        androidMain.dependsOn(jvmSharedMain)
-
-        // iOS 共享源集（默认层级模板因上面的显式 dependsOn 被禁用，需手动创建）
+        // iOS 共享源集（gradle.properties 中关闭了默认层级模板）。
         val iosMain by creating {
             dependsOn(commonMain.get())
         }
@@ -116,6 +101,7 @@ kotlin {
         }
 
         androidMain.dependencies {
+            implementation(libs.sshj)
             implementation(compose.preview)
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.documentfile)
@@ -126,15 +112,13 @@ kotlin {
 
         commonTest.dependencies {
             implementation(kotlin("test"))
+        }
+
+        androidUnitTest.dependencies {
             implementation(libs.junit)
-        }
-
-        desktopMain.dependencies {
-            implementation(compose.desktop.currentOs)
+            implementation(libs.multiplatform.settings.test)
+            implementation(libs.robolectric)
             implementation(libs.slf4j.nop)
-        }
-
-        desktopTest.dependencies {
             // Dispatchers.setMain + StandardTestDispatcher：TerminalController 的
             // 输出消费循环固定在 Dispatchers.Main，测试需要可控的主调度器
             implementation(libs.kotlinx.coroutines.test)
@@ -142,48 +126,13 @@ kotlin {
     }
 }
 
-// 桌面（开发/测试 harness）运行与打包入口
-compose.desktop.application {
-    mainClass = "dev.termish.MainKt"
-    nativeDistributions {
-        targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-        packageName = "Termish"
-        packageVersion = "1.7.0"
-        macOS {
-            iconFile.set(project.file("src/desktopMain/resources/icon.icns"))
-        }
-        windows {
-            iconFile.set(project.file("src/desktopMain/resources/icon.ico"))
-        }
-        linux {
-            iconFile.set(project.file("src/desktopMain/resources/icon.png"))
-        }
-    }
-}
-
-// 开发态 `./gradlew run` 时 macOS Dock 悬停名显示 "Termish" 而不是 "java"：
-// macOS 的 Dock 悬停名取进程名，-Xdock:name 只能改菜单栏（JDK-8077172），
-// 所以用一个名为 Termish 的符号链接指向 java 来启动，进程名即为 Termish。
-afterEvaluate {
-    tasks.named<JavaExec>("run") {
-        doFirst {
-            val javaBin = File(System.getProperty("java.home"), "bin/java")
-            val linkDir = File(System.getProperty("user.home"), ".termish/bin")
-            val link = File(linkDir, "Termish")
-            if (!link.exists()) {
-                linkDir.mkdirs()
-                Files.createSymbolicLink(link.toPath(), javaBin.toPath())
-            }
-            executable = link.absolutePath
-        }
-        // 菜单栏应用名（Dock 名由上面的符号链接决定）
-        jvmArgs("-Xdock:name=Termish")
-    }
-}
-
 android {
     namespace = "dev.termish.app"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 
     signingConfigs {
         // release 签名机密来源（按优先级）：
@@ -229,8 +178,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 34
-        versionName = "1.7.0"
+        versionCode = 35
+        versionName = "1.7.1"
     }
     packaging {
         resources {

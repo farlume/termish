@@ -7,7 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** 简化但结构与真实 `herdr api snapshot` 输出一致的 fixture（见 desktopTest resources 里的真实快照）。 */
+/** 简化但结构与真实 `herdr api snapshot` 输出一致的 fixture（见 androidUnitTest resources 里的真实快照）。 */
 private val SNAPSHOT_JSON =
     """
 {"id":"cli:api:snapshot","result":{"snapshot":{

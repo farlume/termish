@@ -48,7 +48,7 @@ actual fun rememberNotificationPermissionController(): NotificationPermissionCon
             override fun refresh(onResult: (NotificationPermissionState) -> Unit) {
                 center.getNotificationSettingsWithCompletionHandler { settings ->
                     val state =
-                        when (settings.authorizationStatus.toInt()) {
+                        when (settings?.authorizationStatus?.toInt()) {
                             1 -> NotificationPermissionState.DENIED
                             2, 3, 4 -> NotificationPermissionState.GRANTED
                             else -> NotificationPermissionState.UNKNOWN

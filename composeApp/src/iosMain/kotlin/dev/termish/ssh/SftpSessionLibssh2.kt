@@ -115,7 +115,7 @@ private class SftpSessionLibssh2(
     }
 
     /**
-     * 解析 readdir 的 longentry（权限/大小），时间降级为空（Android/desktop 有完整属性）。
+     * 解析 readdir 的 longentry（权限/大小），时间降级为空（Android 有完整属性）。
      * 类型字符无法识别（longentry 缺失/格式异常）时返回 null，由 [statEntry] 兜底。
      */
     private fun parseLongEntry(

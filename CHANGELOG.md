@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-09-05
+
+### 移除
+
+- **桌面客户端**：移除 macOS / Linux / Windows 应用与安装包，仅保留 Android 和 iOS；原 JVM 单元测试与 SSH/SFTP 集成测试迁入 Android 本地测试，远程画面功能继续保留
+
+### 修复
+
+- **终端顶部布局**：移除 header 下方重复的状态栏安全区留白，页头由 56dp 收紧至 48dp，保留 iOS 灵动岛必要的安全距离
+- **移动端构建兼容性**：SSH 命令输出使用兼容 Android 8+ 的字符集 API；修复 iOS 视频桥接配置、平台扩展导入与只读属性实现，以及通知权限回调的可空处理；Markdown 渲染库对齐 Compose 1.8，修复 iOS 最终应用链接缺失符号
+
 ## [1.7.0] - 2026-08-25
 
 ### 新增
@@ -513,8 +524,9 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.0...HEAD
-[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.0
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.1
+[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...75926cf504cf8728b6d9b613bd90704c36fc4f60
 [1.6.4]: https://github.com/ttermish/termish/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2

@@ -278,7 +278,7 @@ fun SettingsScreen(
             }
 
             // 关于：设置页底部固定生态位（业界惯例：Termius/Blink 等均在底部放
-            // 版本 + 官网/文档/仓库入口）。点击跳浏览器，三平台统一走 LocalUriHandler。
+            // 版本 + 官网/文档/仓库入口）。点击跳浏览器，Android / iOS 统一走 LocalUriHandler。
             SettingsGroup(s.settingsGroupAbout) {
                 SettingsOptionItem(s.settingsVersion, APP_VERSION) {}
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))

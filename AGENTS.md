@@ -1,6 +1,6 @@
 # AGENTS.md — Termish
 
-Kotlin Multiplatform mobile SSH client (Android / iOS / Desktop). Pure-Kotlin
+Kotlin Multiplatform mobile SSH client (Android / iOS). Pure-Kotlin
 terminal emulator + Compose Multiplatform shared UI; the SSH transport is swapped
 per platform against battle-tested engines: sshj + BouncyCastle on JVM, libssh2 +
 OpenSSL on iOS, and a pure-Kotlin Mosh client (`dev.termish.mosh`).
@@ -18,7 +18,7 @@ make test                # unit tests (crypto RFC vectors + terminal emulator)
 make test-integration    # transport integration tests (auto-starts local sshd)
 make lint                # Android lint
 make release             # signed release APK + AAB (requires .env signing secrets)
-make bump V=1.0.1        # bump version across all 3 platforms (preview: DRY=1)
+make bump V=1.0.1        # bump Android and iOS versions (preview: DRY=1)
 make ios-native          # one-time cross-compile OpenSSL + libssh2 → iosApp/native/
 make ios-framework       # Kotlin framework (simulator + device debug)
 ```
@@ -48,7 +48,7 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
   deliberate, not a shortcut). Keep this boundary: it's what makes the
   protocol layer extractable as a standalone library
 - Platform code only lives behind expect/actual seams: `ssh/SshSession`, `util/`,
-  `data/SecretStore`; `jvmSharedMain/` is the JVM engine shared by Android + desktop
+  `data/SecretStore`; `androidMain/` owns the Android JVM transport engine
 - The input pipeline treats **IME composing text as a first-class citizen**:
   composing text never reaches the wire, only committed text is diffed, and
   backspace semantics are split between composing/committed — read the existing
@@ -70,7 +70,7 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
 
 ```bash
 # ① 单元测试（秒级）——改动涉及 term/、mosh/、crypto/、逻辑层时必跑
-./gradlew :composeApp:desktopTest
+./gradlew :composeApp:testDebugUnitTest
 
 # ② debug 构建 + 模拟器安装启动（分钟级）——日常迭代主力
 make run
@@ -149,7 +149,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
   `arch=undefined_arch` and the Kotlin framework task fails with
   "Could not infer iOS target architectures"
 - The signing keystore was rebuilt on 2026-08-17 (alias `termish`, CN=Termish) **before any public release** — old `mssh` alias is gone, no upgrade-path constraint. The pre-release legacy keystore is archived off-repo (local backup, not in git). Once any build is published, the **private key must never change** (breaks signature consistency and upgrade installs) — keep backups off-repo and never commit `.env` / `*.jks`
-- Version numbers are synced in three places (Android / desktop / iOS): always use
+- Version numbers are synced across Android and iOS: always use
   `make bump`, never edit by hand; a pushed `vX.Y.Z` tag is validated by CI against
   the checked-in version
 - Uncaught Kotlin exceptions on iOS are dumped to `<NSTemporaryDirectory>/termish-diag.log`

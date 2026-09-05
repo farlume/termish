@@ -24,8 +24,7 @@ Termish 是一个处理凭据的 SSH 客户端，安全问题优先处理。
 
 了解我们的威胁模型有助于判断问题是否属于安全漏洞：
 
-- 密码/私钥存放于 Android Keystore（AES-GCM）/ iOS Keychain；
-  **desktop 是开发/测试 harness，密钥为明文文件**（`~/.termish`），不算漏洞
+- 密码/私钥存放于 Android Keystore（AES-GCM）/ iOS Keychain
 - 主机密钥采用 TOFU（首次信任 + 指纹确认）
 - `crypto/` 下的纯 Kotlin 实现**未经审计**，README 已声明；
   生产路径仅使用其中的 Sha256

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
@@ -117,6 +118,8 @@ import dev.termish.ssh.SftpSession
 import dev.termish.term.argbToRgb
 import dev.termish.ui.PIP_DEFAULT_H
 import dev.termish.ui.PIP_DEFAULT_W
+import dev.termish.ui.theme.Sizes
+import dev.termish.ui.theme.Spacing
 import dev.termish.ui.theme.StatusColors
 import dev.termish.ui.theme.TerminalTheme
 import dev.termish.util.hapticTick
@@ -320,7 +323,6 @@ fun TerminalScreen(
                         onPipFullscreenChange = setPipFullscreen,
                         // 收起动画播放中（全屏层还在缩回）：小窗延迟出现防闪烁
                         pipCollapsing = !pipFullscreen && expandAnim.value > 0f,
-                        statusBarTopDp = with(screenDensity) { statusBarTopPx.toDp() },
                         pipDrag = pipDrag,
                         pipSizeW = pipSizeW,
                         pipSizeH = pipSizeH,
@@ -459,8 +461,6 @@ private fun TerminalBody(
     onPipFullscreenChange: (Boolean) -> Unit,
     /** 收起动画播放中（全屏层缩回期间小窗延迟出现，防闪烁）。 */
     pipCollapsing: Boolean = false,
-    /** 固定状态栏高度（dp）：沉浸式期间不归零，返回无跳变。 */
-    statusBarTopDp: Dp = 0.dp,
     /** 小窗位置/尺寸（TerminalScreen 持有：全屏展开动画需要）。 */
     pipDrag: MutableState<Offset>,
     pipSizeW: MutableState<Float>,
@@ -871,7 +871,8 @@ private fun TerminalBody(
         prevStatus = controller.status
     }
 
-    Column(Modifier.fillMaxSize().padding(top = statusBarTopDp)) {
+    // 顶部安全区由 TerminalScreen 统一避让，主体紧接会话栏。
+    Column(Modifier.fillMaxSize()) {
         // 会话主体：切换 tab 时按会话唯一 id 整体重组（输入框/局部状态独立）
         key(controller.sessionId) {
             // 等 TerminalView 量到真实画布尺寸后再建连，避免 PTY 先以 80x24 起、
@@ -1559,7 +1560,8 @@ private fun TerminalTabBar(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 4.dp),
+                .heightIn(min = Sizes.HeaderCompact)
+                .padding(horizontal = Spacing.Xs),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {

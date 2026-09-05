@@ -9,7 +9,7 @@
 [![官网](https://img.shields.io/badge/官网-termish.dev-0ea5e9?style=flat&logo=globe&logoColor=white)](https://termish.dev)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
-[![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen)]()
+[![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
@@ -33,10 +33,6 @@
     <img alt="Download for Android"
          src="https://img.shields.io/badge/Android-APK%20%C2%B7%20AAB-10B981?style=for-the-badge&logo=android&logoColor=white" />
   </a>
-  <a href="https://github.com/ttermish/termish/releases/latest">
-    <img alt="Download for Desktop"
-         src="https://img.shields.io/badge/Desktop-DMG%20%C2%B7%20DEB%20%C2%B7%20MSI-64748B?style=for-the-badge&logo=linux&logoColor=white" />
-  </a>
   <a href="#构建与测试">
     <img alt="iOS local build"
          src="https://img.shields.io/badge/iOS-local%20build-334155?style=for-the-badge&logo=apple&logoColor=white" />
@@ -48,7 +44,6 @@
 从 [Releases 发布页](https://github.com/ttermish/termish/releases/latest) 获取最新构建：
 
 - **Android** — 签名 APK（侧载需允许“安装未知来源应用”）与 AAB
-- **桌面（macOS / Linux / Windows）** — DMG / DEB / MSI 安装包
 - **iOS** — 未公开分发；本地构建（见 [构建与测试](#构建与测试)）
 
 每个发布附 SHA-256 校验和。想要 CI 产物的 debug APK？见 [安装](#安装)。
@@ -96,8 +91,7 @@ Termish 讲的是普通 SSH 客户端讲不了的两个故事。
 - **组合态输入法一等公民**——拼音、假名、谚文永不上线，候选栏完整可用（见下）
 - **触屏 TUI 输入**——固定 CTRL/ALT/ESC 工具行，tap/drag 映射为终端鼠标事件，
   agent TUI（herdr/codex/claude/vim/htop）在手机上顺手可用
-- **每个平台都原生**——手机上无 webview、桌面上无 Electron，一套共享 Kotlin
-  代码库；长时 agent 会话不发热、不费电
+- **每个平台都原生**——Android 与 iOS 共享 Kotlin 代码库，使用原生 UI；长时 agent 会话不发热、不费电
 - **终端优先**——模拟器而非传输层才是核心资产
 - **为真实工作流而生**——tmux 友好会话、后台保活、离开-回来会话恢复、
   告别 Material 默认观感
@@ -106,7 +100,7 @@ Termish 讲的是普通 SSH 客户端讲不了的两个故事。
 
 ```mermaid
 flowchart TB
-    UI[Compose Multiplatform UI<br/>Android · iOS · 桌面] --> TERM[纯 Kotlin 终端模拟器<br/>VT100/xterm · CJK · OSC]
+    UI[Compose Multiplatform UI<br/>Android · iOS] --> TERM[纯 Kotlin 终端模拟器<br/>VT100/xterm · CJK · OSC]
     TERM --> SSH[SSH 传输<br/>sshj JVM · libssh2 iOS]
     TERM --> MOSH[dev.termish.mosh<br/>纯 Kotlin SSP · AES-128-OCB]
     SSH --> SRV[(你的服务器)]
@@ -178,7 +172,7 @@ flowchart TB
   （标题 / 代码块 / 行内样式 / 列表 / 引用），预览 ⇄ 源码一键切换（零依赖纯 Kotlin 渲染器）
 - 20 类彩色文件类型图标（APK / 证书密钥 / 压缩包 / PDF / 表格…）
 - 下载：右下角进度卡片 + 完成通知（Android 点击打开）；Android 10+ 直接存下载目录、
-  iOS 导出到文件、桌面文件选择器；浏览路径每次导航即时持久化（重启回到上次目录）
+  iOS 导出到文件；浏览路径每次导航即时持久化（重启回到上次目录）
 
 **输入与终端工具**
 - 固定两行功能键工具栏：`CTRL ALT ESC TAB ⌃C ↑ ⌃L ⌨` / `⌃D PST / ⌃E ← ↓ → ENT`
@@ -236,7 +230,6 @@ flowchart TB
 ## 安装
 
 - **Android**：从 Releases 页下载签名 APK/AAB（或 CI 产物的 debug APK）。
-- **桌面**：从 Releases 页下载 DMG / DEB / MSI 安装包。
 - **iOS**：CI 不发包，需本地构建：`make ios-native && make ios-framework`，
   再用 Xcode 打开 `iosApp/iosApp.xcodeproj` 跑到模拟器或真机。
 
@@ -286,7 +279,7 @@ flowchart TB
 
 ```bash
 # 单元测试（crypto RFC 向量 + 终端模拟器 + mosh）
-./gradlew :composeApp:desktopTest
+./gradlew :composeApp:testDebugUnitTest
 
 # 零第三方依赖的 Python Agent Bridge 测试
 ./gradlew agentBridgeTest
@@ -337,8 +330,6 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
   行为”时暂停 SSH 保活；回到应用会先健康检查，必要时自动重连
 - **iOS 后台挂起**：应用被挂起、socket 断开；活跃会话回前台自动重连——
   配合 `tmux`/Mosh 做服务端连续性
-- **桌面端密钥**存放在 `~/.termish` 下的明文 properties 文件
-  （仅开发/测试 harness——移动端构建用 Keystore/Keychain）
 - **原生 Agent 对话**目前要求远端已有 `python3`。支持 Codex、Claude Code、
   Gemini CLI、OpenCode 与 Pi。支持的交互式审批和提问会桥接到手机；服务商无头
   协议无法表达的操作会安全拒绝或返回明确错误

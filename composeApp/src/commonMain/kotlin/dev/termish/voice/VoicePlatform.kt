@@ -7,7 +7,7 @@ import androidx.compose.runtime.Composable
  * - [MicrophoneRecorder]：16kHz / PCM16 / 单声道 录音器
  * - [VoiceWebSocket]：二进制 WebSocket 客户端
  * - [rememberMicPermissionRequester]：麦克风权限请求（Android 运行时权限弹窗；
- *   iOS 走 AVAudioSession 内部请求；桌面恒授予）
+ *   iOS 走 AVAudioSession 内部请求）
  *
  * 麦克风权限请求器：request 幂等，已授予立即回调 true。
  */

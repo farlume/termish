@@ -945,7 +945,7 @@ fun AppRoot(repository: HostRepository) {
     }
 
     // iOS：退到桌面后系统挂起进程、掐断 socket；回前台时自动重连活跃会话（缓冲保留）。
-    // Android 由前台服务保活、桌面端无此语义，对应实现为空操作。
+    // Android 由前台服务保活，对应实现为空操作。
     val disposeNetwork =
         observeNetworkChange { kind ->
             // 网络事件：SSH 对默认网络变化先探测再决定是否重连；mosh 靠 UDP 漫游自愈

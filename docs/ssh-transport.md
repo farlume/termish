@@ -1,7 +1,7 @@
 # SSH 传输层（ssh/）
 
 > **English summary:** the platform-neutral `SshSession` contract and the two
-> engines behind it — sshj+BouncyCastle on JVM (Android/desktop) and a hand-
+> engines behind it — sshj+BouncyCastle on Android and a hand-
 > written libssh2 cinterop engine on iOS. Covers the auth chain (password /
 > publickey / passphrase / keyboard-interactive), the single-threaded reader
 > discipline that keeps escape-sequence decoding race-free, non-blocking
@@ -16,7 +16,7 @@
 | 契约 | `SshSession.kt` | `SshSession` / `SshCallbacks` / `SshConnection` / 认证与指纹模型 |
 | 契约 | `SftpSession.kt` | SFTP 抽象（见 sftp.md） |
 | 契约 | `MoshSession.kt` | mosh 客户端抽象 + `parseMoshConnect` / 引导命令 / 系统探测 |
-| JVM 引擎 | `jvmSharedMain/…/SshSessionSshj.kt` | sshj + BouncyCastle（Android / desktop 共用） |
+| JVM 引擎 | `androidMain/…/SshSessionSshj.kt` | sshj + BouncyCastle（Android） |
 | iOS 引擎 | `iosMain/…/SshSessionLibssh2.kt` | libssh2 + OpenSSL 静态链接，cinterop 手写 |
 | 工厂 | `SshEngine.jvm.kt` / `SshEngine.ios.kt` | `actual fun createSshSession` |
 
@@ -149,7 +149,7 @@ mosh-server new -c 256 -l LANG=en_US.UTF-8                  # 自动端口（600
 
 - `commonTest/ssh/`：`EncryptedPemTest`（三种 PEM 格式加密判定）、
   `MoshConnectParseTest`（MOSH CONNECT 解析）、`SystemDetectTest`
-- `desktopTest/ssh/`：`SshjIntegrationTest` / `SftpIntegrationTest` 打真实
+- `androidUnitTest/ssh/`：`SshjIntegrationTest` / `SftpIntegrationTest` 打真实
   sshd（127.0.0.1:22222，`scripts/test-sshd.sh` 自动起），**self-detect，
   sshd 缺席时 SKIP 不算失败**
 - iOS 引擎没有自动化测试（CI 不构建 iOS）——libssh2 改动必须真机/模拟器

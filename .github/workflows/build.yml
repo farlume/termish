@@ -47,19 +47,13 @@ jobs:
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
-          PV=$(sed -n 's/^[[:space:]]*packageVersion = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
-          # 桌面 jpackage 要求主版本号 > 0：App 0.Y.Z 对应桌面包 1.Y.Z
-          if [[ "$TAG" =~ ^0\.([0-9]+\.[0-9]+)$ ]]; then
-            PV_EXPECTED="1.${BASH_REMATCH[1]}"
-          else
-            PV_EXPECTED="$TAG"
-          fi
-          if [ "$TAG" != "$VN" ] || [ "$PV" != "$PV_EXPECTED" ]; then
-            echo "::error::tag=$TAG 与构建配置不一致 (Android versionName=$VN, 桌面 packageVersion=$PV)"
-            echo "::error::请先运行 ./scripts/bump-version.sh $TAG 并提交（桌面包版本应为 $PV_EXPECTED），再重新打 tag"
+          IOS_VERSIONS=$(sed -n 's/^[[:space:]]*MARKETING_VERSION = \([^;]*\);.*/\1/p' iosApp/iosApp.xcodeproj/project.pbxproj | sort -u)
+          if [ "$TAG" != "$VN" ] || [ "$TAG" != "$IOS_VERSIONS" ]; then
+            echo "::error::tag=$TAG 与构建配置不一致 (Android versionName=$VN, iOS MARKETING_VERSION=$IOS_VERSIONS)"
+            echo "::error::请先运行 ./scripts/bump-version.sh $TAG 并提交，再重新打 tag"
             exit 1
           fi
-          echo "版本一致：$TAG（桌面包 $PV）"
+          echo "版本一致：Android / iOS $TAG"
 
       # 正式 tag 绝不允许降级为 unsigned 产物；普通 main 构建仍可生成未签名
       # release artifact 供内部检查，但不会进入 GitHub Release。
@@ -72,13 +66,20 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew checkSigningSecrets
 
+      - name: Prepare SSH integration tests
+        # sshd 以 runner 用户启动；Ubuntu 特权分离目录需预先创建。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd
+          sudo mkdir -p /run/sshd
+
       # 检查先行：单测失败即停，不产出包
-      - name: Run checks (unit tests + lint)
+      - name: Run checks (unit + integration tests + lint)
         run: |
           ./gradlew \
             agentBridgeTest \
             ktlintCheck \
-            :composeApp:testDebugUnitTest \
+            testIntegration \
             :composeApp:lintRelease
 
       - name: Build debug APK
@@ -132,8 +133,8 @@ jobs:
         # run_number 膨胀影响）；文件名带 run 号 + 短 SHA，下载后可溯源是
         # 哪次构建。tag 发版不改名：release job 的重命名步骤依赖原始文件名
         run: |
+          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' composeApp/build.gradle.kts | head -1)
           cd composeApp/build/outputs
-          VN=$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)".*/\1/p' build.gradle.kts | head -1)
           STAMP="${VN}-rc${{ github.run_number }}-$(echo ${{ github.sha }} | cut -c1-7)"
           for f in apk/release/*.apk bundle/release/*.aab; do
             [ -f "$f" ] || continue
@@ -153,106 +154,12 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 桌面（Linux）：单测 + 集成测试（自启动测试 sshd）+ DEB 打包；
-  # PR 只跑测试不打包。macOS/Windows 打包在 desktop-extra（仅 tag 发版时跑，
-  # macOS 计费 10x 分钟，日常 main push 不烧额度）
-  # ---------------------------------------------------------------------------
-  desktop:
-    name: Desktop (Linux)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      # openssh-server/netcat-openbsd：desktopTest 集成测试自启动 sshd(22222)
-      # binutils(objcopy)：jlink 生成运行时镜像时剥离原生库调试符号，
-      #   最小化 Debian 不自带，缺失会报 "Cannot run program objcopy" 导致 createRuntimeImage 失败
-      - name: Install sshd + binutils for tests/package
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd binutils
-
-      - name: Start test sshd
-        # Ubuntu 需要特权分离目录 /run/sshd（root 创建一次）；
-        # sshd 必须以非 root 运行：root sshd 会拒绝锁定账号（GitHub runner
-        # 用户无密码被锁），且 root 属主的 authorized_keys 对非 root 认证
-        # 用户不可见——本地 macOS 也是非 root 跑，行为一致
-        run: |
-          sudo mkdir -p /run/sshd
-          bash scripts/test-sshd.sh
-
-      - name: Run desktop tests
-        # 集成测试按 sshd(22222) 可用性自我探测，无需 TERMISH_TEST_RUN
-        run: ./gradlew agentBridgeTest :composeApp:desktopTest
-
-      - name: Package (Linux)
-        if: github.event_name != 'pull_request'
-        run: ./gradlew :composeApp:packageDeb
-
-      - name: Upload artifact
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-Linux
-          path: composeApp/build/compose/binaries/main/deb/*.deb
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # 桌面（macOS/Windows）：仅 tag 发版时打包 DMG/MSI（10x/2x 计费，不日常跑）；
-  # 单测已由 Linux job 覆盖（commonTest 与 JVM 逻辑跨平台一致），这里只打包
-  # ---------------------------------------------------------------------------
-  desktop-extra:
-    name: Desktop (${{ matrix.platform }})
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: desktop
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macOS
-            os: macos-14
-            task: packageDmg
-            artifact_path: composeApp/build/compose/binaries/main/dmg/*.dmg
-          - platform: Windows
-            os: windows-latest
-            task: packageMsi
-            artifact_path: composeApp/build/compose/binaries/main/msi/*.msi
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: gradle/actions/setup-gradle@v4
-
-      - name: Package (${{ matrix.platform }})
-        run: ./gradlew :composeApp:${{ matrix.task }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-${{ matrix.platform }}
-          path: ${{ matrix.artifact_path }}
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # 发布：仅 tag（vX.Y.Z）触发，汇总 Android + 桌面产物创建 GitHub Release
+  # 发布：仅 tag（vX.Y.Z）触发，汇总 Android 产物创建 GitHub Release（iOS 由 Xcode Cloud 分发）
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, desktop, desktop-extra]
+    needs: [android]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -261,17 +168,10 @@ jobs:
       # gh release create --generate-notes 需要 git 上下文，必须 checkout
       - uses: actions/checkout@v4
 
-      # 只取签名 release 产物与桌面包（debug APK 仅留档，不进 Release）。
-      # pattern 不能写成多行块：YAML 块标量会带入换行符，匹配不到任何
-      # artifact → dist 目录不创建（v1.0.1 发版失败的根因）。分两步各自单行
+      # 只取 Android release 产物（debug APK 仅留档，不进 Release）。
       - uses: actions/download-artifact@v4
         with:
           name: android-release
-          path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: desktop-*
           path: dist
           merge-multiple: true
 
@@ -279,20 +179,13 @@ jobs:
         run: |
           VER="${GITHUB_REF_NAME#v}"
           cd dist
-          # upload-artifact v4 多 path 会保留目录结构（apk/、bundle/、deb/），
-          # 递归收集 apk/aab/deb 统一重命名到顶层；jpackage 的 deb 名含构建号，
-          # 统一为 Termish-<ver>-linux-amd64.deb
-          for f in $(find . -type f \( -name "*.apk" -o -name "*.aab" -o -name "*.deb" \)); do
-            ext="${f##*.}"
-            if [ "$ext" = "deb" ]; then
-              mv "$f" "Termish-$VER-linux-amd64.deb"
-            else
-              name=$(basename "$f" | sed "s/^composeApp-//")
-              mv "$f" "Termish-$VER-$name"
-            fi
-          done
-          # DMG/MSI 由 jpackage 命名（自带版本号）且单文件上传后已在顶层，原样保留
-          rm -rf apk bundle deb
+          # upload-artifact v4 多 path 会保留 apk/、bundle/ 目录结构。
+          # 收集 APK/AAB 并按版本统一重命名到顶层。
+          while IFS= read -r -d '' f; do
+            name=$(basename "$f" | sed "s/^composeApp-//")
+            mv "$f" "Termish-$VER-$name"
+          done < <(find . -type f \( -name "*.apk" -o -name "*.aab" \) -print0)
+          rm -rf apk bundle
           ls -l
 
       - name: Generate SHA-256 checksums

@@ -11,6 +11,6 @@ enum class NetworkChangeKind {
     DEFAULT_NETWORK_CHANGED,
 }
 
-/** 监听网络变化；返回注销函数。桌面/iOS 暂为 no-op。 */
+/** 监听网络变化；返回注销函数。iOS 暂为 no-op。 */
 @Composable
 expect fun observeNetworkChange(onChange: (NetworkChangeKind) -> Unit): () -> Unit

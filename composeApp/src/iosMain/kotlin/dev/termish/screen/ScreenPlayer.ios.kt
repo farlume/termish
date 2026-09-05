@@ -18,14 +18,19 @@ import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readValue
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.value
 import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVSampleBufferDisplayLayer
+import platform.AVFoundation.flush
+import platform.AVFoundation.flushAndRemoveImage
 import platform.CoreGraphics.CGRectZero
 import platform.Foundation.NSDate
 import platform.Foundation.NSLock
+import platform.Foundation.timeIntervalSince1970
 import platform.UIKit.UIColor
 import platform.UIKit.UIView
 import platform.darwin.dispatch_async
@@ -79,13 +84,15 @@ actual class ScreenPlayer actual constructor(
 
     @Volatile private var droppedFrames = 0L
 
-    @Volatile
-    actual var lastRenderedAtMillis = 0L
-        private set
+    @Volatile private var lastRenderedAtMillisValue = 0L
 
-    @Volatile
-    actual var renderSurfaceAttached = false
-        private set
+    @Volatile private var renderSurfaceAttachedValue = false
+
+    actual val lastRenderedAtMillis: Long
+        get() = lastRenderedAtMillisValue
+
+    actual val renderSurfaceAttached: Boolean
+        get() = renderSurfaceAttachedValue
 
     actual val videoDims: MutableState<Pair<Int, Int>?> = mutableStateOf(null)
 
@@ -175,13 +182,13 @@ actual class ScreenPlayer actual constructor(
 
     internal fun attachView(view: ScreenVideoView) {
         if (!views.contains(view)) views += view
-        renderSurfaceAttached = views.isNotEmpty()
+        renderSurfaceAttachedValue = views.isNotEmpty()
         scheduleDrain()
     }
 
     internal fun detachView(view: ScreenVideoView) {
         views.remove(view)
-        renderSurfaceAttached = views.isNotEmpty()
+        renderSurfaceAttachedValue = views.isNotEmpty()
         view.sampleLayer.flushAndRemoveImage()
         view.sampleLayer.removeFromSuperlayer()
     }
@@ -276,7 +283,7 @@ actual class ScreenPlayer actual constructor(
                 when {
                     layerState > 0 -> {
                         rendered = true
-                        lastRenderedAtMillis = NSDate().timeIntervalSince1970.times(1000).toLong()
+                        lastRenderedAtMillisValue = NSDate().timeIntervalSince1970.times(1000).toLong()
                         view.consecutiveFailures = 0
                         if (!readyReported) {
                             readyReported = true

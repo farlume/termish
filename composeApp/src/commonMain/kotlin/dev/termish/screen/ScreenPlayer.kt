@@ -34,7 +34,6 @@ data class ScreenPlayerMetrics(
  * 平台视频播放器（远程画面渲染层）：
  * - Android：MediaCodec 直解 + SurfaceView 直上屏（ToDesk 式直通管线）。
  * - iOS：AVSampleBufferDisplayLayer + VideoToolbox 硬解直上屏。
- * - desktop：未实现（stub）。
  *
  * 用法：TCP 协议切出的完整 H.264 帧 [feed]；首帧渲染回调 [onReady]；
  * 播放错误回调 [onError]；UI 用 [ScreenVideoSurface] 渲染画面。

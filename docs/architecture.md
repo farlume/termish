@@ -27,39 +27,39 @@ composeApp/
 │   │                          #   controller，connector 经同包 internal 读写）
 │   └── util/                  # SessionKeepAlive / NetworkChange / Dispatchers /
 │                              #   MonoFont / AppLifecycle 等 expect 接缝
-├── jvmSharedMain/             # Android + desktop 共享的 JVM 引擎
-│   ├── ssh/SshSessionSshj     # sshj + BouncyCastle（ed25519 / chacha20 / RSA / kb-int）
-│   └── mosh/MoshPlatform.jvm  # UDP 套接字 + java.util.zip 实现
 ├── androidMain/               # MainActivity + SessionService（前台服务保活）+ Keystore
-├── desktopMain/               # JVM 桌面开发/测试 harness + 打包（DMG/DEB/MSI）
+│   ├── ssh/SshSessionSshj     # sshj + BouncyCastle（ed25519 / chacha20 / RSA / kb-int）
+│   └── mosh/MoshPlatform.android # UDP 套接字 + java.util.zip 实现
 ├── iosMain/                   # MainViewController + libssh2 引擎 + Keychain + POSIX UDP
 ├── commonTest/                # crypto RFC 向量 + 终端模拟器 + mosh 单元测试
-└── desktopTest/               # sshj / SFTP 集成测试（打真实 sshd，127.0.0.1:22222）
+└── androidUnitTest/           # JVM 本地测试：会话/仓库/sshj/SFTP（真实 sshd，127.0.0.1:22222）
 ```
+
+Android 本地测试通过 `:composeApp:testDebugUnitTest` 运行，也包含 `commonTest`。
+会话与控制器测试使用 Robolectric 提供 Android 环境；仓库测试使用内存 `MapSettings`。
 
 ## 平台分工
 
 | 平台 | SSH 引擎 | 认证 | Mosh 客户端 | 密钥存储 |
 |------|----------|------|-------------|----------|
 | Android | sshj + BouncyCastle | password / publickey / keyboard-interactive | 纯 Kotlin `dev.termish.mosh`（UDP 直连） | Android Keystore（AES-GCM） |
-| Desktop | sshj + BouncyCastle | 同上 | 纯 Kotlin `dev.termish.mosh` | 明文 properties 文件（仅开发 harness） |
 | iOS | libssh2 + OpenSSL（静态链接） | 同上 | 纯 Kotlin `dev.termish.mosh` | Keychain |
 
 ## expect/actual 接缝
 
 平台代码只允许出现在这些接缝之后：
 
-| 接缝 | commonMain | androidMain | desktopMain | iosMain |
-|------|-----------|-------------|-------------|---------|
-| `ssh.createSshSession` | expect | jvmSharedMain（sshj） | jvmSharedMain（sshj） | libssh2 引擎 |
-| `ssh.createSftpSession` | expect | jvmSharedMain | jvmSharedMain | SftpSessionLibssh2 |
-| `data.SecretStore` | expect | Keystore AES-GCM | 明文文件 | Keychain |
-| `util.SessionKeepAlive` | expect | 前台服务 + wakelock | no-op | no-op |
-| `util.NetworkChange` | expect | ConnectivityManager | no-op | no-op |
-| `util.Dispatchers` | expect | IO/Default | IO/Default | 自定义 IO 队列 |
-| `util.MonoFont` | expect | 捆绑 JetBrains Mono | 捆绑字体 | PingFang SC |
-| `mosh.MoshUdpSocket` / zlib | expect | jvmSharedMain | jvmSharedMain | POSIX socket + 系统 zlib |
-| `ui.FilePicker/FileSaver/DirectorySaver` | expect | SAF/DocumentFile | AWT | UIDocumentPicker |
+| 接缝 | commonMain | androidMain | iosMain |
+|------|-----------|-------------|---------|
+| `ssh.createSshSession` | expect | sshj 引擎 | libssh2 引擎 |
+| `ssh.createSftpSession` | expect | SftpSessionSshj | SftpSessionLibssh2 |
+| `data.SecretStore` | expect | Keystore AES-GCM | Keychain |
+| `util.SessionKeepAlive` | expect | 前台服务 + wakelock | no-op |
+| `util.NetworkChange` | expect | ConnectivityManager | no-op |
+| `util.Dispatchers` | expect | IO/Default | 自定义 IO 队列 |
+| `util.MonoFont` | expect | 捆绑 JetBrains Mono | PingFang SC |
+| `mosh.MoshUdpSocket` / zlib | expect | JVM socket + java.util.zip | POSIX socket + 系统 zlib |
+| `ui.FilePicker/FileSaver/DirectorySaver` | expect | SAF/DocumentFile | UIDocumentPicker |
 
 ## 线程模型（2026-08 重构后的约定）
 

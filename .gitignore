@@ -49,3 +49,6 @@ iosApp/iosApp.xcworkspace/
 
 # pi 编辑器个人配置（设置/本地扩展，不入库）
 .pi/
+
+# Local agent task notes
+.agents/tasks/

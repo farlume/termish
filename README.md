@@ -10,7 +10,7 @@
 [![Website](https://img.shields.io/badge/Website-termish.dev-0ea5e9?style=flat&logo=globe&logoColor=white)](https://termish.dev)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
-[![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen)]()
+[![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 <p>
@@ -34,10 +34,6 @@
     <img alt="Download for Android"
          src="https://img.shields.io/badge/Android-APK%20%C2%B7%20AAB-10B981?style=for-the-badge&logo=android&logoColor=white" />
   </a>
-  <a href="https://github.com/ttermish/termish/releases/latest">
-    <img alt="Download for Desktop"
-         src="https://img.shields.io/badge/Desktop-DMG%20%C2%B7%20DEB%20%C2%B7%20MSI-64748B?style=for-the-badge&logo=linux&logoColor=white" />
-  </a>
   <a href="#build--test">
     <img alt="iOS local build"
          src="https://img.shields.io/badge/iOS-local%20build-334155?style=for-the-badge&logo=apple&logoColor=white" />
@@ -49,7 +45,6 @@
 Get the latest build from the [Releases page](https://github.com/ttermish/termish/releases/latest):
 
 - **Android** — signed APK (sideload: allow “install unknown apps”) and AAB
-- **Desktop (macOS / Linux / Windows)** — DMG / DEB / MSI installers
 - **iOS** — not published; build locally (see [Build & Test](#build--test))
 
 Every release ships with SHA-256 checksums. Prefer a debug APK from CI
@@ -106,8 +101,8 @@ iOS). All the effort goes where it matters — the terminal experience.
 - **Touch-first TUI input** — fixed CTRL/ALT/ESC toolbar, tap/drag mapped to
   terminal mouse events, so agent TUIs (herdr/codex/claude/vim/htop) stay
   usable on a phone
-- **Native on every platform** — no webview on your phone, no Electron on your
-  desktop; one shared Kotlin codebase; long-lived agent sessions stay cool and
+- **Native on every platform** — Android and iOS share a Kotlin
+  codebase with a native UI; long-lived agent sessions stay cool and
   light on battery
 - **Terminal-first design** — the emulator, not the transport, is the core asset
 - **Built for real workflows** — tmux-friendly sessions, background keep-alive,
@@ -117,7 +112,7 @@ iOS). All the effort goes where it matters — the terminal experience.
 
 ```mermaid
 flowchart TB
-    UI[Compose Multiplatform UI<br/>Android · iOS · Desktop] --> TERM[Pure-Kotlin terminal emulator<br/>VT100/xterm · CJK · OSC]
+    UI[Compose Multiplatform UI<br/>Android · iOS] --> TERM[Pure-Kotlin terminal emulator<br/>VT100/xterm · CJK · OSC]
     TERM --> SSH[SSH transport<br/>sshj JVM · libssh2 iOS]
     TERM --> MOSH[dev.termish.mosh<br/>pure-Kotlin SSP · AES-128-OCB]
     SSH --> SRV[(your server)]
@@ -201,7 +196,7 @@ browser for desktop workflows while the phone stays native.
 - 20 color-coded file-type icons (APK, keys, archives, PDF, spreadsheets, …)
 - Download: floating progress card + completion notification (Android taps to
   open); Android 10+ saves straight to the Download folder (auto-rename, no
-  save-as dialog), iOS exports to Files, desktop file chooser; browsing path
+  save-as dialog), iOS exports to Files; browsing path
   persists across restarts (saved on every navigation)
 
 **Input & terminal tools**
@@ -293,7 +288,6 @@ browser for desktop workflows while the phone stays native.
 
 - **Android**: download the signed APK/AAB from the Releases page (or the debug
   APK from CI artifacts).
-- **Desktop**: DMG / DEB / MSI installers from the Releases page.
 - **iOS**: not published in CI — build locally:
   `make ios-native && make ios-framework`, then open `iosApp/iosApp.xcodeproj`
   in Xcode and run on a simulator or device.
@@ -355,7 +349,7 @@ Deep dives for contributors (English summary at the top of each file):
 
 ```bash
 # Unit tests (crypto RFC vectors + terminal emulator + mosh)
-./gradlew :composeApp:desktopTest
+./gradlew :composeApp:testDebugUnitTest
 
 # Dependency-free Python Agent Bridge tests
 ./gradlew agentBridgeTest
@@ -409,8 +403,6 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
   returning to the app health-checks the connection and reconnects when needed
 - **iOS backgrounding**: the app is suspended and sockets drop; active sessions
   auto-reconnect on return — pair with `tmux`/Mosh for server-side continuity
-- **Desktop secrets** live in a plaintext properties file under `~/.termish`
-  (dev/test harness only — mobile builds use Keystore/Keychain)
 - **Native Agent chat** currently requires `python3` on the remote. Codex,
   Claude Code, Gemini CLI, OpenCode, and Pi are supported. Supported interactive
   approvals and questions are bridged to the phone; operations a provider's

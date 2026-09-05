@@ -46,7 +46,7 @@ abstract class ExecTask @Inject constructor() : DefaultTask() {
     }
 }
 
-/** 启动本地测试 sshd（幂等：已在监听则跳过）。集成测试按 2222 端口可用性自动跳过。 */
+/** 启动本地测试 sshd（幂等：已在监听则跳过）。集成测试按 22222 端口可用性自动跳过。 */
 abstract class StartTestSshdTask @Inject constructor() : ExecTask() {
     @TaskAction
     fun start() {
@@ -65,14 +65,23 @@ abstract class StartTestSshdTask @Inject constructor() : ExecTask() {
 }
 tasks.register<StartTestSshdTask>("startTestSshd") {
     group = "verification"
-    description = "启动本地测试 sshd（127.0.0.1:2222），已在运行则跳过"
+    description = "启动本地测试 sshd（127.0.0.1:22222），已在运行则跳过"
 }
 
-/** 传输层集成测试：自动启动 sshd 后跑 desktopTest（测试按 sshd/mosh 可用性自我探测）。 */
+/** 传输层集成测试：自动启动 sshd 后跑 Android 本地 JVM 测试（按 sshd/mosh 可用性自我探测）。 */
 tasks.register("testIntegration") {
     group = "verification"
     description = "SSH/Mosh 集成测试（自动起 sshd；单测一拼跑）"
-    dependsOn("startTestSshd", ":composeApp:desktopTest")
+    dependsOn("startTestSshd", ":composeApp:testDebugUnitTest")
+}
+
+project(":composeApp").tasks.configureEach {
+    if (name == "testDebugUnitTest") {
+        mustRunAfter(":startTestSshd")
+        // 集成测试依赖外部 sshd 状态，不能复用此前服务缺席时的测试结果。
+        outputs.upToDateWhen { false }
+        outputs.doNotCacheIf("Tests depend on local SSH and screen servers") { true }
+    }
 }
 
 /** 构建 + 安装 debug 到模拟器/设备并启动 App。 */
@@ -102,7 +111,7 @@ val agentBridgeBuild = tasks.register<ExecTask>("agentBridgeBuild") {
 }
 
 // Bridge 产物是 commonMain Compose 资源：所有平台复制资源前先生成，既消除
-// Gradle 隐式依赖告警，也保证 APK/framework/桌面包携带的 pyz 与源码一致。
+// Gradle 隐式依赖告警，也保证 APK/framework 携带的 pyz 与源码一致。
 project(":composeApp").tasks.configureEach {
     if (name.startsWith("copyNonXmlValueResourcesFor")) dependsOn(agentBridgeBuild)
 }

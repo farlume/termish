@@ -8,7 +8,7 @@ labels: bug
 ## 环境
 
 - 版本（设置页或 APK 文件名，如 1.0.0）：
-- 平台：Android / iOS / Desktop（含系统版本）：
+- 平台：Android / iOS（含系统版本）：
 - 连接方式：SSH / Mosh
 - 服务端（如 Ubuntu 24.04 + OpenSSH 9.x，如相关）：
 

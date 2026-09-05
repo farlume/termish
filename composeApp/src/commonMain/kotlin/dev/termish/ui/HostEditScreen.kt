@@ -406,7 +406,7 @@ private fun TagInputField(
                 // （固定 120dp 时中文 placeholder 会折行成两行，撑高输入框）
                 singleLine = true,
                 // 软键盘回车走 IME action（单行框不产生 key event），
-                // onPreviewKeyEvent 只兜硬件键盘/桌面端
+                // onPreviewKeyEvent 只兜硬件键盘
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { commit() }),
                 interactionSource = interactionSource,

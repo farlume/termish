@@ -67,7 +67,7 @@ object NotificationCenter {
     }
 }
 
-/** 平台实现：Android NotificationManager / iOS UNUserNotificationCenter / 桌面 no-op。 */
+/** 平台实现：Android NotificationManager / iOS UNUserNotificationCenter。 */
 expect fun showPlatformNotification(
     id: Int,
     title: String,

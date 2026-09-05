@@ -7,7 +7,7 @@ import kotlin.concurrent.Volatile
  * 调试定位问题不再需要临时 println。
  *
  * - [termLogEnabled] 平台按构建类型控制：Android debuggable、
- *   iOS DEBUG 符号、桌面 debug 构建
+ *   iOS DEBUG 符号
  * - [diagnosticsEnabled] 诊断模式：release 也可运行时开启（设置页），
  *   同时写日志文件（[logFileDirectory]），供导出排查线上问题
  * - 消息为惰性参数：开关关闭时 lambda 不执行，字符串拼接零开销
@@ -83,7 +83,7 @@ object TermLog {
 /** 平台构建是否为调试（release 关闭打点）。 */
 expect val termLogEnabled: Boolean
 
-/** 平台日志输出：Android logcat / iOS NSLog / 桌面 stdout。 */
+/** 平台日志输出：Android logcat / iOS NSLog。 */
 expect fun platformLog(
     level: Char,
     tag: String,
@@ -93,5 +93,5 @@ expect fun platformLog(
 /** 日志文件目录（诊断模式写文件用）；不可用时返回 null。 */
 expect fun logFileDirectory(): String?
 
-/** 分享/导出诊断日志（Android 系统分享 / iOS UIActivityViewController / 桌面提示路径）。 */
+/** 分享/导出诊断日志（Android 系统分享 / iOS UIActivityViewController）。 */
 expect fun shareDiagnosticLogs()

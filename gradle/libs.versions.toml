@@ -5,7 +5,8 @@ composeMultiplatform = "1.8.1"
 androidx-activityCompose = "1.10.1"
 androidx-documentfile = "1.0.1"
 androidx-lifecycle = "2.9.0"
-markdown-renderer = "0.33.0"
+# 0.34.0 与 Compose 1.8 对齐，避免 iOS 链接缺少 stableprop getter。
+markdown-renderer = "0.34.0"
 kotlinx-coroutines = "1.10.2"
 kotlinx-coroutines-test = "1.10.2"
 kotlinx-serialization = "1.8.1"
@@ -15,7 +16,8 @@ android-minSdk = "26"
 android-compileSdk = "36"
 android-targetSdk = "36"
 junit = "4.13.2"
-# JVM SSH transport (Android + desktop)
+robolectric = "4.16"
+# Android SSH transport
 sshj = "0.40.0"
 slf4j = "2.0.17"
 bouncycastle = "1.80.2"
@@ -27,6 +29,7 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings", version.ref = "multiplatform-settings" }
 multiplatform-settings-noarg = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatform-settings" }
+multiplatform-settings-test = { module = "com.russhwolf:multiplatform-settings-test", version.ref = "multiplatform-settings" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activityCompose" }
 androidx-documentfile = { module = "androidx.documentfile:documentfile", version.ref = "androidx-documentfile" }
 androidx-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
@@ -34,6 +37,7 @@ markdown-renderer = { module = "com.mikepenz:multiplatform-markdown-renderer", v
 markdown-renderer-code = { module = "com.mikepenz:multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 junit = { module = "junit:junit", version.ref = "junit" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
 
 # JVM SSH transport
 sshj = { module = "com.hierynomus:sshj", version.ref = "sshj" }

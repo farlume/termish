@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import pathlib
 import os
@@ -728,10 +729,13 @@ class ProviderHelperTest(unittest.TestCase):
     def test_fetch_models_http_error_surfaces_url(self) -> None:
         from adapters import fetch_models
         import urllib.error
-        with mock.patch("adapters.urllib.request.urlopen", side_effect=urllib.error.HTTPError("u", 401, "Unauthorized", None, None)):
+        error_body = io.BytesIO(b"")
+        with mock.patch("adapters.urllib.request.urlopen", side_effect=urllib.error.HTTPError("u", 401, "Unauthorized", None, error_body)):
             with self.assertRaises(RuntimeError) as ctx:
                 fetch_models("https://api.example.com/v1", "bad", "openai")
         self.assertIn("HTTP 401", str(ctx.exception))
+        self.assertIn("https://api.example.com/v1/models", str(ctx.exception))
+        self.assertTrue(error_body.closed)
 
     def test_pi_environment_uses_provider_env_key(self) -> None:
         environment = PiAdapter().environment(

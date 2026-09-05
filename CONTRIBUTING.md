@@ -6,7 +6,7 @@
 
 | 平台 | 需要 |
 |---|---|
-| Android / Desktop | JDK 17+、Android SDK（`local.properties` 或 `ANDROID_HOME`）；模拟器或真机 |
+| Android | JDK 17+、Android SDK（`local.properties` 或 `ANDROID_HOME`）；模拟器或真机 |
 | iOS | Xcode + 一次性原生依赖：`make ios-native` + `make ios-framework`（见 `scripts/` 头部注释） |
 
 常用入口（`make help` 查看全部，或直接 `./gradlew <task>`）：
@@ -53,8 +53,7 @@ make release          # 已签名 release（需要 .env，见 .env.example）
 
 ## 版本与发版
 
-- 版本号统一用 `make bump V=x.y.z`（先 `DRY=1` 预览），它会同步 Android /
-  桌面 / iOS 三处
+- 版本号统一用 `make bump V=x.y.z`（先 `DRY=1` 预览），它会同步 Android / iOS 版本
 - 打 `vX.Y.Z` tag 推送后，CI 校验版本一致性并自动产出 Release
 
 ## 报告问题

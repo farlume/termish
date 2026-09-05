@@ -91,7 +91,7 @@ class SessionManager(
      * 回前台：把退后台期间掉线的活跃会话自动重连（保留缓冲）。
      *
      * [recovery] 由平台决定：iOS 挂起后直接重建；Android 保活服务被停止时
-     * 只做端到端探测，避免把健康 socket 误杀；desktop 保持原连接。
+     * 只做端到端探测，避免把健康 socket 误杀。
      */
     fun reconnectDroppedSessions(recovery: ForegroundSshRecovery = ForegroundSshRecovery.KEEP) {
         if (activeAtBackground.isEmpty()) return
