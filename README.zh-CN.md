@@ -312,6 +312,11 @@ open iosApp/iosApp.xcodeproj
 技术栈：Kotlin 2.1.21 · Compose Multiplatform 1.8.1 · AGP 8.9.2 · Gradle 8.14.2 ·
 kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
+## 发布同步
+
+发布后可通过 GitHub Environment 密钥自动把版本信息和正式安装包同步到腾讯云 COS，
+配置方法与下载直链见 [COS 发布工作流](docs/cos-release.md)。
+
 ## 安全模型
 
 - 密码与私钥绝不落盘明文——Android Keystore（AES-GCM）/ iOS Keychain /

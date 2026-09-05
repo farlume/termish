@@ -16,6 +16,16 @@ permissions:
   contents: read
 
 jobs:
+  release-tools:
+    name: Release tooling tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m unittest discover -s scripts/tests -v
+
   # ---------------------------------------------------------------------------
   # Android：单测 + lint 始终跑；debug/release 产物全部上传 artifact 留档
   #（PR 只跑检查，不打包省额度）
@@ -159,7 +169,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android]
+    needs: [android, release-tools]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -214,3 +224,13 @@ jobs:
             echo "✅ 已上传 $(basename "$f")"
           done
           echo "✅ Release $TAG 完成"
+
+  publish-cos:
+    name: Sync published release to COS
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-cos.yml
+    with:
+      tag: ${{ github.ref_name }}

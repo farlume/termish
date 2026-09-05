@@ -396,6 +396,12 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 
+## Release Distribution
+
+Release mirroring to Tencent Cloud COS is available through GitHub Environment
+secrets. See [COS release workflow setup](docs/cos-release.md) for configuration,
+version metadata, and direct release downloads.
+
 ## Known Limitations
 
 - **Vendor background restrictions**: some Android vendors may still suspend
