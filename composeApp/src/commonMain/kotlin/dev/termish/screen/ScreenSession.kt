@@ -726,7 +726,7 @@ class ScreenSession internal constructor(
          * 读流脚本检测远端版本文件，不匹配时引导重新安装（用户反馈：
          * 客户端脚本应与远端脚本版本匹配，否则旧 relay 跑不起新功能）。
          */
-        const val RELAY_VERSION = 50
+        const val RELAY_VERSION = 52
 
         /**
          * 读流前置脚本：只做 relay/版本/ffmpeg/显示状态探测，成功时回报
@@ -1204,6 +1204,7 @@ class ScreenSession internal constructor(
                     self.remote = None
                     self.session = None
                     self.node = None
+                    self.pipewire_serial = None
                     self.width = 1
                     self.height = 1
 
@@ -1293,11 +1294,16 @@ class ScreenSession internal constructor(
                                 raise RuntimeError("Wayland portal returned no monitor stream")
                             self.node = int(streams[0][0])
                             props = streams[0][1]
-                            size = props.get("size", (1, 1))
+                            serial = props.get("pipewire-serial")
+                            self.pipewire_serial = int(serial) if serial is not None else None
+                            # RemoteDesktop absolute coordinates use the stream's
+                            # logical coordinate space, which may differ from the
+                            # encoded pixel size on scaled Wayland outputs.
+                            size = props.get("logical_size", props.get("size", (1, 1)))
                             self.width = max(1, int(size[0]))
                             self.height = max(1, int(size[1]))
-                            relay_log("Wayland portal authorized node=%d size=%dx%d" % (
-                                self.node, self.width, self.height))
+                            relay_log("Wayland portal authorized node=%d serial=%s logical=%dx%d" % (
+                                self.node, self.pipewire_serial, self.width, self.height))
                         except Exception:
                             if self.session is not None:
                                 try:
@@ -1313,19 +1319,28 @@ class ScreenSession internal constructor(
                                     pass
                             self.session = None
                             self.node = None
+                            self.pipewire_serial = None
                             raise
 
                 def start_capture(self, fps, errf):
                     self.ensure()
                     with self.lock:
                         remote_fd = self.screen.OpenPipeWireRemote(self.session, {}).take()
+                        # Portal v6 exposes object.serial because transient PipeWire
+                        # node ids may be reused after suspend, hotplug or stream
+                        # destruction. Older portals only provide the legacy id.
+                        target = (
+                            "target-object=%d" % self.pipewire_serial
+                            if self.pipewire_serial is not None
+                            else "path=%d" % self.node
+                        )
                         args = [
                             "gst-launch-1.0", "-q",
-                            "pipewiresrc", "fd=%d" % remote_fd, "path=%d" % self.node,
+                            "pipewiresrc", "fd=%d" % remote_fd, target,
                             "do-timestamp=true", "keepalive-time=%d" % max(16, 1000 // fps), "!",
                             "queue", "leaky=downstream", "max-size-buffers=2", "!",
-                            # PipeWire 按 damage 出帧；videorate 必须复制最后一帧维持
-                            # 连续流，否则静止桌面会被客户端 6s 停滞检测误判为断线。
+                            # PipeWire 按 damage 出帧；keepalive + videorate 填补正常
+                            # 静止间隙，后面的输出 watchdog 负责处理后端彻底停送。
                             "videoconvert", "!", "videorate", "!",
                             "video/x-raw,format=I420,framerate=%d/1" % fps, "!",
                             "y4menc", "!", "fdsink", "fd=1",
@@ -1345,12 +1360,16 @@ class ScreenSession internal constructor(
                     return _dbus.Dictionary({}, signature="sv")
 
                 def _move(self, x, y):
+                    # KDE rejects the exclusive right/bottom endpoint. Keep values
+                    # inside the logical stream bounds even when the client sends 1.
+                    px = min(max(0.0, min(1.0, x)) * self.width, self.width - 0.001)
+                    py = min(max(0.0, min(1.0, y)) * self.height, self.height - 0.001)
                     self.remote.NotifyPointerMotionAbsolute(
                         self.session,
                         self._empty_options(),
                         _dbus.UInt32(self.node),
-                        _dbus.Double(max(0.0, min(1.0, x)) * self.width),
-                        _dbus.Double(max(0.0, min(1.0, y)) * self.height),
+                        _dbus.Double(px),
+                        _dbus.Double(py),
                     )
 
                 def _button(self, code, down):
@@ -2196,16 +2215,21 @@ class ScreenSession internal constructor(
                                 r, _, _ = select.select([ff_stdout_fd], [], [], 1.0)
                                 if not r:
                                     now = time.time()
+                                    # 客户端在 6 秒无渲染后会重连。Wayland 的
+                                    # damage-driven PipeWire 流偶尔会停止 keepalive，
+                                    # relay 必须更早原地重建 capture + encoder，给新
+                                    # IDR 留出恢复时间；X11/macOS 保留宽松阈值。
+                                    output_stall_seconds = 3 if IS_WAYLAND else 20
                                     if ((self.sent == 0 and now - self.started > 45)
-                                            or (self.sent > 0 and now - self.last_data > 20)):
+                                            or (self.sent > 0 and now - self.last_data > output_stall_seconds)):
                                         if display_asleep():
                                             continue
                                         close_reason = "ffmpeg output watchdog"
                                         # 抓屏后端卡死时优先在原 TCP 会话内重启编码器：
                                         # 客户端无需重新 SSH 握手，首个 SPS/PPS+IDR
                                         # 即可恢复。重启仍失败才由外层关闭流触发重连。
-                                        self.request_encoder_restart(close_reason, 10.0)
-                                        encoder_ended = True
+                                        if self.request_encoder_restart(close_reason, 3.0):
+                                            encoder_ended = True
                                     continue
                                 data = os.read(ff_stdout_fd, 262144)
                                 if not data:

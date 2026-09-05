@@ -344,7 +344,7 @@ class ScreenStreamIntegrationTest {
         assertTrue(py.contains("FEEDBACK_MAGIC = b\"THF1\""), "relay 应接收客户端质量反馈")
         assertTrue(py.contains("\"-maxrate\", bitrate, \"-bufsize\", bufsize"), "编码器应限制瞬时码率")
         assertTrue(py.contains("\"-threads\", str(encoder_threads)"), "Linux 软编应按档位扩展线程")
-        assertTrue(py.contains("self.request_encoder_restart(close_reason, 10.0)"), "抓屏停滞应在原连接内自愈")
+        assertTrue(py.contains("self.request_encoder_restart(close_reason, 3.0)"), "抓屏停滞应在原连接内自愈")
         assertTrue(py.contains("recv_exact(conn, 4)"), "TCP 控制包必须显式分帧")
         assertTrue(py.contains("AUTH_MAGIC = b\"THA1\""), "TCP 视频通道必须先做 token 握手")
         assertTrue(py.contains("hmac.compare_digest(auth[4:], AUTH_TOKEN)"), "token 比较必须使用恒定时间实现")
