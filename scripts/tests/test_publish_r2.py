@@ -158,6 +158,7 @@ class PublicDownloadTest(unittest.TestCase):
             verify_public_object("https://downloads.example.com/app.apk", body)
         request = open_url.call_args.args[0]
         self.assertFalse(request.has_header("Authorization"))
+        self.assertEqual(request.get_header("User-agent"), "Termish-Release-Check/1.0 (+https://termish.dev)")
 
     def test_retries_transient_public_access_failure(self):
         error = HTTPError("https://downloads.example.com/app.apk", 404, "Not Found", {}, io.BytesIO())

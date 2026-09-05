@@ -62,7 +62,11 @@ def verify_public_object(url: str, expected: bytes):
     """Read the public URL without credentials and verify its entire contents."""
     for attempt in range(3):
         try:
-            with urlopen(Request(url, headers={"Cache-Control": "no-cache"}), timeout=30) as response:
+            request = Request(url, headers={
+                "Cache-Control": "no-cache",
+                "User-Agent": "Termish-Release-Check/1.0 (+https://termish.dev)",
+            })
+            with urlopen(request, timeout=30) as response:
                 digest, size = hashlib.sha256(), 0
                 while chunk := response.read(1024 * 1024):
                     size += len(chunk)
