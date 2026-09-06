@@ -4,8 +4,8 @@
 
 <h1 align="center">Termish</h1>
 
-<p align="center"><strong>AI coding agents and SSH / Mosh, on your phone.</strong></p>
-<p align="center">Chat with Codex, Claude Code and other agents. Open a terminal, manage files, and keep working on your own servers.</p>
+<p align="center"><strong>Your remote workspace, in your pocket.</strong></p>
+<p align="center">A terminal-first mobile workspace for the way you actually work: Termish → Herdr → Codex.</p>
 
 <p align="center">
   <a href="https://download.termish.dev/downloads/termish.apk"><strong>Download Android</strong></a> ·
@@ -30,27 +30,31 @@
 
 <table>
   <tr>
-    <th>Agent chat</th>
-    <th>SSH / Mosh terminal</th>
+    <th>Herdr + terminal</th>
+    <th>Native Agent chat</th>
     <th>SFTP files</th>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/agent-chat-en.webp" width="270" alt="Native conversation with Codex in Termish" /></td>
-    <td align="center"><img src="docs/appstore/ios/en/02-terminal.jpg" width="230" alt="Remote htop session with the terminal key toolbar" /></td>
-    <td align="center"><img src="docs/appstore/ios/en/03-sftp.jpg" width="230" alt="SFTP browser showing a demo project's folders and files" /></td>
+    <td align="center"><img src="docs/screenshots/terminal-en.webp" width="330" alt="Herdr workspace in the Termish terminal with mobile key toolbar and remote screen" /></td>
+    <td align="center"><img src="docs/screenshots/agent-chat-en.webp" width="210" alt="Native conversation with Codex in Termish" /></td>
+    <td align="center"><img src="docs/screenshots/files-en.webp" width="210" alt="SFTP browser showing a demo project's folders and files" /></td>
   </tr>
 </table>
-<p align="center"><sub>Screenshots from the iOS app.</sub></p>
+<p align="center"><sub>iOS presentation shared with <a href="https://termish.dev">termish.dev</a>. The terminal is the main workspace; native chat is an optional path.</sub></p>
 
 ## Quick start
 
 1. **Add your host.** Open Hosts → `+`, enter the SSH address, username and
    password or private key. Verify the server's host key fingerprint on first connection.
-2. **Choose how to work.** Open **Agents** on the host card for native chat, tap
-   the host to open a terminal, or choose **Connect via SFTP** from the `+` menu.
-3. **Start a task.** In Agents, follow the Bridge setup prompt, select an agent
-   and a remote working directory, then send a message. You can attach files,
-   review tool activity, answer supported approval requests and revisit recent chats.
+2. **Open Herdr.** Use the **Herdr** entry on the host card. If it is not on the
+   remote yet, Termish offers guided installation, then opens the workspace in
+   the SSH or Mosh terminal.
+3. **Keep coding in your terminal workflow.** Start Codex from Herdr, give it a
+   task, follow its output, upload a screenshot or file when useful, inspect the
+   result through the remote-screen window, then return to the terminal.
+4. **Use native chat when it fits.** The **Agents** entry provides a phone-native
+   conversation for Codex, Claude Code and other supported CLIs. It is an
+   alternative interface, not a replacement for the Herdr terminal workspace.
 
 For Agent chat, the remote host needs `python3` and the agent's own login or a
 supported API provider configuration. Missing supported CLIs can be installed
@@ -65,25 +69,29 @@ you want terminal programs to survive client disconnects.
 
 | Capability | What you can do |
 | --- | --- |
-| **Native Agent chat** | Use Codex, Claude Code, Gemini CLI, OpenCode and Pi. Follow streaming replies and tool calls, attach files, stop a task and resume conversations. Sending and approvals stay associated with their session when you switch chats. |
-| **SSH + Mosh** | Open multiple terminal tabs, run tmux, vim, htop or an agent TUI. Mosh supports network roaming and local echo prediction for typing over slower connections. |
-| **SFTP file manager** | Upload, download, search and organize remote files. Transfer folders, save favorites and preview text or Markdown without leaving the app. |
-| **Input built for phones** | Use a CTRL / ALT / ESC toolbar, touch gestures and Chinese IME support. Voice input is available with your own speech-recognition provider configuration. |
+| **Terminal-first Herdr workspace** | Keep the familiar terminal workflow: enter Herdr, run Codex or Pi, switch workspaces and inspect live task output. Termish starts Herdr through SSH or Mosh and can guide its remote installation. |
+| **Mobile development loop** | Give an agent a task, upload a screenshot or file, inspect diffs and remote files, open a live view of your Mac when you need to check the UI, then continue in the same terminal. |
+| **SSH + Mosh sessions** | Open multiple terminal tabs and run tmux, vim, htop or any TUI. Mosh supports network roaming and local echo prediction for typing over slower connections. |
+| **Optional native Agent chat** | Use Codex, Claude Code, Gemini CLI, OpenCode and Pi in a phone-native conversation. Follow streaming replies and tool calls, attach files, stop a task and resume conversations. |
+| **Files and input built for phones** | Upload, download, search and organize files through SFTP. Use a CTRL / ALT / ESC toolbar, touch gestures and Chinese IME support in the terminal. |
 | **Your hosts, your credentials** | Connect directly to your servers. Store saved secrets with Android Keystore or iOS Keychain. No Termish account, telemetry or hosted relay is required. |
 
 Also included: Chinese and English UI, light and dark themes, terminal palettes,
 quick commands, and live viewing of a Mac's screen over SSH after capture-service setup.
 
-## How it works
+## How the main workflow works
 
-The mobile app connects to your host over SSH. For native Agent chat, it uploads
-its bundled Python Bridge over SFTP and starts it for your remote user. The
-Bridge runs your selected agent; messages travel through the authenticated SSH
-connection. No Docker, `pip` setup or extra public listening port is needed.
+Termish connects your phone directly to the development machine over SSH or
+Mosh. The primary path is **Termish → Herdr → Codex**: Herdr and the coding
+tool run on the remote machine, while the phone provides the terminal, input,
+file transfer and a remote-screen view. A missing Herdr installation can be
+prepared from the app. No Termish relay or account sits in the connection.
 
-The Bridge keeps conversations on your host and lets an active agent task
-continue while your phone is disconnected. Reconnect to reopen its history.
-SSH / Mosh terminals and SFTP remain available alongside Agent chat.
+Native Agent chat is a separate option. It uploads the bundled Python Bridge
+over SFTP and starts it for your remote user; the Bridge runs the selected agent
+and relays messages through the authenticated SSH connection. No Docker, `pip`
+setup or extra public listening port is needed. It keeps conversations on the
+host and lets an active agent task continue while your phone is disconnected.
 
 See the [Agent Bridge guide](agentBridge/README.md) for the protocol, supported
 approval types and remote storage layout.
