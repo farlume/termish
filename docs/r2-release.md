@@ -1,6 +1,6 @@
 # Cloudflare R2 发布同步
 
-`Build` 工作流创建正式 GitHub Release 后，调用 `Publish Release to R2`，把签名 APK、AAB、SHA256SUMS 和版本 JSON 同步到 R2。官网从 R2 直接下载正式安装包，GitHub 源码仓库可以继续保持私有。
+`Build` 工作流创建正式 GitHub Release 后，调用 `Publish Release to R2`，把签名 APK、AAB、SHA256SUMS 和版本 JSON 同步到 R2。官网从 R2 直接下载正式安装包。
 
 ## Cloudflare 配置
 
@@ -24,9 +24,9 @@
 
 公开下载不需要放行写入操作。固定 APK/AAB、版本 JSON 和固定校验和使用 `Cache-Control: no-store, max-age=0`，避免自定义域名的浏览器缓存时间设置让最新版下载仍命中旧包。按版本归档的安装包和校验和长期缓存。Cloudflare 缓存规则应尊重这些响应头，不要对固定入口强制缓存。
 
-## GitHub Environment 配置
+## GitHub Actions 仓库配置
 
-仓库 **Settings → Environments → `r2-release`**：
+仓库 **Settings → Secrets and variables → Actions**，在 **Secrets** 和 **Variables** 页签分别添加：
 
 | 类型 | 名称 | 内容 |
 | --- | --- | --- |
@@ -39,7 +39,15 @@
 
 `R2_PUBLIC_BASE_URL` 不能填 `*.r2.cloudflarestorage.com`，这是需要鉴权的 S3 API 地址，不是公开下载地址。工作流自动用 Account ID 生成上传 endpoint。
 
-GitHub Release 下载使用自动提供的 `GITHUB_TOKEN`，无需额外 PAT。若 Environment 设置部署分支限制，应允许 `main` 和 `v*` 标签。腾讯云的 Environment 和旧归档可以保留，但新的发布流程只上传 R2。
+GitHub Release 下载使用自动提供的 `GITHUB_TOKEN`，无需额外 PAT。工作流直接读取仓库级配置，无需创建 GitHub Environment。
+
+本地 Android 签名配置保存在项目根 `.env`（已被 Git 忽略）。可以把其中各项密钥批量写入独立的仓库 Secret：
+
+```bash
+gh secret set --repo ttermish/termish --env-file .env
+```
+
+该命令只上传文件中已有的项，不会删除其他仓库密钥。普通 R2 配置仍放在 Variables；不要把密钥文件导入 Variables，也无需创建合并所有内容的 `ENV_FILE`。CI 从仓库配置注入进程环境变量，R2 发布脚本读取这些变量。
 
 ## 发布和补传
 
@@ -80,7 +88,7 @@ downloads/
 }
 ```
 
-`assets.apk.url` 和 `assets.aab.url` 均为 R2 下载地址；`github_download_url` 仅作溯源，私有仓库的该地址不对公众开放。固定下载对象 `/downloads/termish.apk` 也来自同一个正式 Release。
+`assets.apk.url` 和 `assets.aab.url` 均为 R2 下载地址；`github_download_url` 指向对应的 GitHub Release 文件。固定下载对象 `/downloads/termish.apk` 也来自同一个正式 Release。
 
 ## 本地验证
 

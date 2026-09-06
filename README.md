@@ -402,8 +402,8 @@ Security disclosures and reporting: see [SECURITY.md](SECURITY.md).
 
 ## Release Distribution
 
-Release mirroring to Cloudflare R2 is available through GitHub Environment
-secrets. See [R2 release workflow setup](docs/r2-release.md) for configuration,
+Release mirroring to Cloudflare R2 uses repository-level GitHub Actions
+secrets and variables. See [R2 release workflow setup](docs/r2-release.md) for configuration,
 version metadata, and direct release downloads.
 
 ## Known Limitations

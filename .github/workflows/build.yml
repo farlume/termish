@@ -96,8 +96,8 @@ jobs:
         if: github.event_name != 'pull_request'
         run: ./gradlew :composeApp:assembleDebug
 
-      # release 签名：secrets 以环境变量注入，build.gradle.kts 直接读取并解码 base64，
-      # 云端零文件落地（本地则走 secrets/.env，见 signingConfigs 注释）
+      # release 签名：仓库 secrets 以进程环境变量注入，构建脚本读取并解码 base64。
+      # 本地读取项目根 .env；密钥库解码到 build/signing/。
       - name: Build release APK and AAB
         if: github.event_name != 'pull_request'
         env:
@@ -234,3 +234,6 @@ jobs:
     uses: ./.github/workflows/publish-r2.yml
     with:
       tag: ${{ github.ref_name }}
+    secrets:
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

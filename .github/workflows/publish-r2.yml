@@ -6,6 +6,11 @@ on:
       tag:
         required: true
         type: string
+    secrets:
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -25,7 +30,6 @@ jobs:
     name: Upload release files and version metadata
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: r2-release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

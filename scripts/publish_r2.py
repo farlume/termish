@@ -36,7 +36,7 @@ def required_config(env: dict) -> dict:
     names = ("R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_ACCOUNT_ID", "R2_BUCKET", "R2_PUBLIC_BASE_URL")
     missing = [name for name in names if not env.get(name, "").strip()]
     if missing:
-        raise ValueError("Configure GitHub Environment r2-release: " + ", ".join(missing))
+        raise ValueError("Configure repository Actions secrets and variables: " + ", ".join(missing))
     prefix = env.get("R2_PREFIX", "downloads").strip().strip("/")
     if any(part in (".", "..", "") for part in prefix.split("/")):
         raise ValueError("R2_PREFIX must be a non-empty relative object prefix")
