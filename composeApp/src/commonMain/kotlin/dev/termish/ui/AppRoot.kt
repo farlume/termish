@@ -346,7 +346,7 @@ fun AppRoot(repository: HostRepository) {
                 // 页面离开后可以回收空闲控制连接，但远端任务运行中或等待审批时
                 // 必须继续监听事件，否则用户收不到完成/审批通知。
                 canCloseResource = { controller ->
-                    !controller.busy && controller.pendingApprovals.isEmpty()
+                    !controller.hasActiveWork
                 },
             )
         }

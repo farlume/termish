@@ -1078,7 +1078,6 @@ class SessionStore:
             await self.broadcast({"type": "session_deleted", "sessionId": session_id})
 
     async def _install_agent(self, agent: str) -> None:
-        self.installing.add(agent)
         try:
             await install_agent(agent, lambda event: self.broadcast({"type": "event", "event": event}))
         except Exception as exc:
@@ -1093,7 +1092,7 @@ class SessionStore:
 
     async def dispatch(self, method: str, params: Dict[str, Any]) -> Any:
         if method == "agents.list":
-            return {"agents": list_agents()}
+            return {"agents": list_agents(), "installing": sorted(self.installing)}
         if method == "agents.installPlan":
             return install_plan(str(params.get("agent", "")))
         if method == "agents.install":
@@ -1102,6 +1101,7 @@ class SessionStore:
                 raise RuntimeError(f"agent is not supported: {agent}")
             if agent in self.installing:
                 return {"accepted": True, "alreadyRunning": True}
+            self.installing.add(agent)
             asyncio.create_task(self._install_agent(agent))
             return {"accepted": True}
         if method == "providers.fetchModels":

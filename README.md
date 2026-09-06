@@ -246,8 +246,8 @@ browser for desktop workflows while the phone stays native.
 - The Bridge daemon listens on a mode-`0600` Unix socket and the app reaches it
   only through the already authenticated SSH connection; an Agent keeps running
   when the phone disconnects and its persisted conversation can be reopened
-- The remaining reliability, approval, and workflow work is tracked in the
-  [Native Agent gap analysis](docs/native-agent-gap-analysis.zh.md)
+- Sending and stopping stay bound to the original session; background task and
+  approval events remain monitored when switching chats
 
 **Screen mirroring (remote desktop, macOS)**
 - **Watch your Mac's screen live**: SSH transport carries an H.264 stream

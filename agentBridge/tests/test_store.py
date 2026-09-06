@@ -223,6 +223,38 @@ class SessionStoreTest(unittest.IsolatedAsyncioTestCase):
         self.environment.stop()
         self.temp.cleanup()
 
+    async def test_installation_is_visible_before_task_starts_and_deduplicated(self) -> None:
+        release = asyncio.Event()
+        finished = asyncio.Event()
+
+        async def install(agent, emit):
+            await release.wait()
+            finished.set()
+
+        with mock.patch.object(store, "install_agent", side_effect=install) as installer:
+            first = await self.store.dispatch("agents.install", {"agent": "codex"})
+            second = await self.store.dispatch("agents.install", {"agent": "codex"})
+            status = await self.store.dispatch("agents.list", {})
+            self.assertTrue(first["accepted"])
+            self.assertTrue(second["alreadyRunning"])
+            self.assertEqual(["codex"], status["installing"])
+            release.set()
+            await finished.wait()
+            await asyncio.sleep(0)
+            installer.assert_awaited_once()
+            self.assertEqual([], (await self.store.dispatch("agents.list", {}))["installing"])
+
+    async def test_failed_installation_clears_running_state_and_allows_retry(self) -> None:
+        with mock.patch.object(store, "install_agent", side_effect=RuntimeError("npm unavailable")) as installer:
+            await self.store.dispatch("agents.install", {"agent": "codex"})
+            await asyncio.sleep(0)
+            self.assertEqual([], (await self.store.dispatch("agents.list", {}))["installing"])
+            self.assertEqual("install_error", self.events[-1]["event"]["type"])
+            retried = await self.store.dispatch("agents.install", {"agent": "codex"})
+            self.assertNotIn("alreadyRunning", retried)
+            await asyncio.sleep(0)
+            self.assertEqual(2, installer.await_count)
+
     async def test_attachment_metadata_and_prompt_reference_are_preserved(self) -> None:
         session = self.store.create("codex", self.temp.name, None)
         attachments = [{"name": "notes.txt", "path": ".termish/attachments/notes.txt", "size": 42}]

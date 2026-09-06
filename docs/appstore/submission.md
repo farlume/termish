@@ -4,7 +4,6 @@ Submission copy and preparation notes for the MIT-licensed Termish iPhone app.
 
 核对日期：2026-09-05。文案依据仓库中的 iOS 1.7.1；最终以实际上传的构建为准。
 本页提供商店文案和填写说明，不代表 App Store Connect 已填妥或已提交。
-提交前先处理 [本次检查结果与待办](review-2026-09-05.md)。
 
 Termish 于 2026-09-06 恢复 MIT 开源，源代码见 https://github.com/ttermish/termish。
 源码许可与商店定价分别维护。当前源码未发现 iOS 内购实现，本版文案不承诺内购
@@ -196,7 +195,7 @@ Review contact: <NAME_EMAIL_AND_PHONE>
 - 两段预览视频均为 886 × 1920，中文 27 秒、英文 29 秒，包含 Herdr 操作。
 - 当前 `TARGETED_DEVICE_FAMILY=1`，不提供独立 iPad 版本素材。
 - 当前素材对应 1.7.1（35）；若最终构建改动了购买入口、弹窗或布局，重新核对受影响截图和视频。
-- `ios/validation.json` 是本地规格检查结果；仍需等待 Apple 上传处理并检查预览封面。
+- 上传后等待 Apple 处理素材，并检查预览封面与播放效果。
 
 规格参见 [截图要求](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
 与 [预览要求](https://developer.apple.com/help/app-store-connect/reference/app-information/app-preview-specifications/)。
@@ -210,7 +209,7 @@ Review contact: <NAME_EMAIL_AND_PHONE>
 5. 完成构建的加密合规信息，再在版本页选择要提交的构建。当前尚未确认此前“无法添加构建”的具体原因。
 6. 在 TestFlight 安装实际候选包，验证 SSH、Mosh、SFTP、Herdr、Agent、可选语音和隐私入口；如有内购，验证购买、取消和恢复权益。
 7. 填写中英文元数据，上传媒体，补齐审核联系人和公网测试环境；核对版权、价格、销售范围、年龄分级和 App 隐私。
-8. 清除全部占位内容，处理 [检查结果](review-2026-09-05.md) 中的待办，然后由发行人执行提交。
+8. 清除全部占位内容，核对上述检查项，然后由发行人执行提交。
 
 参见 [上传与处理构建](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/)、
 [选择提审构建](https://developer.apple.com/help/app-store-connect/manage-builds/choose-a-build-to-submit)

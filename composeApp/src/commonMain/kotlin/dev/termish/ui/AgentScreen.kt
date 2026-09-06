@@ -1611,7 +1611,7 @@ private fun AgentManagement(controller: AgentBridgeController) {
         }
         item(span = { GridItemSpan(maxLineSpan) }) { InstallationStatus(controller) }
         items(controller.agents, key = { it.id }) { agent ->
-            AgentManagementCard(agent, controller.installStatus.agentId == agent.id, controller::installAgent)
+            AgentManagementCard(agent, controller.isAgentInstalling(agent.id), controller::installAgent)
         }
     }
 }

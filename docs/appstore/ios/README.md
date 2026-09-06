@@ -37,7 +37,7 @@ Native iOS screenshots and app previews captured from Termish 1.7.1 (35).
 
 Herdr 截图来自真实运行的演示工作区，包含 Editor 和 Health Check 两个标签。Herdr 自身的界面为英文，因此两套素材中的 Herdr 菜单均显示英文。
 
-`validation.json` 记录逐文件的尺寸、格式、时长、编码和校验值。本地规格检查已完成，尚未在 App Store Connect 上传验证。
+上传前核对各文件的尺寸、格式、时长和编码，上传后确认 App Store Connect 的处理结果。
 
 ## Apple 规格
 

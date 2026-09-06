@@ -5,9 +5,20 @@
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-09-06
+
+### 修复
+
+- **跨会话发送**：发送准备、附件进度、确认响应与错误绑定原会话，切换聊天后不会把消息或错误写入新页面
+- **停止任务**：停止操作取消对应会话的发送准备或远端任务；首次发送取消后清理空会话，发送前失败的附件按本轮路径尝试回收
+- **后台任务状态**：持续跟踪其他会话的运行与审批状态，补发并去重后台事件，避免离开聊天页后提前回收监听连接
+- **Agent 安装状态**：各工具独立跟踪安装进度，防止重复安装，支持失败重试与重连后的状态恢复；内置 Bridge 更新至 0.8.1
+
 ### 变更
 
-- **恢复开源**：项目原始源码与文档恢复 MIT 授权，补回贡献指南、行为准则与 Issue/PR 模板；中英文说明、商店草稿与官网增加源码及贡献入口，保留第三方组件许可与固定 Android 下载链接
+- **开源文档**：完善 MIT 授权说明、贡献指南、行为准则与 Issue/PR 模板，中英文说明与官网提供源码及贡献入口
+- **发布配置**：Android 签名与 R2 发布使用仓库级 Actions 配置，支持从本地 `.env` 批量导入独立密钥
+- **仓库整理**：移除项目内 `.agents` 辅助目录、内部评估与一次性检查报告
 
 ## [1.7.1] - 2026-09-05
 
@@ -527,9 +538,10 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.1...HEAD
-[1.7.1]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.1
-[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...75926cf504cf8728b6d9b613bd90704c36fc4f60
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/ttermish/termish/compare/v1.7.1...v1.7.2
+[1.7.1]: https://github.com/ttermish/termish/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.0
 [1.6.4]: https://github.com/ttermish/termish/compare/v1.6.3...v1.6.4
 [1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
 [1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2

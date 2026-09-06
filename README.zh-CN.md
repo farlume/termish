@@ -214,8 +214,7 @@ flowchart TB
   完成后都默认收起，按需展开查看；最终回答使用 CommonMark/GFM，并支持代码高亮
 - Bridge daemon 只监听权限为 `0600` 的 Unix socket，App 始终经已认证的 SSH
   连接访问；手机断开后 Agent 仍在远端执行，重连可打开已持久化的对话
-- 后续可靠性、审批与工作流缺口见
-  [原生 Agent 功能差距评估](docs/native-agent-gap-analysis.zh.md)
+- 发送与停止操作绑定原会话，切换聊天后持续监听后台任务和审批事件
 
 **应用**
 - 主机 / 连接 / 设置三个 tab；主机搜索、标签、快速命令、
