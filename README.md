@@ -28,25 +28,25 @@
 
 [Release notes and all assets](https://github.com/ttermish/termish/releases/latest) · [SHA-256 checksums](https://download.termish.dev/downloads/SHA256SUMS)
 
-<table>
-  <tr>
-    <th>Herdr + terminal</th>
-    <th>Native Agent chat</th>
-    <th>SFTP files</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/terminal-en.webp" width="330" alt="Herdr workspace in the Termish terminal with mobile key toolbar and remote screen" /></td>
-    <td align="center"><img src="docs/screenshots/agent-chat-en.webp" width="210" alt="Native conversation with Codex in Termish" /></td>
-    <td align="center"><img src="docs/screenshots/files-en.webp" width="210" alt="SFTP browser showing a demo project's folders and files" /></td>
-  </tr>
-</table>
-<p align="center"><sub>iOS presentation shared with <a href="https://termish.dev">termish.dev</a>. The terminal is the main workspace; native chat is an optional path.</sub></p>
+<p align="center"><strong>Herdr + terminal · main workspace</strong> &nbsp;&nbsp; <strong>Hosts · start here</strong></p>
+<p align="center">
+  <img src="docs/screenshots/terminal-en.png" width="250" alt="Herdr workspace in the Termish terminal, with the mobile key toolbar and a floating remote-screen window" />
+  <img src="docs/screenshots/hosts-en.png" width="250" alt="Termish host list with shortcuts for Terminal, Herdr, Files, Screen and Agents" />
+</p>
+<p align="center"><sub>Open a host, then work in Herdr. The terminal capture shows the remote screen in its floating window.</sub></p>
+<p align="center"><strong>Native Agent chat · optional</strong> &nbsp;&nbsp; <strong>SFTP files · alongside your terminal</strong></p>
+<p align="center">
+  <img src="docs/screenshots/agent-chat-en.png" width="250" alt="Native conversation with Codex in Termish" />
+  <img src="docs/screenshots/files-en.png" width="250" alt="SFTP browser showing a generic project's folders and file actions" />
+</p>
+<p align="center"><sub>All four captures use the same iOS device presentation as <a href="https://termish.dev">termish.dev</a>.</sub></p>
 
 ## Quick start
 
-1. **Add your host.** Open Hosts → `+`, enter the SSH address, username and
+1. **Start from Hosts.** Open Hosts → `+`, enter the SSH address, username and
    password or private key. Verify the server's host key fingerprint on first connection.
-2. **Open Herdr.** Use the **Herdr** entry on the host card. If it is not on the
+   Each host menu opens Terminal, Herdr, Files, remote screen or Agent chat.
+2. **Open Herdr.** Use the **Herdr** entry from the host. If it is not on the
    remote yet, Termish offers guided installation, then opens the workspace in
    the SSH or Mosh terminal.
 3. **Keep coding in your terminal workflow.** Start Codex from Herdr, give it a
@@ -69,23 +69,25 @@ you want terminal programs to survive client disconnects.
 
 | Capability | What you can do |
 | --- | --- |
+| **Host list and sessions** | Keep direct SSH and Mosh hosts in one place. From a host, open Terminal, Herdr, Files, remote screen or Agent chat, and see active sessions before you reconnect. |
 | **Terminal-first Herdr workspace** | Keep the familiar terminal workflow: enter Herdr, run Codex or Pi, switch workspaces and inspect live task output. Termish starts Herdr through SSH or Mosh and can guide its remote installation. |
-| **Mobile development loop** | Give an agent a task, upload a screenshot or file, inspect diffs and remote files, open a live view of your Mac when you need to check the UI, then continue in the same terminal. |
+| **Remote screen** | View the remote desktop in a floating window or full screen; use touch or a virtual mouse to check and operate desktop apps alongside the terminal or Herdr. |
+| **Mobile development loop** | Give an agent a task, upload a screenshot or file, inspect diffs and remote files, then continue in the same terminal. |
 | **SSH + Mosh sessions** | Open multiple terminal tabs and run tmux, vim, htop or any TUI. Mosh supports network roaming and local echo prediction for typing over slower connections. |
 | **Optional native Agent chat** | Use Codex, Claude Code, Gemini CLI, OpenCode and Pi in a phone-native conversation. Follow streaming replies and tool calls, attach files, stop a task and resume conversations. |
 | **Files and input built for phones** | Upload, download, search and organize files through SFTP. Use a CTRL / ALT / ESC toolbar, touch gestures and Chinese IME support in the terminal. |
 | **Your hosts, your credentials** | Connect directly to your servers. Store saved secrets with Android Keystore or iOS Keychain. No Termish account, telemetry or hosted relay is required. |
 
-Also included: Chinese and English UI, light and dark themes, terminal palettes,
-quick commands, and live viewing of a Mac's screen over SSH after capture-service setup.
+Also included: Chinese and English UI, light and dark themes, terminal palettes and quick commands.
 
 ## How the main workflow works
 
 Termish connects your phone directly to the development machine over SSH or
-Mosh. The primary path is **Termish → Herdr → Codex**: Herdr and the coding
-tool run on the remote machine, while the phone provides the terminal, input,
-file transfer and a remote-screen view. A missing Herdr installation can be
-prepared from the app. No Termish relay or account sits in the connection.
+Mosh. Begin in the **Hosts** list, then take the primary path:
+**Termish → Herdr → Codex**. Herdr and the coding tool run on the remote
+machine, while the phone provides the terminal, input, file transfer and a
+remote-screen view. A missing Herdr installation can be prepared from the app.
+No Termish relay or account sits in the connection.
 
 Native Agent chat is a separate option. It uploads the bundled Python Bridge
 over SFTP and starts it for your remote user; the Bridge runs the selected agent

@@ -61,9 +61,10 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
   import 按字母序（`.editorconfig` 基线 + ktlint 已接入，`make lint-kt` 检查/`ktlintFormat` 自动修）
 - New screenshots in `docs/screenshots/` use `<topic>-{en,zh}.png` or `.webp`
   naming; en = English UI, zh = Chinese UI, every topic has a matching pair.
-  Each README shows three core scenarios: Agent chat, terminal, and SFTP.
-  Reuse suitable public demo screenshots, including assets in `docs/appstore/`,
-  and keep personal accounts and private host details out of the selection.
+  The README gallery shows the Herdr terminal (including remote screen), Hosts,
+  optional Agent chat and SFTP as equally sized iOS device captures. Reuse
+  suitable public demo screenshots, including assets in `docs/appstore/`, and
+  keep personal accounts and private host details out of the selection.
 
 ## 文档维护
 

@@ -28,25 +28,24 @@
 
 [版本说明与全部安装包](https://github.com/ttermish/termish/releases/latest) · [SHA-256 校验和](https://download.termish.dev/downloads/SHA256SUMS)
 
-<table>
-  <tr>
-    <th>Herdr + 终端</th>
-    <th>原生 Agent 对话</th>
-    <th>SFTP 文件管理</th>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/terminal-zh.webp" width="330" alt="Termish 终端中的 Herdr 工作区、手机快捷键与远程画面小窗" /></td>
-    <td align="center"><img src="docs/screenshots/agent-chat-zh.webp" width="210" alt="在 Termish 原生聊天界面与 Codex 对话" /></td>
-    <td align="center"><img src="docs/screenshots/files-zh.webp" width="210" alt="通过 SFTP 浏览演示项目的文件夹与文件" /></td>
-  </tr>
-</table>
-<p align="center"><sub>与 <a href="https://termish.dev">termish.dev</a> 使用同一套 iOS 展示风格。终端是主工作区，原生聊天是可选入口。</sub></p>
+<p align="center"><strong>Herdr + 终端 · 主工作区</strong> &nbsp;&nbsp; <strong>主机列表 · 从这里开始</strong></p>
+<p align="center">
+  <img src="docs/screenshots/terminal-zh.png" width="250" alt="Termish 终端中的 Herdr 工作区、手机快捷键与远程画面悬浮小窗" />
+  <img src="docs/screenshots/hosts-zh.png" width="250" alt="Termish 主机列表，提供远程终端、Herdr、文件管理、远程画面和 Agent 快捷入口" />
+</p>
+<p align="center"><sub>从主机进入 Herdr；终端图中的悬浮小窗就是远程画面。</sub></p>
+<p align="center"><strong>原生 Agent 对话 · 可选入口</strong> &nbsp;&nbsp; <strong>SFTP 文件 · 与终端并行</strong></p>
+<p align="center">
+  <img src="docs/screenshots/agent-chat-zh.png" width="250" alt="在 Termish 原生聊天界面与 Codex 对话" />
+  <img src="docs/screenshots/files-zh.png" width="250" alt="通过 SFTP 浏览通用项目的文件夹与文件操作" />
+</p>
+<p align="center"><sub>四张图均采用与 <a href="https://termish.dev">termish.dev</a> 一致的 iOS 设备展示风格。</sub></p>
 
 ## 快速上手
 
-1. **添加主机。** 在「主机」页点击 `+`，填写 SSH 地址、用户名和密码或私钥。
-   首次连接时核对服务器的主机密钥指纹。
-2. **进入 Herdr。** 点击主机卡片上的 **Herdr**。远程未安装时，Termish 会提供引导安装，
+1. **从主机列表开始。** 在「主机」页点击 `+`，填写 SSH 地址、用户名和密码或私钥。
+   首次连接时核对服务器的主机密钥指纹。每台主机都能直接打开远程终端、Herdr、文件管理、远程画面或 Agent 对话。
+2. **进入 Herdr。** 从主机菜单点击 **Herdr**。远程未安装时，Termish 会提供引导安装，
    完成后在 SSH 或 Mosh 终端中打开工作区。
 3. **沿用终端工作流开发。** 在 Herdr 里启动 Codex，描述任务、查看执行输出；需要时上传截图或文件，
    通过远程画面查看实际界面，然后回到终端继续操作。
@@ -64,20 +63,22 @@ Agent 聊天需要远程主机安装 `python3`，并配置 Agent 自身的登录
 
 | 核心能力 | 可以做什么 |
 | --- | --- |
+| **主机列表与会话** | 将直连 SSH、Mosh 主机集中管理；从主机进入远程终端、Herdr、文件管理、远程画面或 Agent 对话，并在重连前看到仍在运行的会话。 |
 | **终端优先的 Herdr 工作区** | 保留熟悉的终端工作方式：进入 Herdr，运行 Codex 或 Pi，切换工作区并查看实时任务输出。Termish 通过 SSH 或 Mosh 启动 Herdr，缺失时可在手机上引导安装。 |
-| **手机上的开发闭环** | 提出任务、上传截图或文件、查看差异和远程文件；需要检查界面时打开 Mac 的实时画面，然后回到同一终端继续操作。 |
+| **远程画面** | 以悬浮小窗或全屏查看远程桌面；通过触控或虚拟鼠标检查和操作桌面应用，与终端或 Herdr 并行使用。 |
+| **手机上的开发闭环** | 提出任务、上传截图或文件、查看差异和远程文件，然后回到同一终端继续操作。 |
 | **SSH + Mosh 会话** | 打开多个终端标签，运行 tmux、vim、htop 或任意 TUI。Mosh 支持网络漫游与本地回显预测，改善高延迟连接下的输入体验。 |
 | **可选的原生 Agent 聊天** | 在手机原生对话界面使用 Codex、Claude Code、Gemini CLI、OpenCode 和 Pi；查看流式回答与工具调用、添加附件、停止任务和继续历史会话。 |
 | **适合手机的文件与输入** | 通过 SFTP 上传、下载、搜索和整理远程文件；终端提供 CTRL / ALT / ESC 快捷工具栏、触屏手势和中文输入法支持。 |
 | **自己的主机与凭据** | 直连服务器，保存的密钥由 Android Keystore 或 iOS Keychain 保护。无需 Termish 账号，无遥测，也无需托管中转服务。 |
 
-还提供中英文界面、深浅色主题、终端配色、快捷命令，以及配置采集服务后通过 SSH 实时查看 Mac 屏幕。
+还提供中英文界面、深浅色主题、终端配色和快捷命令。
 
 ## 主工作流如何运行
 
-手机通过 SSH 或 Mosh 直连开发机。主路径是 **Termish → Herdr → Codex**：Herdr 和编码工具运行在远程机器，
-手机提供终端、输入、传文件和远程画面。远程没有 Herdr 时，可直接在 App 内引导安装。
-整个连接中没有 Termish 中转服务，也不需要注册账号。
+手机通过 SSH 或 Mosh 直连开发机。从**主机列表**进入后，主路径是
+**Termish → Herdr → Codex**：Herdr 和编码工具运行在远程机器，手机提供终端、输入、传文件和远程画面。
+远程没有 Herdr 时，可直接在 App 内引导安装。整个连接中没有 Termish 中转服务，也不需要注册账号。
 
 原生 Agent 聊天是另一条可选路径：应用通过 SFTP 上传内置 Python Bridge，并以远程用户身份启动；
 Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。无需 Docker、`pip` 配置，
