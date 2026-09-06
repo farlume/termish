@@ -60,6 +60,7 @@ Termish 是一款为手机打造的 SSH 与 Mosh 终端，也是连接远程开�
 • 无广告、无统计分析、无遥测
 
 Termish 官网：https://termish.dev
+开源代码（MIT）：https://github.com/ttermish/termish
 隐私政策：https://termish.dev/privacy
 ```
 
@@ -115,6 +116,7 @@ Security and privacy
 
 Website: https://termish.dev
 Privacy policy: https://termish.dev/privacy
+Source code (MIT): https://github.com/ttermish/termish
 ```
 
 ## App content 表单建议

@@ -10,6 +10,9 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[源代码](https://github.com/ttermish/termish) · [反馈问题](https://github.com/ttermish/termish/issues) · [参与贡献](CONTRIBUTING.md)
 
 <p>
   <img src="docs/screenshots/hosts-zh.png" width="230" alt="主机列表" />
@@ -66,6 +69,7 @@
 - [安全模型](#安全模型)
 - [已知限制](#已知限制)
 - [路线图](#路线图)
+- [参与贡献](#参与贡献)
 - [联系与反馈](#联系与反馈)
 
 ## 为什么是 Termish？
@@ -87,6 +91,7 @@ Termish 讲的是普通 SSH 客户端讲不了的两个故事。
 - **本地优先、隐私设计**——直连你的服务器：无需账号、无云同步、无遥测、
   不经过任何第三方。密钥只进系统保险库（Keystore / Keychain）；
   你的 agent 会话只属于你
+- **MIT 开源**——查看源码、自行构建并参与改进；第三方组件保留各自的许可证
 - **组合态输入法一等公民**——拼音、假名、谚文永不上线，候选栏完整可用（见下）
 - **触屏 TUI 输入**——固定 CTRL/ALT/ESC 工具行，tap/drag 映射为终端鼠标事件，
   agent TUI（herdr/codex/claude/vim/htop）在手机上顺手可用
@@ -259,7 +264,7 @@ flowchart TB
 
 ## 文档
 
-内部开发参考文档（每份开头有英文摘要）：
+面向贡献者的开发参考文档（每份开头有英文摘要）：
 
 - [docs/architecture.md](docs/architecture.md) —— 模块布局、expect/actual 接缝、线程模型
 - [docs/terminal-emulator.md](docs/terminal-emulator.md) —— 缓冲模型（COW/行级同步）、
@@ -358,10 +363,17 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 - [ ] E2EE 跨设备同步
 - [ ] 后期：横屏双栏、kana/hangul 输入法、深链
 
+## 参与贡献
+
+欢迎提 Issue 和 PR。开发环境、模块边界、检查命令及贡献流程见
+[CONTRIBUTING.md](CONTRIBUTING.md)。贡献遵循 [MIT License](LICENSE) 与
+[行为准则](CODE_OF_CONDUCT.md)。
+
 ## 联系与反馈
 
 访问 [termish.dev](https://termish.dev)，或通过
 [ttermish@gmail.com](mailto:ttermish@gmail.com) 联系技术支持、反馈问题。
+可复现的问题与功能建议请提交到 [GitHub Issues](https://github.com/ttermish/termish/issues)。
 安全问题请参阅 [SECURITY.md](SECURITY.md)。
 
 ## 致谢
@@ -386,7 +398,7 @@ kotlinx-coroutines 1.10.2 · sshj 0.40.0 · libssh2 1.11.1 + OpenSSL 3.0.16
 
 ## 许可证
 
-Termish 为闭源软件，保留所有权利，见 [LICENSE](LICENSE)。
+Termish 的原始源码与文档以 [MIT License](LICENSE) 开源。
 内置 JetBrains Mono 字体单独以 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt) 授权。
 
 第三方组件许可：见 [NOTICE](NOTICE) 与 [LICENSES/](LICENSES/) 目录。

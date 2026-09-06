@@ -1,13 +1,14 @@
 # App Store Connect 提审材料（iOS）
 
-Submission copy and preparation notes for the proprietary Termish iPhone app.
+Submission copy and preparation notes for the MIT-licensed Termish iPhone app.
 
 核对日期：2026-09-05。文案依据仓库中的 iOS 1.7.1；最终以实际上传的构建为准。
 本页提供商店文案和填写说明，不代表 App Store Connect 已填妥或已提交。
 提交前先处理 [本次检查结果与待办](review-2026-09-05.md)。
 
-Termish 为闭源商业产品，计划采用应用内购买。当前源码未发现 iOS 内购实现，
-因此本版文案不承诺内购已经可用，也不宣称永久免费；下载价格尚待确定。
+Termish 于 2026-09-06 恢复 MIT 开源，源代码见 https://github.com/ttermish/termish。
+源码许可与商店定价分别维护。当前源码未发现 iOS 内购实现，本版文案不承诺内购
+已经可用，也不宣称永久免费；下载价格尚待确定。
 
 ## 商店信息：简体中文（zh-Hans）
 
@@ -47,6 +48,7 @@ Termish 是为 iPhone 打造的 SSH、Mosh 与 SFTP 客户端。无论是查看�
 
 iOS 可能暂停后台连接。需要持续运行的远程任务，建议在服务器上配合 tmux 等会话管理工具使用。
 
+开源代码（MIT）：https://github.com/ttermish/termish
 隐私政策：https://termish.dev/privacy/
 支持与反馈：https://termish.dev/
 ```
@@ -88,6 +90,7 @@ Host settings stay on your device. Passwords, private keys, and provider keys us
 
 iOS may suspend background connections. For long-running remote tasks, use a server-side session manager such as tmux.
 
+Source code (MIT): https://github.com/ttermish/termish
 Privacy policy: https://termish.dev/privacy/
 Support: https://termish.dev/
 ```

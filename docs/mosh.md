@@ -24,7 +24,7 @@ mosh 分两层，边界刻意保持干净：
 - **协议层（零依赖，可独立提取为库）**：`MoshTransport` / `UserStream` /
   `Fragmentation` / `Messages` / `Ocb` / `Aes` / `MoshCrypto` / `KmpMoshSession`
   ——不 import `dev.termish.term`，只依赖 Kotlin 标准库与 kotlinx。
-  需要在其他内部模块复用时，可将此层拆为独立模块。
+  需要供其他项目复用时，可将此层拆为独立模块。
 - **影子层（必然依赖终端模拟器）**：`ShadowTerminal` / `PredictionLayer` 复用
   `term/` 模拟器维护服务端帧缓冲镜像——mosh 协议要求客户端持有终端状态；
   复用自研模拟器而非另写一套是刻意决策（行为同源 + 行级增量同步红利），

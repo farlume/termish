@@ -11,6 +11,9 @@
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.1-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org)
 [![Compose Multiplatform](https://img.shields.io/badge/Compose%20Multiplatform-1.8-4285F4?logo=jetpackcompose&logoColor=white)](https://www.jetbrains.com/compose-multiplatform/)
 [![Platforms](https://img.shields.io/badge/platforms-Android%20%7C%20iOS-brightgreen)]()
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+[Source code](https://github.com/ttermish/termish) · [Report an issue](https://github.com/ttermish/termish/issues) · [Contribute](CONTRIBUTING.md)
 
 <p>
   <img src="docs/screenshots/hosts-en.png" width="230" alt="Hosts" />
@@ -68,6 +71,7 @@ needs no sshd. `npm install -g @termish/web` → [termish.dev/web](https://termi
 - [Security Model](#security-model)
 - [Known Limitations](#known-limitations)
 - [Roadmap](#roadmap)
+- [Contributing](#contributing)
 - [Support](#support)
 
 ## Why Termish?
@@ -94,6 +98,8 @@ iOS). All the effort goes where it matters — the terminal experience.
   account, no cloud sync, no telemetry, no third-party hop. Secrets live only
   in the platform vault (Keystore / Keychain); your agent sessions belong to
   you
+- **Open source under MIT** — inspect the source, build your own version, and
+  contribute improvements. Third-party components retain their own licenses
 - **Composition-safe IME** — pinyin, kana and hangul never leak to the wire;
   candidate bars fully work (see below)
 - **Touch-first TUI input** — fixed CTRL/ALT/ESC toolbar, tap/drag mapped to
@@ -326,7 +332,7 @@ browser for desktop workflows while the phone stays native.
 
 ## Documentation
 
-Internal development reference (English summary at the top of each file):
+Development reference for contributors (English summary at the top of each file):
 
 - [docs/architecture.md](docs/architecture.md) — module layout, expect/actual
   seams, threading model
@@ -433,10 +439,18 @@ version metadata, and direct release downloads.
 - [ ] E2EE cross-device sync
 - [ ] Later: landscape dual-pane, kana/hangul IME, deep links
 
+## Contributing
+
+Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+for local setup, module boundaries, checks, and the contribution workflow.
+Contributions follow the [MIT License](LICENSE) and our
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## Support
 
 Visit [termish.dev](https://termish.dev) or contact
 [ttermish@gmail.com](mailto:ttermish@gmail.com) for support and feedback.
+Report reproducible bugs and feature requests in [GitHub Issues](https://github.com/ttermish/termish/issues).
 For security issues, see [SECURITY.md](SECURITY.md).
 
 ## Acknowledgments
@@ -462,7 +476,8 @@ For security issues, see [SECURITY.md](SECURITY.md).
 
 ## License
 
-Termish is proprietary software. All rights reserved; see [LICENSE](LICENSE).
+Termish's original source code and documentation are released under the
+[MIT License](LICENSE).
 Bundled JetBrains Mono is licensed separately under
 [OFL-1.1](LICENSES/JetBrainsMono-OFL.txt).
 
