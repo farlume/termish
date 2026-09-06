@@ -6,7 +6,8 @@ per platform against battle-tested engines: sshj + BouncyCastle on JVM, libssh2 
 OpenSSL on iOS, and a pure-Kotlin Mosh client (`dev.termish.mosh`).
 Stack: Kotlin 2.1.21 · Compose Multiplatform 1.8.1 · AGP 8.9.2 · Gradle 8.14.2.
 
-Full build/test docs live in `README.md` (Build & Test). All workflow tasks are
+The README introduces the app; full build/test docs live in `CONTRIBUTING.md`
+(Build & Test). All workflow tasks are
 defined in the root `build.gradle.kts`; `Makefile` targets are thin aliases — CI
 reuses the same Gradle tasks, so `make X` and `./gradlew <task>` are equivalent.
 
@@ -58,11 +59,11 @@ not in this repo. Android emulator reaches the host at `10.0.2.2`; iOS simulator
 - User-facing strings go through `AppStrings` (Chinese + English), never hardcoded
 - **Code style**: Kotlin official style, `import` 短名（禁止全限定名调用）、
   import 按字母序（`.editorconfig` 基线 + ktlint 已接入，`make lint-kt` 检查/`ktlintFormat` 自动修）
-- Screenshots in `docs/screenshots/` follow `<topic>-{en,zh}.png` naming
-  (topic = hosts/settings/theme/sftp/terminal-ssh/terminal-herdr/…;
-  en = English UI, zh = Chinese UI, every topic has a matching pair);
-  README shows 6 per language (3×2: hosts/settings/theme on top,
-  terminal×2 + sftp below)
+- New screenshots in `docs/screenshots/` use `<topic>-{en,zh}.png` or `.webp`
+  naming; en = English UI, zh = Chinese UI, every topic has a matching pair.
+  Each README shows three core scenarios: Agent chat, terminal, and SFTP.
+  Reuse suitable public demo screenshots, including assets in `docs/appstore/`,
+  and keep personal accounts and private host details out of the selection.
 
 ## 文档维护
 
@@ -140,8 +141,9 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - After editing `.env` / signing secrets run `make gradle-stop` (the Gradle daemon
   does not pick up new environment variables)
-- iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts, and **CI does
-  not build iOS** — verify iOS changes locally: `make ios-native && make ios-framework`,
+- iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts. GitHub Actions
+  checks framework compilation on relevant pull requests and release tags;
+  verify UI behavior locally with `make ios-native && make ios-framework`,
   then build & install the app:
   ```bash
   cd iosApp

@@ -5,6 +5,14 @@
 
 ## [Unreleased]
 
+## [1.7.3] - 2026-09-06
+
+### 优化
+
+- **项目介绍**：重写中英文 README，突出原生 Agent 聊天、SSH / Mosh 与 SFTP，前置下载入口和三步上手流程
+- **核心截图**：精选 Agent 对话、远程终端与文件管理三组演示截图，减少重复展示
+- **开发文档**：将完整构建与测试步骤集中到贡献指南，明确 Android / iOS 获取方式、后台连接限制及外部服务配置要求
+
 ## [1.7.2] - 2026-09-06
 
 ### 修复
@@ -538,7 +546,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/ttermish/termish/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/ttermish/termish/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/ttermish/termish/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.0

@@ -20,18 +20,59 @@ cd termish
 Set the Android SDK path in `local.properties` or `ANDROID_HOME`.
 Debug builds and tests do not require the maintainer's signing keys, cloud
 accounts, private machines or AI provider credentials. Agent integration testing
-uses your own configured provider account. See [Build & Test](README.md#build--test)
-for the full toolchain and iOS build steps.
+uses your own configured provider account.
+
+## Build & Test
+
+Run these commands from the repository root.
+
+### Android
 
 ```bash
-make run                                      # Android debug build, install and launch
+./gradlew :composeApp:assembleDebug            # Build a debug APK
+make run                                     # Build, install and launch on a device/emulator
+```
+
+### Tests
+
+```bash
 ./gradlew :composeApp:testDebugUnitTest         # Kotlin unit tests
-python3 -m unittest discover -s agentBridge/tests
+./gradlew agentBridgeTest                      # Python Bridge tests (standard library only)
 make test-integration                         # Start local sshd and run transport tests
 ```
 
+Kotlin tests cover the terminal emulator, Mosh, crypto RFC vectors and app logic.
+Transport tests detect a local sshd on `127.0.0.1:22222` and skip when it is absent.
+For manual transport checks, `./scripts/test-sshd.sh` starts the test server with
+ephemeral keys. Bridge tests can also run without Gradle:
+`python3 -m unittest discover -s agentBridge/tests`.
+
+### iOS
+
+Requires macOS and Xcode. Build OpenSSL and libssh2 on first setup or after
+changing their versions, then compile the shared frameworks:
+
+```bash
+make ios-native                               # Native dependencies for simulator and device
+make ios-framework                            # Kotlin simulator and device debug frameworks
+open iosApp/iosApp.xcodeproj                    # Select the iosApp scheme and run in Xcode
+```
+
+The framework tasks can also be run directly:
+
+```bash
+./gradlew :composeApp:linkDebugFrameworkIosSimulatorArm64
+./gradlew :composeApp:linkDebugFrameworkIosArm64
+```
+
+Choose a simulator or configure your own signing team for a physical device.
+GitHub Actions checks iOS framework compilation on relevant pull requests and
+release tags; this does not publish an App Store build. Check UI behavior locally.
+
 Run `make help` for other tasks. Release signing is only needed for release
-builds; `.env.example` documents the optional configuration.
+builds; [`.env.example`](.env.example) documents the optional configuration.
+Maintainers can find Android release mirroring configuration in the
+[R2 release guide](docs/r2-release.md).
 
 ## Where changes belong
 
