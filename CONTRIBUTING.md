@@ -66,8 +66,8 @@ The framework tasks can also be run directly:
 ```
 
 Choose a simulator or configure your own signing team for a physical device.
-GitHub Actions checks iOS framework compilation on relevant pull requests and
-release tags; this does not publish an App Store build. Check UI behavior locally.
+iOS builds are checked locally or through the configured Apple distribution
+workflow; GitHub Actions does not compile iOS frameworks. Check UI behavior locally.
 
 Run `make help` for other tasks. Release signing is only needed for release
 builds; [`.env.example`](.env.example) documents the optional configuration.

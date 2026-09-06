@@ -141,10 +141,9 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 
 - After editing `.env` / signing secrets run `make gradle-stop` (the Gradle daemon
   does not pick up new environment variables)
-- iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts. GitHub Actions
-  checks framework compilation on relevant pull requests and release tags;
-  verify UI behavior locally with `make ios-native && make ios-framework`,
-  then build & install the app:
+- iOS native deps (OpenSSL/libssh2) are git-ignored build artifacts. Verify iOS
+  behavior locally with `make ios-native && make ios-framework`, then build &
+  install the app:
   ```bash
   cd iosApp
   xcodebuild -project iosApp.xcodeproj -target iosApp -sdk iphonesimulator \
