@@ -28,18 +28,13 @@
 
 [版本说明与全部安装包](https://github.com/ttermish/termish/releases/latest) · [SHA-256 校验和](https://download.termish.dev/downloads/SHA256SUMS)
 
-<p align="center"><strong>Herdr + 终端 · 主工作区</strong> &nbsp;&nbsp; <strong>主机列表 · 从这里开始</strong></p>
 <p align="center">
-  <img src="docs/screenshots/terminal-zh.png" width="250" alt="Termish 终端中的 Herdr 工作区、手机快捷键与远程画面悬浮小窗" />
-  <img src="docs/screenshots/hosts-zh.png" width="250" alt="Termish 主机列表，提供远程终端、Herdr、文件管理、远程画面和 Agent 快捷入口" />
+  <img src="docs/screenshots/terminal-zh.png" width="190" alt="Termish 终端中的 Herdr 工作区、手机快捷键与远程画面悬浮小窗" />
+  <img src="docs/screenshots/hosts-zh.png" width="190" alt="Termish 主机列表，提供远程终端、Herdr、文件管理、远程画面和 Agent 快捷入口" />
+  <img src="docs/screenshots/agent-chat-zh.png" width="190" alt="在 Termish 原生聊天界面与 Codex 对话" />
+  <img src="docs/screenshots/files-zh.png" width="190" alt="通过 SFTP 浏览通用项目的文件夹与文件操作" />
 </p>
-<p align="center"><sub>从主机进入 Herdr；终端图中的悬浮小窗就是远程画面。</sub></p>
-<p align="center"><strong>原生 Agent 对话 · 可选入口</strong> &nbsp;&nbsp; <strong>SFTP 文件 · 与终端并行</strong></p>
-<p align="center">
-  <img src="docs/screenshots/agent-chat-zh.png" width="250" alt="在 Termish 原生聊天界面与 Codex 对话" />
-  <img src="docs/screenshots/files-zh.png" width="250" alt="通过 SFTP 浏览通用项目的文件夹与文件操作" />
-</p>
-<p align="center"><sub>四张图均采用与 <a href="https://termish.dev">termish.dev</a> 一致的 iOS 设备展示风格。</sub></p>
+<p align="center"><sub><strong>Herdr + 终端 · 主工作区</strong> · 主机列表 · 原生 Agent 对话 · SFTP 文件。终端图中的悬浮小窗就是远程画面。四张图均采用与 <a href="https://termish.dev">termish.dev</a> 一致的 iOS 设备展示风格。</sub></p>
 
 ## 快速上手
 

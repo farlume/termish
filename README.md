@@ -28,18 +28,13 @@
 
 [Release notes and all assets](https://github.com/ttermish/termish/releases/latest) · [SHA-256 checksums](https://download.termish.dev/downloads/SHA256SUMS)
 
-<p align="center"><strong>Herdr + terminal · main workspace</strong> &nbsp;&nbsp; <strong>Hosts · start here</strong></p>
 <p align="center">
-  <img src="docs/screenshots/terminal-en.png" width="250" alt="Herdr workspace in the Termish terminal, with the mobile key toolbar and a floating remote-screen window" />
-  <img src="docs/screenshots/hosts-en.png" width="250" alt="Termish host list with shortcuts for Terminal, Herdr, Files, Screen and Agents" />
+  <img src="docs/screenshots/terminal-en.png" width="190" alt="Herdr workspace in the Termish terminal, with the mobile key toolbar and a floating remote-screen window" />
+  <img src="docs/screenshots/hosts-en.png" width="190" alt="Termish host list with shortcuts for Terminal, Herdr, Files, Screen and Agents" />
+  <img src="docs/screenshots/agent-chat-en.png" width="190" alt="Native conversation with Codex in Termish" />
+  <img src="docs/screenshots/files-en.png" width="190" alt="SFTP browser showing a generic project's folders and file actions" />
 </p>
-<p align="center"><sub>Open a host, then work in Herdr. The terminal capture shows the remote screen in its floating window.</sub></p>
-<p align="center"><strong>Native Agent chat · optional</strong> &nbsp;&nbsp; <strong>SFTP files · alongside your terminal</strong></p>
-<p align="center">
-  <img src="docs/screenshots/agent-chat-en.png" width="250" alt="Native conversation with Codex in Termish" />
-  <img src="docs/screenshots/files-en.png" width="250" alt="SFTP browser showing a generic project's folders and file actions" />
-</p>
-<p align="center"><sub>All four captures use the same iOS device presentation as <a href="https://termish.dev">termish.dev</a>.</sub></p>
+<p align="center"><sub><strong>Herdr + terminal · main workspace</strong> · Hosts · Native Agent chat · SFTP files. The terminal capture includes the floating remote-screen window. All four use the same iOS device presentation as <a href="https://termish.dev">termish.dev</a>.</sub></p>
 
 ## Quick start
 
