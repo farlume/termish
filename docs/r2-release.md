@@ -1,5 +1,7 @@
 # Cloudflare R2 发布同步
 
+> **English summary:** Node.js 22 validates published release assets, uploads them to R2 using curl SigV4, verifies anonymous downloads and updates the latest version pointer last.
+
 `Build` 工作流创建正式 GitHub Release 后，调用 `Publish Release to R2`，把签名 APK、AAB、SHA256SUMS 和版本 JSON 同步到 R2。官网从 R2 直接下载正式安装包。
 
 ## Cloudflare 配置
@@ -95,7 +97,7 @@ downloads/
 无需密钥、不会访问云端的测试：
 
 ```bash
-python3 -m unittest discover -s scripts/tests -v
+node --test scripts/tests/*.test.mjs
 ```
 
 参考：[R2 S3 凭据](https://developers.cloudflare.com/r2/get-started/s3/)、[公开访问与自定义域名](https://developers.cloudflare.com/r2/buckets/public-buckets/)、[CORS](https://developers.cloudflare.com/r2/buckets/cors/)、[S3 API 兼容性](https://developers.cloudflare.com/r2/api/s3/api/)。

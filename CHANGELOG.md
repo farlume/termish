@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-04
+
+### 变更
+
+- **Rust 远程服务**：远程画面服务与 Agent Bridge 改为原生可执行程序，内置 macOS / Linux 的 ARM64 与 x86_64 版本，继续支持从手机经 SSH 自动安装和更新，无需在电脑手动部署 Python
+- **Agent 会话存储**：新会话改用私有 JSON 文件；旧 Python Bridge 的会话记录不迁移，新版不会展示这些旧记录，Agent 工具自身的原生历史仍可导入
+- **构建与发布**：移除 Python 源码、`.pyz` 资源及 Python 构建依赖，远程服务由 Rust 工具打包，R2 发布改用 Node.js 与 curl
+
+### 修复
+
+- **远程画面生命周期**：补齐连接鉴权、会话占用、断开回收、按键释放与编码器重启处理；Wayland 授权取消时及时关闭请求和会话，桌面录屏与控制仍需系统授权
+- **Agent 连接与安装**：保留后台任务、断线事件重放和审批重连，限制安装日志与等待时间，完善进程清理、附件路径校验和敏感信息脱敏
+
 ## [1.7.3] - 2026-09-06
 
 ### 优化
@@ -546,40 +559,41 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/ttermish/termish/compare/v1.7.3...HEAD
-[1.7.3]: https://github.com/ttermish/termish/compare/v1.7.2...v1.7.3
-[1.7.2]: https://github.com/ttermish/termish/compare/v1.7.1...v1.7.2
-[1.7.1]: https://github.com/ttermish/termish/compare/v1.7.0...v1.7.1
-[1.7.0]: https://github.com/ttermish/termish/compare/v1.6.4...v1.7.0
-[1.6.4]: https://github.com/ttermish/termish/compare/v1.6.3...v1.6.4
-[1.6.3]: https://github.com/ttermish/termish/compare/v1.6.2...v1.6.3
-[1.6.2]: https://github.com/ttermish/termish/compare/v1.6.1...v1.6.2
-[1.6.1]: https://github.com/ttermish/termish/compare/v1.6.0...v1.6.1
-[1.6.0]: https://github.com/ttermish/termish/compare/v1.5.1...v1.6.0
-[1.5.1]: https://github.com/ttermish/termish/compare/v1.5.0...v1.5.1
-[1.5.0]: https://github.com/ttermish/termish/compare/v1.4.0...v1.5.0
-[1.4.0]: https://github.com/ttermish/termish/compare/v1.3.0...v1.4.0
-[1.3.0]: https://github.com/ttermish/termish/compare/v1.2.4...v1.3.0
-[1.2.4]: https://github.com/ttermish/termish/compare/v1.2.3...v1.2.4
-[1.2.3]: https://github.com/ttermish/termish/compare/v1.2.2...v1.2.3
-[1.2.2]: https://github.com/ttermish/termish/compare/v1.2.1...v1.2.2
-[1.2.1]: https://github.com/ttermish/termish/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/ttermish/termish/compare/v1.1.14...v1.2.0
-[1.1.14]: https://github.com/ttermish/termish/compare/v1.1.13...v1.1.14
-[1.1.13]: https://github.com/ttermish/termish/compare/v1.1.12...v1.1.13
-[1.1.12]: https://github.com/ttermish/termish/compare/v1.1.11...v1.1.12
-[1.1.11]: https://github.com/ttermish/termish/compare/v1.1.10...v1.1.11
-[1.1.10]: https://github.com/ttermish/termish/compare/v1.1.9...v1.1.10
-[1.1.9]: https://github.com/ttermish/termish/compare/v1.1.8...v1.1.9
-[1.1.8]: https://github.com/ttermish/termish/compare/v1.1.7...v1.1.8
-[1.1.7]: https://github.com/ttermish/termish/compare/v1.1.6...v1.1.7
-[1.1.6]: https://github.com/ttermish/termish/compare/v1.1.5...v1.1.6
-[1.1.5]: https://github.com/ttermish/termish/compare/v1.1.4...v1.1.5
-[1.1.4]: https://github.com/ttermish/termish/compare/v1.1.3...v1.1.4
-[1.1.3]: https://github.com/ttermish/termish/compare/v1.1.2...v1.1.3
-[1.1.2]: https://github.com/ttermish/termish/compare/v1.1.1...v1.1.2
-[1.1.1]: https://github.com/ttermish/termish/compare/v1.1.0...v1.1.1
-[1.1.0]: https://github.com/ttermish/termish/compare/v1.0.1...v1.1.0
-[1.0.1]: https://github.com/ttermish/termish/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/ttermish/termish/compare/v0.2.0...v1.0.0
-[0.2.0]: https://github.com/ttermish/termish/releases/tag/v0.2.0
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/farlume/termish/compare/v1.7.3...v1.8.0
+[1.7.3]: https://github.com/farlume/termish/compare/v1.7.2...v1.7.3
+[1.7.2]: https://github.com/farlume/termish/compare/v1.7.1...v1.7.2
+[1.7.1]: https://github.com/farlume/termish/compare/v1.7.0...v1.7.1
+[1.7.0]: https://github.com/farlume/termish/compare/v1.6.4...v1.7.0
+[1.6.4]: https://github.com/farlume/termish/compare/v1.6.3...v1.6.4
+[1.6.3]: https://github.com/farlume/termish/compare/v1.6.2...v1.6.3
+[1.6.2]: https://github.com/farlume/termish/compare/v1.6.1...v1.6.2
+[1.6.1]: https://github.com/farlume/termish/compare/v1.6.0...v1.6.1
+[1.6.0]: https://github.com/farlume/termish/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/farlume/termish/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/farlume/termish/compare/v1.4.0...v1.5.0
+[1.4.0]: https://github.com/farlume/termish/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/farlume/termish/compare/v1.2.4...v1.3.0
+[1.2.4]: https://github.com/farlume/termish/compare/v1.2.3...v1.2.4
+[1.2.3]: https://github.com/farlume/termish/compare/v1.2.2...v1.2.3
+[1.2.2]: https://github.com/farlume/termish/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/farlume/termish/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/farlume/termish/compare/v1.1.14...v1.2.0
+[1.1.14]: https://github.com/farlume/termish/compare/v1.1.13...v1.1.14
+[1.1.13]: https://github.com/farlume/termish/compare/v1.1.12...v1.1.13
+[1.1.12]: https://github.com/farlume/termish/compare/v1.1.11...v1.1.12
+[1.1.11]: https://github.com/farlume/termish/compare/v1.1.10...v1.1.11
+[1.1.10]: https://github.com/farlume/termish/compare/v1.1.9...v1.1.10
+[1.1.9]: https://github.com/farlume/termish/compare/v1.1.8...v1.1.9
+[1.1.8]: https://github.com/farlume/termish/compare/v1.1.7...v1.1.8
+[1.1.7]: https://github.com/farlume/termish/compare/v1.1.6...v1.1.7
+[1.1.6]: https://github.com/farlume/termish/compare/v1.1.5...v1.1.6
+[1.1.5]: https://github.com/farlume/termish/compare/v1.1.4...v1.1.5
+[1.1.4]: https://github.com/farlume/termish/compare/v1.1.3...v1.1.4
+[1.1.3]: https://github.com/farlume/termish/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/farlume/termish/compare/v1.1.1...v1.1.2
+[1.1.1]: https://github.com/farlume/termish/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/farlume/termish/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/farlume/termish/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/farlume/termish/compare/v0.2.0...v1.0.0
+[0.2.0]: https://github.com/farlume/termish/releases/tag/v0.2.0

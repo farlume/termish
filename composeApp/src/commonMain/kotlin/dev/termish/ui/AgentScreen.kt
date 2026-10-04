@@ -287,7 +287,7 @@ fun AgentScreen(
         initialPreferences = repository.loadAgentPreferences(host.id),
         initialContext = initialContext,
         onSavePreferences = { repository.saveAgentPreferences(host.id, it) },
-        onInstallBridge = { scope.launch { controller.installBridge(Res.readBytes("files/termish-agent.pyz")) } },
+        onInstallBridge = controller::installBridge,
         onExit = onBack,
         screenEntry = screenEntry,
         onStartScreen = onStartScreen,
@@ -569,8 +569,8 @@ private fun AgentWorkspace(
                                 onInstallBridge,
                             )
                         AgentBridgeState.INSTALLING -> AgentLoading(strings.installingService, controller.installLog)
-                        AgentBridgeState.NO_PYTHON ->
-                            AgentBridgeInstall(strings.serviceMissing, strings.noPython, strings.retry, controller.installLog, controller::connect)
+                        AgentBridgeState.UNSUPPORTED_PLATFORM ->
+                            AgentBridgeInstall(strings.serviceMissing, strings.unsupportedPlatform, strings.retry, controller.installLog, controller::connect)
                         AgentBridgeState.ERROR ->
                             AgentBridgeInstall(
                                 controller.errorMessage ?: strings.serviceMissing,

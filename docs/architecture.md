@@ -38,6 +38,15 @@ composeApp/
 Android 本地测试通过 `:composeApp:testDebugUnitTest` 运行，也包含 `commonTest`。
 会话与控制器测试使用 Robolectric 提供 Android 环境；仓库测试使用内存 `MapSettings`。
 
+仓库根目录的 `screenService/` 保存 Rust 远程画面服务（macOS/X11/Wayland）、配置与安装脚本。
+Gradle 在 Kotlin 编译前生成 `ScreenServiceAssets`，手机端保留现有 SSH 安装/探测入口；
+服务运行在远端图形会话中，视频与控制经 SSH direct-tcpip 访问回环端口。
+源码分工、配置和日志见 [远程画面服务](screen-service.md)。
+
+`agentBridge/rust/` 保存原生 Agent 伴随服务，手机同样按系统与架构上传内置二进制。
+控制流走 SSH exec/NDJSON 与私有 Unix socket；新会话以 JSON 原子持久化，不迁移旧 SQLite。
+构建工具位于 `tools/service-build/`，两类服务均在编译前生成 Kotlin 清单与文件资源。
+
 ## 平台分工
 
 | 平台 | SSH 引擎 | 认证 | Mosh 客户端 | 密钥存储 |

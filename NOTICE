@@ -24,3 +24,4 @@ Termish 第三方组件声明
 | multiplatform-settings | Apache-2.0 | KMP 键值存储 | LICENSES/Apache-2.0.txt |
 | AndroidX (Activity, DocumentFile, Lifecycle) | Apache-2.0 | Android 平台组件 | LICENSES/Apache-2.0.txt |
 | slf4j | MIT | 日志 facade（sshj 传递依赖，用 nop 抑制） | LICENSES/MIT.txt |
+| Rust screen service / Agent Bridge / build tool dependencies | MIT / Apache-2.0 / Unicode-3.0 / BSD | 远端服务与构建依赖，完整组件版本和版权声明 | LICENSES/TermishScreen-Rust.txt |

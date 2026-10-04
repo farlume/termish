@@ -34,9 +34,13 @@ reinstall: ## 卸载后重装（gradle reinstallDebug，治签名冲突）
 
 ## ---------- 测试 ----------
 
+.PHONY: screen-service
+screen-service: ## 构建 Rust 远端服务并打包到手机资源
+	$(GRADLEW) screenServiceBuild
+
 .PHONY: test
 test: ## 单元测试 + 集成测试（sshd/mosh 不在时自动 SKIP）
-	$(GRADLEW) agentBridgeTest :composeApp:testDebugUnitTest
+	$(GRADLEW) agentBridgeTest screenServiceTest :composeApp:testDebugUnitTest
 
 .PHONY: test-integration
 test-integration: ## 集成测试：自动起 sshd 后跑（gradle testIntegration）

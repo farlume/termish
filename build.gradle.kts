@@ -72,7 +72,7 @@ tasks.register<StartTestSshdTask>("startTestSshd") {
 tasks.register("testIntegration") {
     group = "verification"
     description = "SSH/Mosh 集成测试（自动起 sshd；单测一拼跑）"
-    dependsOn("startTestSshd", ":composeApp:testDebugUnitTest")
+    dependsOn("startTestSshd", "screenServiceTest", ":composeApp:testDebugUnitTest")
 }
 
 project(":composeApp").tasks.configureEach {
@@ -98,31 +98,58 @@ tasks.register<RunDebugTask>("runDebug") {
     dependsOn(":composeApp:installDebug")
 }
 
-/** 构建随 App 分发的标准库 Python Agent Bridge zipapp。 */
+/** 原生服务构建与资源打包：开发机交叉编译，远端只需运行可执行文件。 */
+val agentBridgeRustBuild = tasks.register<ExecTask>("agentBridgeRustBuild") {
+    group = "build"
+    inputs.files(fileTree("agentBridge/rust") { exclude("target/**", ".gitignore") })
+    inputs.files(fileTree("tools/service-build") { exclude("target/**", ".gitignore") })
+    inputs.files("scripts/service-build.sh", "LICENSES/TermishScreen-Rust.txt")
+    outputs.dir(layout.projectDirectory.dir("agentBridge/build/binaries"))
+    doLast { run("sh", "scripts/service-build.sh", "build-agent") }
+}
 val agentBridgeBuild = tasks.register<ExecTask>("agentBridgeBuild") {
     group = "build"
-    description = "构建 composeResources/files/termish-agent.pyz"
-    inputs.dir(layout.projectDirectory.dir("agentBridge/termish_agent"))
-    inputs.file(layout.projectDirectory.file("agentBridge/build.py"))
-    outputs.file(layout.projectDirectory.file("composeApp/src/commonMain/composeResources/files/termish-agent.pyz"))
-    doLast {
-        run("python3", "agentBridge/build.py")
+    dependsOn(agentBridgeRustBuild)
+    inputs.dir(layout.projectDirectory.dir("agentBridge/build/binaries"))
+    inputs.files(fileTree("tools/service-build") { exclude("target/**", ".gitignore") })
+    outputs.file(layout.projectDirectory.file("composeApp/build/generated/agentBridge/kotlin/dev/termish/agent/AgentBridgeAssets.kt"))
+    outputs.dir(layout.projectDirectory.dir("composeApp/src/commonMain/composeResources/files/termish-agent"))
+    doLast { run("sh", "scripts/service-build.sh", "pack-agent") }
+}
+val screenServiceRustBuild = tasks.register<ExecTask>("screenServiceRustBuild") {
+    group = "build"
+    inputs.files(fileTree("screenService/rust") { exclude("target/**", ".gitignore") })
+    inputs.files(fileTree("tools/service-build") { exclude("target/**", ".gitignore") })
+    inputs.files("screenService/service.properties", "LICENSES/TermishScreen-Rust.txt", "scripts/service-build.sh")
+    outputs.dir(layout.projectDirectory.dir("screenService/build/binaries"))
+    doLast { run("sh", "scripts/service-build.sh", "build-screen") }
+}
+val screenServiceBuild = tasks.register<ExecTask>("screenServiceBuild") {
+    group = "build"
+    dependsOn(screenServiceRustBuild)
+    inputs.files("screenService/native-install.sh", "screenService/install.sh", "screenService/service.properties")
+    inputs.files(fileTree("tools/service-build") { exclude("target/**", ".gitignore") })
+    inputs.dir(layout.projectDirectory.dir("screenService/build/binaries"))
+    outputs.file(layout.projectDirectory.file("composeApp/build/generated/screenService/kotlin/dev/termish/screen/ScreenServiceAssets.kt"))
+    outputs.dir(layout.projectDirectory.dir("composeApp/src/commonMain/composeResources/files/termish-screen"))
+    doLast { run("sh", "scripts/service-build.sh", "pack-screen") }
+}
+project(":composeApp").tasks.configureEach {
+    if ((name.startsWith("compile") && name.contains("Kotlin")) || name.startsWith("copyNonXmlValueResourcesFor") || name == "generateComposeResClass") {
+        dependsOn(screenServiceBuild, agentBridgeBuild)
     }
 }
-
-// Bridge 产物是 commonMain Compose 资源：所有平台复制资源前先生成，既消除
-// Gradle 隐式依赖告警，也保证 APK/framework 携带的 pyz 与源码一致。
-project(":composeApp").tasks.configureEach {
-    if (name.startsWith("copyNonXmlValueResourcesFor")) dependsOn(agentBridgeBuild)
+tasks.register<ExecTask>("screenServiceRustTest") {
+    group = "verification"
+    doLast { run("sh", "scripts/service-test.sh", "screenService") }
 }
-
-/** Agent Bridge 协议/Adapter 纯 Python 单测（无第三方依赖）。 */
+tasks.register("screenServiceTest") {
+    group = "verification"
+    dependsOn("screenServiceRustTest")
+}
 tasks.register<ExecTask>("agentBridgeTest") {
     group = "verification"
-    description = "运行 Agent Bridge Python 单元测试"
-    doLast {
-        run("python3", "-m", "unittest", "discover", "-s", "agentBridge/tests", "-v")
-    }
+    doLast { run("sh", "scripts/service-test.sh", "agentBridge") }
 }
 
 /** 卸载后重装：解决设备上旧签名/旧版本冲突（INSTALL_FAILED_UPDATE_INCOMPATIBLE）。 */

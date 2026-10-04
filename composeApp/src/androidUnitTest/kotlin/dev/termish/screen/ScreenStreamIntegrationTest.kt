@@ -19,6 +19,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
 
 /**
  * 屏幕推流链路集成测试：本地 sshd（127.0.0.1:22222）+ 本机 ffmpeg 抓屏，
@@ -195,6 +197,10 @@ class ScreenStreamIntegrationTest {
      */
     @Test
     fun `install script sets up gui session service and serves h264 stream`() {
+        assumeTrue(
+            "SKIP: 安装/卸载真实桌面服务需显式设置 TERMISH_TEST_INSTALL_SCREEN=1",
+            System.getenv("TERMISH_TEST_INSTALL_SCREEN") == "1",
+        )
         if (!skipUnlessReady()) return
         if (!System.getProperty("os.name").orEmpty().contains("Mac")) {
             println("SKIP: 推流服务安装脚本仅支持 macOS 远端")
@@ -246,6 +252,10 @@ class ScreenStreamIntegrationTest {
             // 取得 THS1 状态 + 长度分帧的 H.264 Annex-B，与手机端实际链路一致。
             val preflight = session.runCommandDetailed(ScreenSession.READ_STREAM_SCRIPT, 15_000)
             assertNotNull(preflight, "控制面探测应成功")
+            assumeFalse(
+                "SKIP: 本机桌面锁屏或休眠，无法验证真实抓屏",
+                preflight.stderr.lineSequence().any { it == "SCREEN_ASLEEP" || it == "SCREEN_LOCKED" },
+            )
             assertFalse(preflight.stderr.contains("SCREEN_"), "控制面不应报错：${preflight.stderr}")
             val tcpPort =
                 preflight.stdout
@@ -287,79 +297,8 @@ class ScreenStreamIntegrationTest {
                     10_000,
                 )
             }
+            session.close()
         }
-    }
-
-    @Test
-    fun `relay python script is syntactically valid`() {
-        val py3 =
-            runCatching {
-                val p = ProcessBuilder("sh", "-c", "command -v python3").redirectErrorStream(true).start()
-                val out =
-                    p.inputStream
-                        .readBytes()
-                        .decodeToString()
-                        .trim()
-                p.waitFor()
-                out
-            }.getOrDefault("")
-        if (py3.isEmpty()) {
-            println("SKIP: 无 python3（relay 语法检查需要）")
-            return
-        }
-        // INSTALL_SCRIPT 的 heredoc 内容（bash 变量 $PORT/$FF_REAL 安装时注入）
-        val script = ScreenSession.INSTALL_SCRIPT
-        val start = script.indexOf("#!/usr/bin/env python3")
-        assertTrue(start >= 0, "INSTALL_SCRIPT 应含 python relay")
-        var py = script.substring(start, script.indexOf("TERMISH_EOF", start))
-        // Kotlin 模板转义还原 + dedent + bash 注入变量
-        py =
-            py
-                .replace("${'$'}{'\$'}", "$")
-                .replace("\$PORT", "17321")
-                .replace("\$FF_REAL", "/usr/bin/ffmpeg")
-        // 逐行去公共缩进（heredoc 内嵌 Kotlin 字符串的 12 空格缩进）
-        val lines = py.lines()
-        val minIndent = lines.filter { it.isNotBlank() }.minOf { it.takeWhile { c -> c == ' ' }.length }
-        py = lines.joinToString("\n") { if (it.length >= minIndent) it.substring(minIndent) else it }
-
-        val tmp = File.createTempFile("relay", ".py")
-        tmp.writeText(py)
-        try {
-            val p =
-                ProcessBuilder(py3, "-m", "py_compile", tmp.absolutePath)
-                    .redirectErrorStream(true)
-                    .start()
-            val err = p.inputStream.readBytes().decodeToString()
-            val code = p.waitFor()
-            assertTrue(code == 0, "relay python 语法错误:\n$err")
-        } finally {
-            tmp.delete()
-        }
-        // 关键语义断言：视频口仅回环 + TCP 显式分帧 + 硬编（防脚本漂移）
-        assertTrue(py.contains("TCP_VIDEO_PORT = 17321 + 2"), "relay 应定义独立 TCP 视频端口")
-        assertTrue(py.contains("srv.bind((\"127.0.0.1\", TCP_VIDEO_PORT))"), "视频口必须只监听回环")
-        assertTrue(py.contains("struct.pack(\">I\", len(envelope))"), "TCP 视频必须显式分帧")
-        assertTrue(py.contains("VIDEO_MAGIC = b\"THV2\""), "视频帧应携带序号和发送时间元数据")
-        assertTrue(py.contains("FEEDBACK_MAGIC = b\"THF1\""), "relay 应接收客户端质量反馈")
-        assertTrue(py.contains("\"-maxrate\", bitrate, \"-bufsize\", bufsize"), "编码器应限制瞬时码率")
-        assertTrue(py.contains("\"-threads\", str(encoder_threads)"), "Linux 软编应按档位扩展线程")
-        assertTrue(py.contains("self.request_encoder_restart(close_reason, 3.0)"), "抓屏停滞应在原连接内自愈")
-        assertTrue(py.contains("recv_exact(conn, 4)"), "TCP 控制包必须显式分帧")
-        assertTrue(py.contains("AUTH_MAGIC = b\"THA1\""), "TCP 视频通道必须先做 token 握手")
-        assertTrue(py.contains("hmac.compare_digest(auth[4:], AUTH_TOKEN)"), "token 比较必须使用恒定时间实现")
-        assertTrue(py.contains("h264_videotoolbox"), "macOS 分支应硬编")
-        assertTrue(py.contains("gop = max(15, fps // 2)"), "GOP 应按帧率保持约 0.5s")
-        assertTrue(py.contains("\"-g\", str(gop)"), "ffmpeg 应使用动态 GOP")
-        assertTrue(py.contains("RELAY_VERSION = ${ScreenSession.RELAY_VERSION}"), "relay 版本应与客户端一致")
-        assertTrue(py.contains("elif typ == 8 or typ == 9:"), "虚拟鼠标点击必须使用独立原子事件")
-        assertTrue(py.contains("Quartz.kCGEventLeftMouseDragged"), "虚拟鼠标拖动必须使用 macOS 原生拖动事件")
-        assertTrue(py.contains("CGEventGetLocation(current_event)"), "虚拟点击后必须恢复实体鼠标位置")
-        assertTrue(py.contains("CGEventSetLocation(ev, (px, py))"), "滚轮应定位到虚拟箭头且不移动实体指针")
-        assertTrue(py.contains("FF_PIDFILE"), "relay 应只按自身 PID 文件清理孤儿 ffmpeg")
-        assertFalse(py.contains("subprocess.run([\"pkill\""), "relay 不得误杀用户的其它 ffmpeg 进程")
-        assertTrue(script.contains("/usr/bin/python3 -u"), "常驻 relay 日志必须无缓冲输出")
-        assertTrue(script.contains("tail -c 1048576"), "常驻 relay 日志必须限制体积")
     }
 
     private fun createTestSession(pemFile: File) =

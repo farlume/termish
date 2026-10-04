@@ -72,6 +72,10 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            kotlin.srcDir(layout.buildDirectory.dir("generated/screenService/kotlin"))
+            kotlin.srcDir(layout.buildDirectory.dir("generated/agentBridge/kotlin"))
+        }
         val androidMain by getting
         val androidUnitTest by getting
 
@@ -178,8 +182,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 37
-        versionName = "1.7.3"
+        versionCode = 38
+        versionName = "1.8.0"
     }
     packaging {
         resources {

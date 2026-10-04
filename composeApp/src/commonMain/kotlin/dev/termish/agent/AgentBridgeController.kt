@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import dev.termish.data.Host
 import dev.termish.data.HostRepository
 import dev.termish.data.resolveCredentials
+import dev.termish.generated.resources.Res
 import dev.termish.ssh.SftpSession
 import dev.termish.ssh.SshCallbacks
 import dev.termish.ssh.SshConnection
@@ -43,16 +44,17 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 private const val BRIDGE_PROTOCOL_VERSION = 3
-private const val MINIMUM_BRIDGE_VERSION = "0.8.1"
-private const val REMOTE_BRIDGE = "\$HOME/.local/share/termish-agent/current/termish-agent.pyz"
+private const val MINIMUM_BRIDGE_VERSION = "0.9.0"
+private const val REMOTE_BRIDGE = "\$HOME/.local/share/termish-agent/current/termish-agent"
 
 /**
  * 主机级原生 Agent 控制器。
  *
  * 控制面始终走独立 SSH：先探测/上传 Bridge，再通过无 PTY exec 打开 NDJSON
- * 长连接。远端 daemon 由 pyz 自行拉起，手机断开不会终止正在运行的 Agent。
+ * 长连接。远端 daemon 由原生可执行文件自行拉起，手机断开不会终止正在运行的 Agent。
  */
 class AgentBridgeController(
     val host: Host,
@@ -182,7 +184,7 @@ class AgentBridgeController(
                 ensureSsh()
                 when (val probe = probeBridge()) {
                     ProbeResult.Missing -> state = AgentBridgeState.NEEDS_INSTALL
-                    ProbeResult.NoPython -> state = AgentBridgeState.NO_PYTHON
+                    ProbeResult.UnsupportedPlatform -> state = AgentBridgeState.UNSUPPORTED_PLATFORM
                     is ProbeResult.Ready -> {
                         bridgeVersion = probe.version
                         if (probe.protocol != BRIDGE_PROTOCOL_VERSION || versionIsOlder(probe.version, MINIMUM_BRIDGE_VERSION)) {
@@ -198,7 +200,8 @@ class AgentBridgeController(
         }
     }
 
-    fun installBridge(bytes: ByteArray) {
+    @OptIn(ExperimentalResourceApi::class)
+    fun installBridge() {
         if (state == AgentBridgeState.INSTALLING) return
         state = AgentBridgeState.INSTALLING
         installLog = ""
@@ -206,13 +209,25 @@ class AgentBridgeController(
         scope.launch {
             try {
                 val control = ensureSsh()
+                val os = withContext(ioDispatcher()) { control.runCommand("uname -s", 3_000)?.trim() }
+                val arch = withContext(ioDispatcher()) { control.runCommand("uname -m", 3_000)?.trim() }
+                val binary = AgentBridgeAssets.binaryFor(os, arch)
+                if (binary == null) {
+                    state = AgentBridgeState.UNSUPPORTED_PLATFORM
+                    return@launch
+                }
+                val bytes = Res.readBytes("files/termish-agent/" + binary.filename)
+                val stage = "$REMOTE_BRIDGE.upload-" + Random.nextLong().toString().replace("-", "")
                 val connection = connection()
                 val sftp = withContext(ioDispatcher()) { createSftpSession(connection, callbacks) }
-                uploadBridge(sftp, bytes)
+                uploadBridge(sftp, bytes, stage.substringAfterLast('/'))
                 val installCommand =
-                    "chmod 700 \"$REMOTE_BRIDGE.tmp\" && " +
-                        "mv \"$REMOTE_BRIDGE.tmp\" \"$REMOTE_BRIDGE\" && " +
-                        "python3 \"$REMOTE_BRIDGE\" restart"
+                    "STAGE=\"$stage\"; trap 'rm -f \"\$STAGE\"' EXIT; EXPECTED=${shellQuote(binary.sha256)}; " +
+                        "if command -v shasum >/dev/null 2>&1; then ACTUAL=\$(shasum -a 256 \"\$STAGE\" | awk '{print \$1}'); " +
+                        "else ACTUAL=\$(sha256sum \"\$STAGE\" | awk '{print \$1}'); fi; " +
+                        "[ \"\$ACTUAL\" = \"\$EXPECTED\" ] && chmod 700 \"\$STAGE\" && " +
+                        "[ \"\$(\"\$STAGE\" --version)\" = \"$MINIMUM_BRIDGE_VERSION\" ] && " +
+                        "mv \"\$STAGE\" \"$REMOTE_BRIDGE\" && \"$REMOTE_BRIDGE\" --licenses > \"$REMOTE_BRIDGE.NOTICE\" && \"$REMOTE_BRIDGE\" restart"
                 val result = withContext(ioDispatcher()) { control.runCommandDetailed(installCommand, 30_000) }
                 if (result == null || result.exitCode != 0) {
                     throw IllegalStateException(result?.stderr?.ifBlank { result.stdout } ?: "Bridge install failed")
@@ -840,9 +855,8 @@ class AgentBridgeController(
 
     private suspend fun probeBridge(): ProbeResult {
         val command =
-            "if ! command -v python3 >/dev/null 2>&1; then echo NO_PYTHON; " +
-                "elif [ ! -f \"$REMOTE_BRIDGE\" ]; then echo MISSING; " +
-                "else python3 \"$REMOTE_BRIDGE\" status; fi"
+            "if [ ! -x \"$REMOTE_BRIDGE\" ]; then echo MISSING; " +
+                "else \"$REMOTE_BRIDGE\" status; fi"
         val result =
             withContext(ioDispatcher()) { ensureSsh().runCommandDetailed(command, 10_000) }
                 ?: throw IllegalStateException("Unable to inspect Agent Bridge")
@@ -853,7 +867,6 @@ class AgentBridgeController(
                 .lastOrNull()
                 .orEmpty()
         return when (output) {
-            "NO_PYTHON" -> ProbeResult.NoPython
             "MISSING", "" -> ProbeResult.Missing
             else -> {
                 val value = json.parseToJsonElement(output).jsonObject
@@ -868,6 +881,7 @@ class AgentBridgeController(
     private suspend fun uploadBridge(
         sftp: SftpSession,
         bytes: ByteArray,
+        filename: String,
     ) {
         try {
             val home = withContext(ioDispatcher()) { sftp.home() }
@@ -879,22 +893,29 @@ class AgentBridgeController(
             if (mkdirResult == null || mkdirResult.exitCode != 0) {
                 throw IllegalStateException(mkdirResult?.stderr ?: "Unable to create Bridge directory")
             }
-            var sent = false
+            var offset = 0
             withContext(ioDispatcher()) {
+                val context = currentCoroutineContext()
                 sftp.upload(
-                    remotePath = "$directory/termish-agent.pyz.tmp",
+                    remotePath = "$directory/$filename",
                     totalSize = bytes.size.toLong(),
                     onProgress = { uploaded, _ -> installLog = "$uploaded / ${bytes.size} bytes" },
                     nextChunk = {
-                        if (sent) {
+                        if (offset == bytes.size) {
                             null
                         } else {
-                            sent = true
-                            bytes
+                            context.ensureActive()
+                            val end = (offset + 64 * 1024).coerceAtMost(bytes.size)
+                            bytes.copyOfRange(offset, end).also { offset = end }
                         }
                     },
                 )
             }
+        } catch (error: Exception) {
+            withContext(NonCancellable + ioDispatcher()) {
+                runCatching { sftp.delete("${sftp.home()}/.local/share/termish-agent/current/$filename") }
+            }
+            throw error
         } finally {
             withContext(ioDispatcher()) { sftp.close() }
         }
@@ -909,7 +930,7 @@ class AgentBridgeController(
         previousChannel?.close()
         val opened =
             withContext(ioDispatcher()) {
-                ensureSsh().startExecRaw("python3 \"$REMOTE_BRIDGE\" connect")
+                ensureSsh().startExecRaw("\"$REMOTE_BRIDGE\" connect")
             } ?: throw IllegalStateException("Unable to open Agent Bridge channel")
         channel = opened
         decoder.reset()
@@ -1721,7 +1742,7 @@ class AgentBridgeController(
 private sealed interface ProbeResult {
     data object Missing : ProbeResult
 
-    data object NoPython : ProbeResult
+    data object UnsupportedPlatform : ProbeResult
 
     data class Ready(
         val version: String,

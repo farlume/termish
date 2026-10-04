@@ -16,15 +16,39 @@ permissions:
   contents: read
 
 jobs:
+  screen-service:
+    name: Rust remote services (macOS + Linux)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - name: Build all remote service payloads
+        run: |
+          sh scripts/service-build.sh build-screen --all
+          sh scripts/service-build.sh build-agent --all
+      - name: Test isolated native service
+        run: |
+          sh scripts/service-test.sh screenService
+          sh scripts/service-test.sh agentBridge
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-service-payloads
+          path: |
+            screenService/build/binaries/
+            agentBridge/build/binaries/
+          if-no-files-found: error
+
   release-tools:
     name: Release tooling tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
-      - run: python -m unittest discover -s scripts/tests -v
+          node-version: "22"
+      - run: node --test scripts/tests/*.test.mjs
 
   # ---------------------------------------------------------------------------
   # Android：单测 + lint 始终跑；debug/release 产物全部上传 artifact 留档
@@ -39,10 +63,19 @@ jobs:
   # ---------------------------------------------------------------------------
   android:
     name: Android (APK + AAB)
+    needs: [screen-service]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+      - uses: actions/download-artifact@v4
+        with:
+          name: remote-service-payloads
+          path: .
 
       - uses: actions/setup-java@v4
         with:
@@ -80,7 +113,7 @@ jobs:
         # sshd 以 runner 用户启动；Ubuntu 特权分离目录需预先创建。
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd
+          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd ffmpeg dbus xvfb x11-utils xdotool xclip xauth
           sudo mkdir -p /run/sshd
 
       # 检查先行：单测失败即停，不产出包
@@ -91,6 +124,11 @@ jobs:
             ktlintCheck \
             testIntegration \
             :composeApp:lintRelease
+
+      - name: Test isolated Linux desktop services
+        run: |
+          cargo test --locked --manifest-path screenService/rust/Cargo.toml portal_scopes_video_and_input_and_passes_owned_fd -- --ignored --test-threads=1
+          xvfb-run -a -s '-screen 0 640x360x24' cargo test --locked --manifest-path screenService/rust/Cargo.toml real_x11 -- --ignored --test-threads=1
 
       - name: Build debug APK
         if: github.event_name != 'pull_request'

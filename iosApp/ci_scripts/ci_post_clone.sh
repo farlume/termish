@@ -4,7 +4,8 @@
 #   1. JDK 17——Xcode Cloud 镜像不带 Java，「Build Kotlin Framework」阶段
 #      的 gradlew 没有 JDK 直接失败（PhaseScriptExecution failed）。
 #      装到 ~/Library/Java/JavaVirtualMachines（免 sudo，java_home 可发现）
-#   2. OpenSSL + libssh2 静态库 → iosApp/native/——该目录 git-ignored，
+#   2. Rust 远端画面与 Agent 服务——手机资源包含 Mac/Linux 的预编译可执行文件
+#   3. OpenSSL + libssh2 静态库 → iosApp/native/——该目录 git-ignored，
 #      干净检出没有；缺失时 Kotlin framework 的 cinterop/链接直接失败
 set -euo pipefail
 
@@ -41,6 +42,17 @@ else
   tar xzf /tmp/temurin17.tar.gz -C "$JDK_HOME" --strip-components=1
   echo "== JDK 17 安装完成：$(/usr/libexec/java_home -v 17) =="
 fi
+
+echo "== 准备 Rust 远端画面与 Agent 服务 =="
+if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+  curl -fsSL --retry 3 https://sh.rustup.rs -o /tmp/termish-rustup-init.sh
+  sh /tmp/termish-rustup-init.sh -y --profile minimal --no-modify-path --default-toolchain stable
+fi
+"$HOME/.cargo/bin/rustup" target add aarch64-apple-darwin x86_64-apple-darwin \
+  aarch64-unknown-linux-musl x86_64-unknown-linux-musl
+cd "$ROOT"
+sh scripts/service-build.sh build-screen --all
+sh scripts/service-build.sh build-agent --all
 
 echo "== 构建 iOS 原生依赖（OpenSSL + libssh2 → iosApp/native/） =="
 cd "$ROOT"

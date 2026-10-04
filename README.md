@@ -51,7 +51,7 @@
    conversation for Codex, Claude Code and other supported CLIs. It is an
    alternative interface, not a replacement for the Herdr terminal workspace.
 
-For Agent chat, the remote host needs `python3` and the agent's own login or a
+For Agent chat, the remote host needs the agent's own login or a
 supported API provider configuration. Missing supported CLIs can be installed
 from the app. You do not need a Termish account.
 
@@ -84,11 +84,16 @@ machine, while the phone provides the terminal, input, file transfer and a
 remote-screen view. A missing Herdr installation can be prepared from the app.
 No Termish relay or account sits in the connection.
 
-Native Agent chat is a separate option. It uploads the bundled Python Bridge
+Native Agent chat is a separate option. It uploads the bundled Rust Bridge
 over SFTP and starts it for your remote user; the Bridge runs the selected agent
-and relays messages through the authenticated SSH connection. No Docker, `pip`
-setup or extra public listening port is needed. It keeps conversations on the
-host and lets an active agent task continue while your phone is disconnected.
+and relays messages through the authenticated SSH connection. No Docker or extra
+public listening port is needed. It keeps conversations on the host and lets an active agent task continue while your phone is disconnected.
+
+Remote screen uses a versioned companion service in the computer's graphical
+session, installed from the app and accessed over SSH. Its standalone source,
+configuration and diagnostics are documented in the [screen service guide](docs/screen-service.md).
+The phone uploads precompiled Rust services over SSH/SFTP for macOS and Linux
+(X11 or Wayland), on arm64 and x86_64. The computer needs no Rust compiler.
 
 See the [Agent Bridge guide](agentBridge/README.md) for the protocol, supported
 approval types and remote storage layout.
@@ -110,7 +115,7 @@ approval types and remote storage layout.
 
 ## Build & Test
 
-For Android, install JDK 17 and the Android SDK, then set `ANDROID_HOME` or the
+For Android, install JDK 17, the Android SDK and Rust via rustup, then set `ANDROID_HOME` or the
 SDK path in `local.properties`:
 
 ```bash
@@ -127,7 +132,7 @@ for unit and integration tests, iOS builds, and development conventions.
 | Component | Source / guide |
 | --- | --- |
 | Mobile app | [Shared UI and platform code](composeApp/src) · [Architecture](docs/architecture.md) |
-| Agent Bridge | [Python companion and protocol](agentBridge/README.md) |
+| Agent Bridge | [Rust companion and protocol](agentBridge/README.md) |
 | Terminal and input | [Terminal emulator](docs/terminal-emulator.md) · [Input pipeline](docs/input-pipeline.md) |
 | Connections and files | [SSH](docs/ssh-transport.md) · [Mosh](docs/mosh.md) · [SFTP](docs/sftp.md) |
 | Cryptography | [Implementation and threat model](composeApp/src/commonMain/kotlin/dev/termish/crypto/README.md) |

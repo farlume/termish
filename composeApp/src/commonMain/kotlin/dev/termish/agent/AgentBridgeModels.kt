@@ -6,7 +6,7 @@ enum class AgentBridgeState {
     NEEDS_INSTALL,
     INSTALLING,
     READY,
-    NO_PYTHON,
+    UNSUPPORTED_PLATFORM,
     ERROR,
 }
 

@@ -47,7 +47,7 @@
 4. **需要时再用原生聊天。** 主机卡片上的 **Agent** 入口提供 Codex、Claude Code 等 CLI 的手机原生对话。
    它是另一种操作界面，不替代 Herdr 终端工作区。
 
-Agent 聊天需要远程主机安装 `python3`，并配置 Agent 自身的登录或受支持的 API 服务商。
+Agent 聊天需要远程主机配置 Agent 自身的登录或受支持的 API 服务商。
 缺少受支持的 CLI 时，可在应用内安装。无需注册 Termish 账号。
 
 使用 Mosh 时，在主机连接设置中选择 **Mosh**。远程需要 `mosh-server` 和可访问的 UDP 端口；
@@ -75,10 +75,15 @@ Agent 聊天需要远程主机安装 `python3`，并配置 Agent 自身的登录
 **Termish → Herdr → Codex**：Herdr 和编码工具运行在远程机器，手机提供终端、输入、传文件和远程画面。
 远程没有 Herdr 时，可直接在 App 内引导安装。整个连接中没有 Termish 中转服务，也不需要注册账号。
 
-原生 Agent 聊天是另一条可选路径：应用通过 SFTP 上传内置 Python Bridge，并以远程用户身份启动；
-Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。无需 Docker、`pip` 配置，
+原生 Agent 聊天是另一条可选路径：应用通过 SFTP 上传内置 Rust Bridge，并以远程用户身份启动；
+Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。无需 Docker，
 也无需额外开放公网监听端口。会话保存在远程主机上，手机断开后正在运行的 Agent 任务仍可继续；
 重新连接即可打开历史会话。
+
+远程画面使用带部署版本的电脑端服务，运行在图形登录会话中，由 App 引导安装并通过 SSH 访问。
+独立源码、配置与诊断方式详见 [远程画面服务文档](docs/screen-service.md)。
+手机通过 SSH/SFTP 上传预编译 Rust 服务，支持 macOS 和 Linux（X11/Wayland）
+的 arm64、x86_64 架构；电脑端无需安装 Rust 编译器。
 
 协议、支持的审批类型和远程存储目录详见 [Agent Bridge 文档](agentBridge/README.md)。
 
@@ -95,7 +100,7 @@ Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。�
 
 ## 构建与测试
 
-Android 开发需要 JDK 17 和 Android SDK，在 `ANDROID_HOME` 或 `local.properties` 中设置 SDK 路径：
+Android 开发需要 JDK 17、Android SDK 与 rustup 管理的 Rust，在 `ANDROID_HOME` 或 `local.properties` 中设置 SDK 路径：
 
 ```bash
 git clone https://github.com/ttermish/termish.git
@@ -110,7 +115,7 @@ Debug 构建不需要发布签名密钥。单元与集成测试、iOS 构建步�
 | 组成部分 | 源码 / 文档 |
 | --- | --- |
 | 移动应用 | [共享界面与平台代码](composeApp/src) · [架构](docs/architecture.md) |
-| Agent Bridge | [Python 伴随服务与协议](agentBridge/README.md) |
+| Agent Bridge | [Rust 伴随服务与协议](agentBridge/README.md) |
 | 终端与输入 | [终端模拟器](docs/terminal-emulator.md) · [输入管线](docs/input-pipeline.md) |
 | 连接与文件 | [SSH](docs/ssh-transport.md) · [Mosh](docs/mosh.md) · [SFTP](docs/sftp.md) |
 | 加密 | [实现与威胁模型](composeApp/src/commonMain/kotlin/dev/termish/crypto/README.md) |

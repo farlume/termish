@@ -13,6 +13,7 @@ build/
 .DS_Store
 __pycache__/
 *.py[cod]
+composeApp/src/commonMain/composeResources/files/termish-screen/
 
 # Android
 local.properties
@@ -52,3 +53,5 @@ iosApp/iosApp.xcworkspace/
 
 # Local agent task notes
 .agents/
+
+composeApp/src/commonMain/composeResources/files/termish-agent/
