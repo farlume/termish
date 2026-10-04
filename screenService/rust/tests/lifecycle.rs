@@ -335,11 +335,23 @@ fn real_x11_capture_keyboard_clipboard_and_disconnect_releases_drag() {
         heartbeat(&mut owner);
         std::thread::sleep(Duration::from_millis(20));
     }
-    let clipboard = Command::new("xclip")
-        .args(["-selection", "clipboard", "-o"])
-        .output()
-        .unwrap();
-    assert_eq!(String::from_utf8(clipboard.stdout).unwrap(), "你好 Rust 🌍");
+    // Tab and text are separate control messages. Observing Tab does not mean
+    // the text message has been processed and xclip has taken ownership yet.
+    let end = Instant::now() + Duration::from_secs(4);
+    loop {
+        let clipboard = Command::new("xclip")
+            .args(["-selection", "clipboard", "-o"])
+            .output()
+            .unwrap();
+        if clipboard.status.success()
+            && String::from_utf8_lossy(&clipboard.stdout) == "你好 Rust 🌍"
+        {
+            break;
+        }
+        assert!(Instant::now() < end, "clipboard text did not arrive");
+        heartbeat(&mut owner);
+        std::thread::sleep(Duration::from_millis(20));
+    }
     control(&mut owner, 10, 0, "");
     let end = Instant::now() + Duration::from_secs(3);
     while !fs::read_to_string(&events).unwrap().contains("ButtonPress") {
