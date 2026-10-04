@@ -9,6 +9,23 @@ import kotlin.test.assertTrue
 
 class ScreenTcpSessionTest {
     @Test
+    fun `permission updates can be split and interleaved with video frames`() {
+        val statuses = mutableListOf<Int>()
+        val frames = mutableListOf<ByteArray>()
+        val parser = ScreenTcpFrameParser(statuses::add, frames::add)
+
+        fun status(code: Int) = SCREEN_STATUS_MAGIC.encodeToByteArray() + byteArrayOf(code.toByte())
+        val video = byteArrayOf(0, 0, 1, 0x67, 1, 2, 3)
+        val stream = status(1) + frame(video) + frame(status(0)) + frame(video) + frame(status(1))
+
+        stream.forEach { parser.push(byteArrayOf(it)) }
+
+        assertEquals(listOf(1, 0, 1), statuses)
+        assertEquals(2, frames.size)
+        frames.forEach { assertContentEquals(video, it) }
+    }
+
+    @Test
     fun `parser handles split status headers and sticky frames`() {
         val statuses = mutableListOf<Int>()
         val frames = mutableListOf<ByteArray>()

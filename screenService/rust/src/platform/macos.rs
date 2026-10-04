@@ -2,7 +2,10 @@ use crate::protocol::Control;
 use std::{
     ffi::c_void,
     ptr,
-    time::{Duration, Instant},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        OnceLock,
+    },
 };
 
 #[repr(C)]
@@ -59,7 +62,68 @@ extern "C" {
         key_callbacks: Ref,
         value_callbacks: Ref,
     ) -> Ref;
+    fn CFRunLoopRunInMode(mode: Ref, seconds: f64, return_after_source: bool) -> i32;
+    static kCFRunLoopDefaultMode: Ref;
     static kCFBooleanTrue: Ref;
+}
+
+static PERMISSION_PROMPTED: AtomicBool = AtomicBool::new(false);
+type PermissionFn = unsafe extern "C" fn() -> bool;
+struct PostEventAccess {
+    preflight: PermissionFn,
+    request: PermissionFn,
+}
+fn post_event_access() -> Option<&'static PostEventAccess> {
+    static API: OnceLock<Option<PostEventAccess>> = OnceLock::new();
+    API.get_or_init(|| unsafe {
+        // These public APIs were added in 10.15. Resolve them lazily so older
+        // Intel Macs can still load the daemon and use the legacy AX check.
+        let preflight = libc::dlsym(libc::RTLD_DEFAULT, c"CGPreflightPostEventAccess".as_ptr());
+        let request = libc::dlsym(libc::RTLD_DEFAULT, c"CGRequestPostEventAccess".as_ptr());
+        if preflight.is_null() || request.is_null() {
+            None
+        } else {
+            Some(PostEventAccess {
+                preflight: std::mem::transmute::<*mut c_void, PermissionFn>(preflight),
+                request: std::mem::transmute::<*mut c_void, PermissionFn>(request),
+            })
+        }
+    })
+    .as_ref()
+}
+
+fn input_trusted() -> bool {
+    unsafe {
+        post_event_access()
+            .map(|api| (api.preflight)())
+            .unwrap_or_else(|| AXIsProcessTrusted())
+    }
+}
+
+fn request_input_access() {
+    unsafe {
+        if let Some(api) = post_event_access() {
+            (api.request)();
+        } else {
+            let options = Owned(CFDictionaryCreate(
+                ptr::null(),
+                &kAXTrustedCheckOptionPrompt,
+                &kCFBooleanTrue,
+                1,
+                ptr::null(),
+                ptr::null(),
+            ));
+            if !options.0.is_null() {
+                AXIsProcessTrustedWithOptions(options.0);
+            }
+        }
+    }
+}
+
+// The daemon has no AppKit event loop. Drain main-thread system notifications
+// between accepts so permission changes are not left pending for its lifetime.
+pub fn poll_events() {
+    unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0., false) };
 }
 
 // Own every retained CoreFoundation/CG object, including error paths.
@@ -109,12 +173,13 @@ pub struct Input {
     left: bool,
     right: bool,
     last: (f64, f64),
-    last_prompt: Option<Instant>,
 }
 
 impl Input {
     pub fn status(&mut self) -> u8 {
-        if unsafe { AXIsProcessTrusted() } {
+        // We synthesize CGEvents, not AX UI queries. AXIsProcessTrusted can
+        // retain a denied result after a grant in a long-running macOS daemon.
+        if input_trusted() {
             0
         } else {
             1
@@ -132,24 +197,10 @@ impl Input {
     }
     pub fn inject(&mut self, control: &Control<'_>) {
         if self.status() != 0 {
-            if self
-                .last_prompt
-                .is_none_or(|t| t.elapsed() > Duration::from_secs(30))
-            {
-                self.last_prompt = Some(Instant::now());
-                unsafe {
-                    let options = Owned(CFDictionaryCreate(
-                        ptr::null(),
-                        &kAXTrustedCheckOptionPrompt,
-                        &kCFBooleanTrue,
-                        1,
-                        ptr::null(),
-                        ptr::null(),
-                    ));
-                    if !options.0.is_null() {
-                        AXIsProcessTrustedWithOptions(options.0);
-                    }
-                }
+            // Reconnection creates a new Input, but must not create a new
+            // permission alert on every click or every session.
+            if !PERMISSION_PROMPTED.swap(true, Ordering::AcqRel) {
+                request_input_access();
             }
             return;
         }

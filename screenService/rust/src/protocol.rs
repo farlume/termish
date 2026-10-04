@@ -5,6 +5,13 @@ pub const MAX_CONTROL: usize = 64 * 1024;
 pub const MAX_FRAME: usize = 4 * 1024 * 1024 - 21;
 pub const LEASE_SECONDS: u64 = 6;
 
+pub fn write_status(writer: &mut impl Write, status: u8) -> io::Result<()> {
+    // Only the connection's first status is unframed. Updates share the video
+    // writer and use its length framing, so concurrent input cannot split frames.
+    writer.write_all(&5u32.to_be_bytes())?;
+    writer.write_all(&[b'T', b'H', b'S', b'1', status])
+}
+
 pub fn read_packet(reader: &mut impl Read, min: usize, max: usize) -> io::Result<Vec<u8>> {
     let mut header = [0; 4];
     reader.read_exact(&mut header)?;
@@ -158,6 +165,20 @@ pub fn write_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn status_updates_share_framing_with_video_without_changing_payloads() {
+        let mut wire = Vec::new();
+        write_status(&mut wire, 0).unwrap();
+        write_frame(&mut wire, &[0, 0, 1, 9, 0xf0], 7, 123).unwrap();
+        write_status(&mut wire, 1).unwrap();
+        let mut reader = &wire[..];
+        assert_eq!(read_packet(&mut reader, 1, MAX_FRAME).unwrap(), b"THS1\x00");
+        let video = read_packet(&mut reader, 1, MAX_FRAME).unwrap();
+        assert_eq!(&video[..4], b"THV2");
+        assert_eq!(&video[21..], &[0, 0, 1, 9, 0xf0]);
+        assert_eq!(read_packet(&mut reader, 1, MAX_FRAME).unwrap(), b"THS1\x01");
+        assert!(reader.is_empty());
+    }
     #[test]
     fn rejects_oversized_packet_before_reading_payload() {
         assert!(read_packet(&mut &u32::MAX.to_be_bytes()[..], 17, MAX_CONTROL).is_err());

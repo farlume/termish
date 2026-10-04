@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-10-04
+
+### 修复
+
+- **macOS 远程控制权限**：改用事件发送权限检测并处理主线程系统事件，避免常驻服务授权后仍使用旧的辅助功能判断；兼容旧版 macOS 的权限接口
+- **授权重复提示**：同一服务进程最多请求一次控制权限，连续操作或重新连接不会重复触发授权弹窗
+- **手机权限状态**：被控端每秒检查控制权限变化，并通过视频通道更新 App 提示，支持在同一连接中接收授权与撤销状态
+
+### 验证说明
+
+- 自动化测试、协议拆包测试及 Android/iOS 本地构建已通过；新版首次授权、撤销授权和手机实际鼠标键盘操作仍需实机验证
+- 升级会更新被控端程序；macOS 可能需要为新的程序身份重新授权一次。旧进程卡在已授权状态时，可重启屏幕服务后重新连接
+
 ## [1.8.0] - 2026-10-04
 
 ### 变更
@@ -559,7 +572,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/farlume/termish/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/farlume/termish/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/farlume/termish/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/farlume/termish/compare/v1.7.1...v1.7.2

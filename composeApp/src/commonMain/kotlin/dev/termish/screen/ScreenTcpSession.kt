@@ -123,7 +123,7 @@ internal fun shouldRequestScreenKeyframe(
  * TCP 视频字节流解析器。
  *
  * relay → 客户端协议：连接首包固定为 `THS1 + status`，随后重复
- * `[4B 大端帧长][Annex-B 完整帧]`。TCP/SSH read 可在任意位置拆包或粘包，
+ * `[4B 大端长度][THV2 视频包或 THS1 状态更新]`。TCP/SSH read 可在任意位置拆包或粘包，
  * 因此解析器保留跨 read 缓冲，并可一次产出多帧。
  */
 internal class ScreenTcpFrameParser(
@@ -166,7 +166,11 @@ internal class ScreenTcpFrameParser(
             val frame = ByteArray(frameSize)
             buffer.copyInto(frame, 0, offset + 4, offset + 4 + frameSize)
             offset += 4 + frameSize
-            onFrame(frame)
+            if (frameSize == 5 && frame.startsWith(SCREEN_STATUS_MAGIC.encodeToByteArray())) {
+                onStatus(frame[4].toInt() and 0xff)
+            } else {
+                onFrame(frame)
+            }
         }
 
         if (offset > 0) {

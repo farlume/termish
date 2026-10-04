@@ -259,7 +259,7 @@ impl Session {
         }
         self.stop("control EOF, timeout or invalid packet");
     }
-    fn pump(self: Arc<Self>) {
+    fn pump(self: Arc<Self>, initial_status: u8) {
         let mut writer = match self.socket.try_clone() {
             Ok(s) => s,
             Err(_) => {
@@ -268,6 +268,8 @@ impl Session {
             }
         };
         let mut sequence = 0;
+        let mut status = initial_status;
+        let mut last_status_check = Instant::now();
         let started = Instant::now();
         let mut sent = 0u64;
         platform::wake_display();
@@ -279,6 +281,15 @@ impl Session {
                 let mut last_data = Instant::now();
                 let mut buffer = vec![0; 262144];
                 while !self.stopped.load(Ordering::Acquire) && !SHUTDOWN.load(Ordering::Acquire) {
+                    if last_status_check.elapsed() >= Duration::from_secs(1) {
+                        last_status_check = Instant::now();
+                        let current = self.input.lock().unwrap().status();
+                        if current != status {
+                            status = current;
+                            protocol::write_status(&mut writer, status)?;
+                            log(&self.config, &format!("input permission status={status}"));
+                        }
+                    }
                     if self.expired() {
                         return Err(io::Error::new(
                             io::ErrorKind::TimedOut,
@@ -378,6 +389,8 @@ pub fn run(config: Config) -> io::Result<()> {
     );
     let mut active: Option<Arc<Session>> = None;
     while !SHUTDOWN.load(Ordering::Acquire) {
+        #[cfg(target_os = "macos")]
+        platform::poll_events();
         // Drain liveness probes; they must never start an encoder or capture.
         while probe.accept().is_ok() {}
         let (mut socket, _) = match video.accept() {
@@ -420,7 +433,7 @@ pub fn run(config: Config) -> io::Result<()> {
         active = Some(session.clone());
         let control = session.clone();
         thread::spawn(move || control.control());
-        thread::spawn(move || session.pump());
+        thread::spawn(move || session.pump(status));
     }
     if let Some(owner) = active {
         owner.stop("service shutdown");

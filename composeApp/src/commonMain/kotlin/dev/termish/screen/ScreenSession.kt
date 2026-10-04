@@ -263,7 +263,7 @@ class ScreenSession internal constructor(
                         onVideoPacket = { packet -> p.feed(packet.data) },
                         playerMetrics = p::metrics,
                         onStatus = { status ->
-                            // 首包状态：0=OK，1=macOS 缺辅助功能权限，2=不支持控制，
+                            // 首包与后续权限更新：0=OK，1=macOS 缺辅助功能权限，2=不支持控制，
                             // 3=已有另一台设备占用。占用是明确拒绝，不进入自动重连。
                             if (status == SCREEN_TCP_STATUS_BUSY) {
                                 running = false
