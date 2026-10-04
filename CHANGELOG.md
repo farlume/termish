@@ -5,6 +5,24 @@
 
 ## [Unreleased]
 
+## [1.8.2] - 2026-10-04
+
+### 修复
+
+- **macOS 录屏权限**：独立预检录屏授权，缺权限时不启动或重启 FFmpeg；同一服务进程只请求一次录屏授权，手机收到明确拒绝后停止自动重连，避免连接循环触发弹窗
+- **权限提示**：录屏与辅助功能分别提示，授权失效时指引重新添加当前后台应用，不再将录屏问题混为控制权限问题
+
+### 优化
+
+- **后台应用名称与图标**：macOS 服务打包为带 Termish Logo 的 `Termish Helper.app`，应用与进程名称统一，在后台运行；手机仍可经 SSH/SFTP 自动安装
+- **应用包安装**：校验上传 SHA-256、应用签名和部署版本后启用，配置与 token 保留在应用包外；启动失败恢复旧应用与服务注册
+- **发行签名构建**：增加固定证书签名入口，以稳定应用标识签名完整应用包，再生成安装校验摘要
+
+### 验证说明
+
+- 录屏门禁、视频协议、SSH 上传、应用包签名、安装迁移与失败恢复测试，以及 Android/iOS 本地构建已通过；真实首次授权、撤销授权和权限弹窗显示仍需实机确认
+- 本次尚未接入 Developer ID 发行证书，macOS 服务仍使用临时签名，不能保证升级后保留授权。迁移后如权限失效，请在系统设置中重新授权 `Termish Helper.app`
+
 ## [1.8.1] - 2026-10-04
 
 ### 修复
@@ -572,7 +590,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.2...HEAD
+[1.8.2]: https://github.com/farlume/termish/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/farlume/termish/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/farlume/termish/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/farlume/termish/compare/v1.7.2...v1.7.3

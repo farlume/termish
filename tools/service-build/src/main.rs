@@ -24,6 +24,8 @@ struct Binary {
 #[derive(Serialize, Deserialize)]
 struct Manifest {
     source_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    macos_signing_identity: Option<String>,
     binaries: BTreeMap<String, Binary>,
 }
 fn root() -> PathBuf {
@@ -82,6 +84,12 @@ fn source_hash(service: &Path) -> Result<String> {
         service.join("service.properties"),
         root().join("LICENSES/TermishScreen-Rust.txt"),
     ]);
+    if prefix(service) == "termish-screen" {
+        files.extend([
+            service.join("macos/Info.plist"),
+            service.join("macos/AppIcon.icns"),
+        ]);
+    }
     let mut digest = Sha256::new();
     for path in files {
         // License is outside the service directory. Keep names stable across CI checkouts.
@@ -122,6 +130,17 @@ fn read_manifest(service: &Path) -> Result<Manifest> {
 fn build(service_name: &str, all: bool) -> Result<()> {
     let service = root().join(service_name);
     let fingerprint = source_hash(&service)?;
+    let mut signing_identity = None;
+    if service_name == "screenService" && env::consts::OS == "macos" {
+        signing_identity = env::var("TERMISH_SCREEN_MACOS_SIGN_IDENTITY")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        if signing_identity.as_deref() == Some("-") {
+            return Err(
+                "Use a certificate identity, not ad hoc signing, to preserve macOS consent".into(),
+            );
+        }
+    }
     let dir = service.join("build/binaries");
     fs::create_dir_all(&dir)?;
     let output = Command::new(tool("rustup"))
@@ -135,7 +154,11 @@ fn build(service_name: &str, all: bool) -> Result<()> {
     let manifest_path = dir.join("manifest.json");
     if manifest_path.exists() {
         let old: Manifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
-        if old.source_sha256 == fingerprint {
+        // Linux consumers retain the signing metadata of imported Mac payloads.
+        if env::consts::OS != "macos" {
+            signing_identity = old.macos_signing_identity.clone();
+        }
+        if old.source_sha256 == fingerprint && old.macos_signing_identity == signing_identity {
             for (target, binary) in old.binaries {
                 validate_binary(&dir, &target, &binary)?;
                 binaries.insert(target, binary);
@@ -167,9 +190,20 @@ fn build(service_name: &str, all: bool) -> Result<()> {
                 "termish-screen-service"
             }
         ));
-        let bytes = fs::read(source)?;
         let file = format!("{}-{name}", prefix(&service));
-        write_payload(&dir.join(&file), &bytes)?;
+        let payload = dir.join(&file);
+        if target.contains("apple") && service_name == "screenService" {
+            package_macos_helper(
+                &service,
+                name,
+                &source,
+                &payload,
+                signing_identity.as_deref(),
+            )?;
+        } else {
+            write_payload(&payload, &fs::read(source)?)?;
+        }
+        let bytes = fs::read(&payload)?;
         binaries.insert(
             name.into(),
             Binary {
@@ -188,12 +222,67 @@ fn build(service_name: &str, all: bool) -> Result<()> {
     }
     let manifest = Manifest {
         source_sha256: fingerprint,
+        macos_signing_identity: signing_identity,
         binaries,
     };
     write_changed(
         &manifest_path,
         &(serde_json::to_string_pretty(&manifest)? + "\n"),
     )?;
+    Ok(())
+}
+
+fn package_macos_helper(
+    service: &Path,
+    target: &str,
+    executable: &Path,
+    payload: &Path,
+    identity: Option<&str>,
+) -> Result<()> {
+    let bundle = service.join(format!("build/apps/{target}/Termish Helper.app"));
+    if bundle.exists() {
+        fs::remove_dir_all(&bundle)?;
+    }
+    let contents = bundle.join("Contents");
+    fs::create_dir_all(contents.join("MacOS"))?;
+    fs::create_dir_all(contents.join("Resources"))?;
+    write_payload(
+        &contents.join("MacOS/Termish Helper"),
+        &fs::read(executable)?,
+    )?;
+    let version = properties(service)?["RELAY_VERSION"].to_string();
+    let plist =
+        fs::read_to_string(service.join("macos/Info.plist"))?.replace("@RELAY_VERSION@", &version);
+    fs::write(contents.join("Info.plist"), plist)?;
+    fs::copy(
+        service.join("macos/AppIcon.icns"),
+        contents.join("Resources/AppIcon.icns"),
+    )?;
+    // Sign the complete copied bundle, including icon and metadata. Signing a
+    // bare binary first and adding resources remotely loses their integrity.
+    let mut sign = Command::new("/usr/bin/codesign");
+    sign.args([
+        "--force",
+        "--sign",
+        identity.unwrap_or("-"),
+        "--identifier",
+        "dev.termish.screen-service",
+    ]);
+    if identity.is_some() {
+        sign.args(["--options", "runtime", "--timestamp"]);
+    }
+    run(sign.arg(&bundle))?;
+    run(Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict"])
+        .arg(&bundle))?;
+    let archive = payload.with_extension(format!("upload-{}", std::process::id()));
+    run(Command::new("/usr/bin/tar")
+        .arg("-czf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&bundle)
+        .arg("Contents"))?;
+    fs::rename(archive, payload)?;
     Ok(())
 }
 fn properties(service: &Path) -> Result<BTreeMap<String, u16>> {

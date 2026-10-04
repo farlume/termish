@@ -9,6 +9,9 @@
 由 Rust 校验配置并原子启用可执行文件，再注册图形会话服务和验证回环端口。
 不支持或未打包的架构会返回明确错误。
 
+macOS 后台应用名为 **Termish Helper**，复用 Termish Logo；`LSUIElement` 隐藏 Dock 图标，
+无需打开应用窗口。Rust 可执行文件位于完整 `.app` 包中，名称同样为 Termish Helper。
+手机上传整包，经 SHA-256、应用签名和部署版本校验后启用，名称/图标资源属于签名覆盖范围。
 macOS 用 FFmpeg avfoundation/VideoToolbox，X11 用 x11grab/libx264 和 XTEST，文本粘贴依赖 xclip。
 Wayland 用 Rust D-Bus RemoteDesktop/ScreenCast Portal 同一授权会话获取画面和输入权限，
 将授权后的 PipeWire FD 交给 GStreamer，视频管道输入 FFmpeg 编码；无需 Xwayland 抓根窗口。
@@ -17,9 +20,19 @@ Portal 响应订阅先于请求，避免快速授权响应丢失；坐标使用�
 macOS 屏幕录制、辅助功能与 Wayland Portal 均需系统授权。新的可执行文件身份可能需要重新授权。
 服务运行在图形登录会话中，锁屏、休眠、注销及操作系统安全限制仍然适用。
 macOS 控制权限使用 CoreGraphics 的事件发送权限检测；后台服务处理主线程系统事件，
-避免授权后仍使用旧的权限判断。缺权限时每个服务进程只请求一次，重连和连续操作不会
-重复弹窗；权限变化每秒检查，并通过视频通道同步到手机，无需重新打开画面。
+避免授权后仍使用旧的权限判断。缺控制权限时每个服务进程只请求一次，重连和连续操作不会
+重复请求辅助功能授权；控制权限变化每秒检查，并通过视频通道同步到手机。
+录屏权限使用 `CGPreflightScreenCaptureAccess` 单独检查：鉴权后、启动/重启 FFmpeg 前
+以及抓屏期间每秒检查。拒绝时不启动编码器，返回独立录屏状态，手机停止自动重连。
+服务仅在首次被拒绝的已鉴权连接上请求一次录屏授权；授权后由用户重新连接。
+录屏与辅助功能是两种授权，开启其中一种不会自动获得另一种。
 若旧版本已经卡在“已授权但不能控制”，重启 `dev.termish.screen` LaunchAgent 后再连接。
+若更新后录屏已勾选但仍被拒绝，应在录屏列表中删除旧 `screen-service` 或失效的 Termish Helper 条目，重新添加
+`~/Library/Application Support/termish/Termish Helper.app` 并重启服务。从裸程序迁移到应用包可能需首次重新授权。
+当前未配置发行证书的 Mac payload 使用
+ad hoc 签名，代码摘要随构建改变；权限预检和提示限流不会让旧签名授权自动适用于新文件。
+跨版本保留授权需要同一受信任证书与稳定标识的正式代码签名；不能以放宽代码要求绕过校验。
+参考 [Apple DTS 对 ad hoc 录屏授权的说明](https://developer.apple.com/forums/thread/819406)。
 
 ## 构建
 
@@ -37,6 +50,12 @@ sh scripts/service-build.sh build-agent --all
 make screen-service
 ```
 
+发行用 Mac 录屏服务可设置 `TERMISH_SCREEN_MACOS_SIGN_IDENTITY` 为钥匙串中固定的
+Developer ID Application 证书名称或指纹。构建工具以稳定标识 `dev.termish.screen-service`
+签名两个 Darwin 应用包、校验签名，再打包并计算上传/安装使用的 SHA-256；签名失败即停止构建。
+manifest 保留签名身份，Android/Linux 打包导入时不改签名。未设置时仍为 ad hoc 构建，
+不能保证升级后保留权限；不接受 `-` 作为保留授权的签名身份。证书私钥不提交到仓库。
+
 Linux 至少安装对应 musl 目标，使用 Rust 自带链接器，无需交叉 C 编译器或 X11 开发库。
 默认构建本机已安装且可用的目标；相同源码指纹的导入产物会保留。CI 先在 Mac 构建全部四种
 目标，再通过 artifact 传给 Android 构建。构建期间源码变化、清单和二进制 SHA 不匹配均失败。
@@ -50,20 +69,26 @@ Linux 至少安装对应 musl 目标，使用 Rust 自带链接器，无需交�
 
 ## 配置与服务路径
 
-安装目录为 `~/Library/Application Support/termish/`：
+安装目录为 `~/Library/Application Support/termish/`，配置在签名包之外，升级保留 token 和自定义路径：
 
 ```text
-screen-service             # Rust 可执行文件，0700
+Termish Helper.app/        # macOS 后台应用（Linux 仍为 screen-service）
+  Contents/Info.plist
+  Contents/MacOS/Termish Helper
+  Contents/Resources/AppIcon.icns
 screen-service.NOTICE      # 完整第三方版权声明
 screen-service.backend     # rust
 screen-service.json        # 配置，0600
 ```
 
-重装更新端口与 FFmpeg 路径，保留 token、日志/PID/画质配置路径。JSON 和 LaunchAgent XML
+Darwin payload 文件名保留 `termish-screen-Darwin-*`，内容为签名应用包的 gzip tar；Linux payload
+仍为 ELF。安装先验证上传 SHA，再解包并校验签名与版本；旧服务只在校验通过后停用。
+启动失败恢复旧应用包与 LaunchAgent；成功后移除旧裸程序。JSON 和 LaunchAgent XML
 由 Rust 生成，中文、引号和 shell/XML 字符不经展开；无效配置不覆盖原文件。
 
 ```bash
-screen-service --version
+"$HOME/Library/Application Support/termish/Termish Helper.app/Contents/MacOS/Termish Helper" --version
+# Linux 或独立 Rust 调试二进制仍支持这些参数：
 screen-service --config /path/to/screen-service.json --check-config
 screen-service --config /path/to/screen-service.json
 screen-service --display-state
@@ -76,6 +101,7 @@ screen-service --display-state
 | --- | --- |
 | `port` | 17321 探测、17323 TCP 视频，仅 IPv4 回环 |
 | `ffmpeg` | 安装时解析绝对路径 |
+| `capture_source` | `desktop`；诊断可选 `test_pattern`，只生成测试图案，不抓桌面或注入输入 |
 | `token_file` | `~/.termish-screen.token`，256-bit token |
 | `log_file` | macOS `~/Library/Logs/termish-screen.err`，Linux `~/.termish-screen.err` |
 | `encoder_pid_file` | `~/.termish-screen-ffmpeg.pid`，诊断及自身子进程清理 |
@@ -90,6 +116,7 @@ macOS 使用 `dev.termish.screen` LaunchAgent，Linux 使用同名 systemd 用�
 不可用时退回桌面自启动。Linux 启动器重新探测图形会话与 Xauthority。
 
 鉴权前不启动编码器、不返回状态或画面；健康客户端占用时返回 `THS1 + 3`。
+macOS 缺录屏权限返回 `THS1 + 4` 并关闭连接，不创建编码器或占用画面会话。
 连接首包仍为未分帧的 `THS1 + status`；后续权限更新为 `[4B 大端长度=5][THS1 + status]`，
 由唯一视频写入线程在完整视频包之间发送，手机解析后更新控制权限提示。
 6 秒未续租会关闭连接并释放编码器；反馈触发恢复保留 TCP 与帧序号，并发送新关键帧。

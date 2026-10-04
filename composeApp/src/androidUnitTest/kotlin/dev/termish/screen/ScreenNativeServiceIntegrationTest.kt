@@ -68,12 +68,13 @@ class ScreenNativeServiceIntegrationTest {
             assumeTrue("SKIP: synthetic encoder unavailable", !ffmpeg.isNullOrBlank())
             directory = ssh.runCommand("umask 077; mktemp -d /tmp/termish-native-ssh.XXXXXX")?.trim()
             val root = checkNotNull(directory)
-            val remoteBinary = "$root/screen-service"
+            val remotePayload = "$root/payload"
+            val remoteBinary = if (os == "Darwin") "$root/Termish Helper.app/Contents/MacOS/Termish Helper" else remotePayload
             val sftp = createSftpSession(connection, callbacks)
             try {
                 val bytes = binary.readBytes()
                 var offset = 0
-                sftp.upload(remoteBinary, bytes.size.toLong()) {
+                sftp.upload(remotePayload, bytes.size.toLong()) {
                     if (offset == bytes.size) {
                         null
                     } else {
@@ -88,6 +89,7 @@ class ScreenNativeServiceIntegrationTest {
             val token = "a".repeat(64)
             val config =
                 buildJsonObject {
+                    put("capture_source", "test_pattern")
                     put("port", probePort)
                     put("ffmpeg", "$root/encoder")
                     put("token_file", "$root/token")
@@ -101,7 +103,15 @@ class ScreenNativeServiceIntegrationTest {
                     "-c:v libx264 -preset ultrafast -tune zerolatency -x264-params aud=1:keyint=15 " +
                     "-pix_fmt yuv420p -f h264 -\n"
             val setup =
-                "chmod 700 ${screenShellQuote(remoteBinary)}; " +
+                (
+                    if (os == "Darwin") {
+                        "mkdir -p ${screenShellQuote("$root/Termish Helper.app")} && " +
+                            "tar -xzf ${screenShellQuote(remotePayload)} -C ${screenShellQuote("$root/Termish Helper.app")} && "
+                    } else {
+                        ""
+                    }
+                ) +
+                    "chmod 700 ${screenShellQuote(remoteBinary)}; " +
                     "printf '%s' ${screenShellQuote(token)} > ${screenShellQuote("$root/token")}; " +
                     "printf '%s' ${screenShellQuote(config)} > ${screenShellQuote("$root/screen-service.json")}; " +
                     "printf '%s' ${screenShellQuote(encoder)} > ${screenShellQuote("$root/encoder")}; " +

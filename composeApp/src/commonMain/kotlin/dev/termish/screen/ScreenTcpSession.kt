@@ -23,6 +23,10 @@ internal const val SCREEN_AUTH_TOKEN_HEX_LENGTH = 64
 internal const val SCREEN_TCP_HEARTBEAT_INTERVAL_MS = 2_000L
 internal const val SCREEN_TCP_FEEDBACK_INTERVAL_MS = 1_000L
 internal const val SCREEN_TCP_STATUS_BUSY = 3
+internal const val SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING = 4
+
+internal fun screenStatusRejectsConnection(status: Int): Boolean = status == SCREEN_TCP_STATUS_BUSY || status == SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING
+
 internal const val SCREEN_FEEDBACK_REQUEST_KEYFRAME = 1
 
 private val SCREEN_AUTH_MAGIC = byteArrayOf('T'.code.toByte(), 'H'.code.toByte(), 'A'.code.toByte(), '1'.code.toByte())

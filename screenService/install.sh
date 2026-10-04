@@ -120,9 +120,37 @@ if [ "$OS" = "Linux" ]; then
   fi
 fi
 mkdir -p "$APP_DIR"
-"$TERMISH_NATIVE_STAGE" --write-config "$APP_DIR/screen-service.json" "$PORT" "$FF_REAL"
-"$TERMISH_NATIVE_STAGE" --check-config --config "$APP_DIR/screen-service.json"
-mv "$TERMISH_NATIVE_STAGE" "$NATIVE"
+"$TERMISH_NATIVE_EXEC" --write-config "$APP_DIR/screen-service.json" "$PORT" "$FF_REAL"
+"$TERMISH_NATIVE_EXEC" --check-config --config "$APP_DIR/screen-service.json"
+restore_macos_service() {
+  launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
+  rm -rf "$APP_BUNDLE"
+  if [ -d "$APP_BACKUP" ]; then mv "$APP_BACKUP" "$APP_BUNDLE"; fi
+  if [ -f "$PLIST_BACKUP" ]; then
+    mv "$PLIST_BACKUP" "$PLIST"
+    launchctl bootstrap gui/$(id -u) "$PLIST" 2>/dev/null || true
+  else
+    rm -f "$PLIST"
+  fi
+}
+if [ "$OS" = "Darwin" ]; then
+  # Only replace this service after checksum, bundle signature and config pass.
+  PLIST_BACKUP="$PLIST.termish-previous"
+  rm -f "$PLIST_BACKUP"
+  if [ -f "$PLIST" ]; then cp "$PLIST" "$PLIST_BACKUP"; fi
+  launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
+  APP_BACKUP="$APP_DIR/.Termish Helper.previous"
+  rm -rf "$APP_BACKUP"
+  if [ -d "$APP_BUNDLE" ]; then mv "$APP_BUNDLE" "$APP_BACKUP"; fi
+  if ! mv "$TERMISH_APP_STAGE" "$APP_BUNDLE"; then
+    restore_macos_service
+    exit 1
+  fi
+  rm -f "$TERMISH_NATIVE_STAGE"
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" || true
+else
+  mv "$TERMISH_NATIVE_STAGE" "$NATIVE"
+fi
 "$NATIVE" --licenses > "$APP_DIR/screen-service.NOTICE"
 printf 'rust\n' > "$APP_DIR/screen-service.backend"
 # ---- 服务启动：macOS 用 LaunchAgent（GUI 域录屏权限）；
@@ -130,20 +158,30 @@ printf 'rust\n' > "$APP_DIR/screen-service.backend"
 # 自动恢复。旧版仅 nohup，进程在本次 SSH 断开后能活、重启后必丢。----
 if [ "$OS" = "Darwin" ]; then
 mkdir -p "$HOME/Library/LaunchAgents"
-"$NATIVE" --write-launch-agent "$PLIST"
+if ! "$NATIVE" --write-launch-agent "$PLIST"; then
+  restore_macos_service
+  exit 1
+fi
 launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
 sleep 1
 # relay 启动时会按自身 PID 文件清理上一轮孤儿 ffmpeg；这里不能
 # pkill 全部 ffmpeg，否则会误杀用户自己的转码/录制任务。
-launchctl bootstrap gui/$(id -u) "$PLIST"
+if ! launchctl bootstrap gui/$(id -u) "$PLIST"; then
+  restore_macos_service
+  exit 1
+fi
 sleep 1
 # 验证用 launchctl（不碰连接：探测连接-断开会打断 relay 的当前服务周期；
 # 也不用 pgrep：安装脚本自身的 zsh 命令行含脚本文本会误匹配）
 if launchctl print gui/$(id -u)/dev.termish.screen 2>/dev/null | grep -q "state = running" \
   && lsof -nP -iTCP:$((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1; then
   echo @RELAY_VERSION@ > "$HOME/.termish-screen.version"
+  rm -rf "$APP_BACKUP"
+  rm -f "$PLIST_BACKUP"
+  rm -f "$APP_DIR/screen-service"
   echo "==> TERMISH_SCREEN_OK"
 else
+  restore_macos_service
   echo "==> 服务未启动（检查 ~/Library/Logs/termish-screen.err）" >&2
   exit 1
 fi

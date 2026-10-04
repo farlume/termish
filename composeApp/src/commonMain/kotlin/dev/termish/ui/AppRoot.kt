@@ -116,6 +116,7 @@ private fun ScreenStrings.toSessionMessages(): ScreenSessionMessages =
         tcpChannelFailed = tcpChannelFailed,
         tcpDisconnected = tcpDisconnected,
         screenInUse = screenInUse,
+        screenRecordingPermissionMissing = screenRecordingPermissionMissing,
         ffmpegMissing = ffmpegMissing,
         unsupportedOs = unsupportedOs,
         relayUpgradeRequired = relayUpgradeRequired,

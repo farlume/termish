@@ -27,6 +27,7 @@ internal data class ScreenSessionMessages(
     val tcpChannelFailed: (Int) -> String,
     val tcpDisconnected: String,
     val screenInUse: String,
+    val screenRecordingPermissionMissing: String,
     val ffmpegMissing: String,
     val unsupportedOs: (String) -> String,
     val relayUpgradeRequired: String,
@@ -264,11 +265,11 @@ class ScreenSession internal constructor(
                         playerMetrics = p::metrics,
                         onStatus = { status ->
                             // 首包与后续权限更新：0=OK，1=macOS 缺辅助功能权限，2=不支持控制，
-                            // 3=已有另一台设备占用。占用是明确拒绝，不进入自动重连。
-                            if (status == SCREEN_TCP_STATUS_BUSY) {
+                            // 3=占用，4=缺录屏权限；明确拒绝时不进入自动重连。
+                            if (screenStatusRejectsConnection(status)) {
                                 running = false
                                 firstFrameDeadline = 0
-                                TermLog.i("screen") { "screen stream is already in use by another device" }
+                                TermLog.i("screen") { "screen connection rejected status=$status" }
                                 scope.launch {
                                     runCatching { p.stop() }
                                     if (player === p) player = null
@@ -277,7 +278,13 @@ class ScreenSession internal constructor(
                                     uiState.keySender = null
                                     uiState.connected = false
                                     uiState.videoReady = false
-                                    uiState.error = messages.screenInUse
+                                    uiState.controlPermissionMissing = false
+                                    uiState.error =
+                                        if (status == SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING) {
+                                            messages.screenRecordingPermissionMissing
+                                        } else {
+                                            messages.screenInUse
+                                        }
                                 }
                                 scope.launch(ioDispatcher()) { session.close() }
                                 false
@@ -887,7 +894,7 @@ class ScreenSession internal constructor(
             # 屏幕状态探测（仅提示，不阻断推流）：息屏时 avfoundation 无帧、
             # 锁屏时画面为锁屏界面——客户端据此给出明确提示而非「连接不上」
             if [ "${'$'}OS" = "Darwin" ]; then
-            NATIVE="${'$'}HOME/Library/Application Support/termish/screen-service"
+            NATIVE="${'$'}HOME/Library/Application Support/termish/Termish Helper.app/Contents/MacOS/Termish Helper"
             if [ -x "${'$'}NATIVE" ] && [ "${'$'}(cat "${'$'}HOME/Library/Application Support/termish/screen-service.backend" 2>/dev/null)" = "rust" ]; then
               "${'$'}NATIVE" --display-state 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
             fi

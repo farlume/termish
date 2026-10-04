@@ -6,9 +6,19 @@ use std::{
 
 pub const VERSION: &str = env!("RELAY_VERSION");
 
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSource {
+    #[default]
+    Desktop,
+    TestPattern,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
+    #[serde(default)]
+    pub capture_source: CaptureSource,
     pub port: Option<u16>,
     pub ffmpeg: Option<String>,
     pub token_file: Option<String>,
@@ -19,6 +29,7 @@ pub struct Settings {
 
 #[derive(Clone, Serialize)]
 pub struct Config {
+    pub capture_source: CaptureSource,
     pub version: &'static str,
     pub port: u16,
     pub ffmpeg: PathBuf,
@@ -43,6 +54,26 @@ fn expand(path: &str) -> io::Result<PathBuf> {
     } else {
         Ok(path.into())
     }
+}
+
+pub fn state_directory(executable: &Path) -> PathBuf {
+    let directory = executable.parent().unwrap_or(Path::new("."));
+    // The bundled agent keeps the existing account's config/token/log paths.
+    // Never put mutable state inside the signed application bundle.
+    if directory.file_name().is_some_and(|name| name == "MacOS") {
+        if let Some(contents) = directory
+            .parent()
+            .filter(|p| p.file_name().is_some_and(|name| name == "Contents"))
+        {
+            if let Some(bundle) = contents
+                .parent()
+                .filter(|p| p.extension().is_some_and(|ext| ext == "app"))
+            {
+                return bundle.parent().unwrap_or(directory).to_owned();
+            }
+        }
+    }
+    directory.to_owned()
 }
 
 pub fn executable(path: &str) -> io::Result<PathBuf> {
@@ -71,7 +102,7 @@ impl Config {
         port: Option<u16>,
         ffmpeg: Option<String>,
     ) -> io::Result<Self> {
-        let default_path = env::current_exe()?.with_file_name("screen-service.json");
+        let default_path = state_directory(&env::current_exe()?).join("screen-service.json");
         let selected = path.unwrap_or(&default_path);
         let mut settings: Settings = if path.is_some() || selected.exists() {
             serde_json::from_slice(&fs::read(selected)?).map_err(|e| invalid(&e.to_string()))?
@@ -96,6 +127,7 @@ impl Config {
             return Err(invalid("invalid screen auth token"));
         }
         Ok(Self {
+            capture_source: settings.capture_source,
             version: VERSION,
             port,
             ffmpeg: executable(
@@ -297,15 +329,66 @@ impl StreamSettings {
         add(&["-f", "h264", "-"]);
         args
     }
+
+    pub fn args_for_test_pattern(&self) -> Vec<String> {
+        // Diagnostic video does not read any desktop or inject input. Keep it
+        // separate from desktop capture rather than bypassing TCC in tests.
+        [
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=160x90:rate=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-tune",
+            "zerolatency",
+            "-pix_fmt",
+            "yuv420p",
+            "-x264-params",
+            "aud=1:repeat-headers=1",
+            "-g",
+            "15",
+            "-f",
+            "h264",
+            "-",
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn bundle_state_stays_outside_signed_contents() {
+        assert_eq!(state_directory(Path::new("/Users/test/Library/Application Support/termish/Termish Helper.app/Contents/MacOS/Termish Helper")), PathBuf::from("/Users/test/Library/Application Support/termish"));
+        assert_eq!(
+            state_directory(Path::new("/tmp/Contents/MacOS/service")),
+            PathBuf::from("/tmp/Contents/MacOS")
+        );
+        assert_eq!(
+            state_directory(Path::new("/tmp/screen-service")),
+            PathBuf::from("/tmp")
+        );
+    }
+    #[test]
     fn invalid_settings_and_stream_injection_are_rejected() {
         assert!(serde_json::from_str::<Settings>("{\"port\":true}").is_err());
         assert!(serde_json::from_str::<Settings>("{\"unknown\":1}").is_err());
+        assert!(matches!(
+            serde_json::from_str::<Settings>("{}")
+                .unwrap()
+                .capture_source,
+            CaptureSource::Desktop
+        ));
+        assert!(serde_json::from_str::<Settings>("{\"capture_source\":\"bypass\"}").is_err());
         let cfg = StreamSettings {
             fps: 120,
             scale: "2560:-2".into(),

@@ -23,7 +23,18 @@ if [ -n "${TERMISH_NATIVE_STAGE:-}" ]; then
     echo '==> Service payload checksum mismatch' >&2; exit 1
   fi
   chmod 700 "$TERMISH_NATIVE_STAGE"
-  if [ "$("$TERMISH_NATIVE_STAGE" --version)" != "@RELAY_VERSION@" ]; then
+  TERMISH_NATIVE_EXEC="$TERMISH_NATIVE_STAGE"
+  if [ "$OS" = "Darwin" ]; then
+    APP_BUNDLE="$APP_DIR/Termish Helper.app"
+    TERMISH_APP_STAGE="$TERMISH_NATIVE_STAGE.app"
+    trap 'rm -rf "$TERMISH_APP_STAGE"' 0
+    mkdir -m 700 "$TERMISH_APP_STAGE"
+    tar -xzf "$TERMISH_NATIVE_STAGE" -C "$TERMISH_APP_STAGE"
+    TERMISH_NATIVE_EXEC="$TERMISH_APP_STAGE/Contents/MacOS/Termish Helper"
+    /usr/bin/codesign --verify --strict "$TERMISH_APP_STAGE"
+    NATIVE="$APP_BUNDLE/Contents/MacOS/Termish Helper"
+  fi
+  if [ "$("$TERMISH_NATIVE_EXEC" --version)" != "@RELAY_VERSION@" ]; then
     echo '==> Service payload version or architecture mismatch' >&2; exit 1
   fi
   TERMISH_BACKEND=rust

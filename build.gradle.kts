@@ -118,7 +118,9 @@ val agentBridgeBuild = tasks.register<ExecTask>("agentBridgeBuild") {
 }
 val screenServiceRustBuild = tasks.register<ExecTask>("screenServiceRustBuild") {
     group = "build"
+    inputs.property("macosSigningIdentity", providers.environmentVariable("TERMISH_SCREEN_MACOS_SIGN_IDENTITY").orElse(""))
     inputs.files(fileTree("screenService/rust") { exclude("target/**", ".gitignore") })
+    inputs.dir("screenService/macos")
     inputs.files(fileTree("tools/service-build") { exclude("target/**", ".gitignore") })
     inputs.files("screenService/service.properties", "LICENSES/TermishScreen-Rust.txt", "scripts/service-build.sh")
     outputs.dir(layout.projectDirectory.dir("screenService/build/binaries"))

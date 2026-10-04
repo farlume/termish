@@ -30,12 +30,30 @@ class ScreenInstallScriptSyntaxTest {
         assumeTrue("Native payload unavailable on this test host", artifact != null)
         assertNotNull(artifact)
         val root = File(checkNotNull(System.getProperty("user.dir"))).let { if (it.name == "composeApp") it.parentFile else it }
-        val binary = File(root, "composeApp/src/commonMain/composeResources/files/termish-screen/" + artifact.filename)
-        assertEquals(true, binary.setExecutable(true))
-        val process = ProcessBuilder(binary.absolutePath, "--version").redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText()
-        assertEquals(0, process.waitFor(), output)
-        assertEquals(ScreenSession.RELAY_VERSION.toString(), output.trim())
-        assertFalse(ScreenSession.INSTALL_SCRIPT.contains("python3"))
+        val payload = File(root, "composeApp/src/commonMain/composeResources/files/termish-screen/" + artifact.filename)
+        val temporary = Files.createTempDirectory("termish-helper-payload-").toFile()
+        try {
+            val binary =
+                if (os == "Darwin") {
+                    val bundle = File(temporary, "Termish Helper.app").apply { mkdirs() }
+                    val extract = ProcessBuilder("tar", "-xzf", payload.absolutePath, "-C", bundle.absolutePath).redirectErrorStream(true).start()
+                    val extractOutput = extract.inputStream.bufferedReader().readText()
+                    assertEquals(0, extract.waitFor(), extractOutput)
+                    val verify = ProcessBuilder("codesign", "--verify", "--strict", bundle.absolutePath).redirectErrorStream(true).start()
+                    val verifyOutput = verify.inputStream.bufferedReader().readText()
+                    assertEquals(0, verify.waitFor(), verifyOutput)
+                    File(bundle, "Contents/MacOS/Termish Helper")
+                } else {
+                    payload
+                }
+            assertEquals(true, binary.setExecutable(true))
+            val process = ProcessBuilder(binary.absolutePath, "--version").redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            assertEquals(0, process.waitFor(), output)
+            assertEquals(ScreenSession.RELAY_VERSION.toString(), output.trim())
+            assertFalse(ScreenSession.INSTALL_SCRIPT.contains("python3"))
+        } finally {
+            temporary.deleteRecursively()
+        }
     }
 }

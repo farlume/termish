@@ -32,6 +32,9 @@ impl Drop for Service {
 }
 impl Service {
     fn start() -> Option<Self> {
+        Self::start_attempt(0)
+    }
+    fn start_attempt(attempt: u8) -> Option<Self> {
         // Reserve one port pair at a time: another fixture's ephemeral probe port
         // must not consume this fixture's adjacent video port before it binds.
         let guard = SERVICE_LOCK
@@ -57,25 +60,47 @@ impl Service {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("token"), "a".repeat(64)).unwrap();
         let wrapper = dir.join("ffmpeg");
-        fs::write(&wrapper,format!("#!/bin/sh\necho $$ > '{}'\nexec '{}' -hide_banner -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=30 -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p -x264-params aud=1:repeat-headers=1 -g 15 -f h264 -\n",dir.join("started").display(),ff)).unwrap();
+        fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nexec '{}' \"$@\"\n",
+                dir.join("started").display(),
+                ff
+            ),
+        )
+        .unwrap();
         fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
-        fs::write(dir.join("config.json"),json!({"port":port,"ffmpeg":wrapper,"token_file":dir.join("token"),"log_file":dir.join("log"),"encoder_pid_file":dir.join("encoder.pid"),"stream_config_file":dir.join("settings")}).to_string()).unwrap();
+        fs::write(dir.join("config.json"),json!({"capture_source":"test_pattern","port":port,"ffmpeg":wrapper,"token_file":dir.join("token"),"log_file":dir.join("log"),"encoder_pid_file":dir.join("encoder.pid"),"stream_config_file":dir.join("settings")}).to_string()).unwrap();
         let child = Command::new(env!("CARGO_BIN_EXE_termish-screen-service"))
             .args(["--config"])
             .arg(dir.join("config.json"))
             .env_remove("XDG_SESSION_TYPE")
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::from(fs::File::create(dir.join("stderr")).unwrap()))
             .spawn()
             .unwrap();
-        let service = Self {
+        let mut service = Self {
             dir,
             child,
             port,
             _guard: guard,
         };
         let end = Instant::now() + Duration::from_secs(5);
-        while TcpStream::connect(("127.0.0.1", port)).is_err() {
+        // The OS can assign this temporarily released pair to an unrelated
+        // concurrent test. Wait for our daemon's own post-bind ready record,
+        // not just a port that another process may already be listening on.
+        while !fs::read_to_string(service.dir.join("log"))
+            .unwrap_or_default()
+            .contains("service started version=")
+        {
+            if let Some(status) = service.child.try_wait().unwrap() {
+                let error = fs::read_to_string(service.dir.join("stderr")).unwrap();
+                drop(service);
+                if error.contains("Address already in use") && attempt < 4 {
+                    return Self::start_attempt(attempt + 1);
+                }
+                panic!("fixture exited {status}: {error}");
+            }
             assert!(Instant::now() < end);
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -260,6 +285,7 @@ fn real_x11_capture_keyboard_clipboard_and_disconnect_releases_drag() {
     let mut config: Value =
         serde_json::from_slice(&fs::read(service.dir.join("config.json")).unwrap()).unwrap();
     config["ffmpeg"] = json!(String::from_utf8(ffmpeg.stdout).unwrap().trim());
+    config["capture_source"] = json!("desktop");
     // Restart with real capture configuration; the synthetic fixture never accesses a desktop.
     let mut service = service;
     unsafe {

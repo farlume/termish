@@ -120,6 +120,40 @@ fn request_input_access() {
     }
 }
 
+fn screen_capture_access() -> Option<&'static PostEventAccess> {
+    static API: OnceLock<Option<PostEventAccess>> = OnceLock::new();
+    API.get_or_init(|| unsafe {
+        let preflight = libc::dlsym(
+            libc::RTLD_DEFAULT,
+            c"CGPreflightScreenCaptureAccess".as_ptr(),
+        );
+        let request = libc::dlsym(libc::RTLD_DEFAULT, c"CGRequestScreenCaptureAccess".as_ptr());
+        if preflight.is_null() || request.is_null() {
+            None
+        } else {
+            Some(PostEventAccess {
+                preflight: std::mem::transmute::<*mut c_void, PermissionFn>(preflight),
+                request: std::mem::transmute::<*mut c_void, PermissionFn>(request),
+            })
+        }
+    })
+    .as_ref()
+}
+
+pub fn capture_allowed() -> bool {
+    // Screen recording consent was introduced in 10.15. The preflight never
+    // prompts, unlike starting a fresh avfoundation child on every reconnect.
+    unsafe { screen_capture_access().is_none_or(|api| (api.preflight)()) }
+}
+
+pub fn request_capture_access() {
+    unsafe {
+        if let Some(api) = screen_capture_access() {
+            (api.request)();
+        }
+    }
+}
+
 // The daemon has no AppKit event loop. Drain main-thread system notifications
 // between accepts so permission changes are not left pending for its lifetime.
 pub fn poll_events() {
@@ -196,15 +230,16 @@ impl Input {
         }
     }
     pub fn inject(&mut self, control: &Control<'_>) {
+        // A lease heartbeat is not user input and must never request consent.
+        if control.kind == 13 {
+            return;
+        }
         if self.status() != 0 {
             // Reconnection creates a new Input, but must not create a new
             // permission alert on every click or every session.
             if !PERMISSION_PROMPTED.swap(true, Ordering::AcqRel) {
                 request_input_access();
             }
-            return;
-        }
-        if control.kind == 13 {
             return;
         }
         unsafe {

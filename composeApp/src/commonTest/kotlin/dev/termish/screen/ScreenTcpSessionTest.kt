@@ -71,6 +71,27 @@ class ScreenTcpSessionTest {
     }
 
     @Test
+    fun `missing recording permission rejects initial connection and live capture`() {
+        val statuses = mutableListOf<Int>()
+        val frames = mutableListOf<ByteArray>()
+        val parser = ScreenTcpFrameParser(statuses::add, frames::add)
+        val denied = "THS1".encodeToByteArray() + byteArrayOf(SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING.toByte())
+        denied.forEach { parser.push(byteArrayOf(it)) }
+        assertEquals(listOf(SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING), statuses)
+        assertTrue(frames.isEmpty())
+        assertTrue(screenStatusRejectsConnection(statuses.single()))
+
+        val liveStatuses = mutableListOf<Int>()
+        val live = ScreenTcpFrameParser(liveStatuses::add, {})
+        live.push("THS1".encodeToByteArray() + byteArrayOf(0) + frame(denied))
+        assertEquals(listOf(0, SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING), liveStatuses)
+        assertFalse(screenStatusRejectsConnection(0))
+        assertFalse(screenStatusRejectsConnection(1))
+        assertFalse(screenStatusRejectsConnection(2))
+        assertTrue(screenStatusRejectsConnection(SCREEN_TCP_STATUS_BUSY))
+    }
+
+    @Test
     fun `control messages carry an explicit tcp length prefix`() {
         val payload = ScreenControlPacket.encodeText("中文 input")
         val framed = frameScreenTcpControl(payload)

@@ -1,4 +1,6 @@
 mod config;
+#[cfg(any(target_os = "macos", test))]
+mod permission;
 mod platform;
 mod protocol;
 mod service;
@@ -42,7 +44,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
                 if args.next().is_some() {
                     return Err("unexpected arguments".into());
                 }
-                let executable = env::current_exe()?.with_file_name("screen-service");
+                let executable = env::current_exe()?;
                 let escaped = executable
                     .to_str()
                     .ok_or("non-UTF-8 executable path")?

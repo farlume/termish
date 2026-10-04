@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, StreamSettings},
+    config::{CaptureSource, Config, StreamSettings},
     platform::{self, Input},
     protocol::{self, Control, Feedback, Frames},
 };
@@ -104,6 +104,13 @@ struct Session {
     input: Mutex<Input>,
 }
 impl Session {
+    fn input_status(&self) -> u8 {
+        if self.config.capture_source == CaptureSource::TestPattern {
+            2
+        } else {
+            self.input.lock().unwrap().status()
+        }
+    }
     fn new(config: Arc<Config>, socket: TcpStream) -> Self {
         Self {
             config,
@@ -168,8 +175,13 @@ impl Session {
         #[cfg(not(target_os = "linux"))]
         let wayland = false;
         let mut command = Command::new(&self.config.ffmpeg);
+        let args = if self.config.capture_source == CaptureSource::TestPattern {
+            cfg.args_for_test_pattern()
+        } else {
+            cfg.args_for_capture(scale, wayland)
+        };
         command
-            .args(cfg.args_for_capture(scale, wayland))
+            .args(args)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(
@@ -180,7 +192,7 @@ impl Session {
             );
         #[cfg(target_os = "linux")]
         {
-            if wayland {
+            if wayland && self.config.capture_source == CaptureSource::Desktop {
                 let (capture, stdout) =
                     platform::wayland::capture(cfg.fps, &self.config.log_file, &self.stopped)?;
                 command.stdin(Stdio::from(stdout));
@@ -249,7 +261,7 @@ impl Session {
                         platform::wake_display();
                         last_wake = Instant::now();
                     }
-                } else {
+                } else if self.config.capture_source == CaptureSource::Desktop {
                     let mut input = self.input.lock().unwrap();
                     if !self.stopped.load(Ordering::Acquire) {
                         input.inject(&control);
@@ -275,6 +287,16 @@ impl Session {
         platform::wake_display();
         let result = (|| -> io::Result<()> {
             loop {
+                #[cfg(target_os = "macos")]
+                if self.config.capture_source == CaptureSource::Desktop
+                    && !platform::capture_allowed()
+                {
+                    protocol::write_status(&mut writer, 4)?;
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "screen recording permission missing",
+                    ));
+                }
                 let mut stdout = self.start_encoder()?;
                 let mut frames = Frames::default();
                 let encoder_started = Instant::now();
@@ -283,7 +305,17 @@ impl Session {
                 while !self.stopped.load(Ordering::Acquire) && !SHUTDOWN.load(Ordering::Acquire) {
                     if last_status_check.elapsed() >= Duration::from_secs(1) {
                         last_status_check = Instant::now();
-                        let current = self.input.lock().unwrap().status();
+                        #[cfg(target_os = "macos")]
+                        if self.config.capture_source == CaptureSource::Desktop
+                            && !platform::capture_allowed()
+                        {
+                            protocol::write_status(&mut writer, 4)?;
+                            return Err(io::Error::new(
+                                io::ErrorKind::PermissionDenied,
+                                "screen recording permission revoked",
+                            ));
+                        }
+                        let current = self.input_status();
                         if current != status {
                             status = current;
                             protocol::write_status(&mut writer, status)?;
@@ -388,6 +420,8 @@ pub fn run(config: Config) -> io::Result<()> {
         ),
     );
     let mut active: Option<Arc<Session>> = None;
+    #[cfg(target_os = "macos")]
+    let mut capture_permission = crate::permission::CapturePermission::default();
     while !SHUTDOWN.load(Ordering::Acquire) {
         #[cfg(target_os = "macos")]
         platform::poll_events();
@@ -422,8 +456,19 @@ pub fn run(config: Config) -> io::Result<()> {
         if let Some(old) = active.take() {
             old.stop("stale tcp lease replaced");
         }
+        #[cfg(target_os = "macos")]
+        if config.capture_source == CaptureSource::Desktop && !platform::capture_allowed() {
+            let _ = socket.write_all(b"THS1\x04");
+            let _ = socket.shutdown(Shutdown::Both);
+            log(
+                &config,
+                "screen recording permission missing; encoder not started",
+            );
+            capture_permission.check(|| false, platform::request_capture_access);
+            continue;
+        }
         let session = Arc::new(Session::new(config.clone(), socket));
-        let status = session.input.lock().unwrap().status();
+        let status = session.input_status();
         if (&session.socket)
             .write_all(&[b'T', b'H', b'S', b'1', status])
             .is_err()
