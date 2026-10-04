@@ -65,6 +65,9 @@ class ScreenUiState {
     /** 被控端缺辅助功能权限（relay 状态包上报，引导用户授权）。 */
     var controlPermissionMissing by mutableStateOf(false)
 
+    /** 被控端缺录屏权限；显式重连时刷新 macOS 服务进程的授权缓存。 */
+    var recordingPermissionMissing: Boolean = false
+
     /** 被控端当前图形会话没有可用的控制后端（relay 状态 2 上报）。 */
     var controlUnsupported by mutableStateOf(false)
 

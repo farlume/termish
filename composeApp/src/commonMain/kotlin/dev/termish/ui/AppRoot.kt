@@ -507,6 +507,7 @@ fun AppRoot(repository: HostRepository) {
     suspend fun establishScreen(
         host: Host,
         uiState: ScreenUiState = ScreenUiState(),
+        refreshPermissionsBeforeStart: Boolean = false,
         onEstablished: (ScreenSession, ScreenUiState) -> Unit,
     ) {
         val (pw, key) = resolveCredentials(host)
@@ -563,6 +564,7 @@ fun AppRoot(repository: HostRepository) {
                 scope,
                 uiState,
                 messages = currentStrings.value.screen.toSessionMessages(),
+                refreshPermissionsBeforeStart = refreshPermissionsBeforeStart,
                 // 断流自动重连：同主机只允许一个任务，且替换前再次核对会话代次。
                 // 否则并发旧任务会轮流关闭刚建立的新通道，形成固定周期断开循环。
                 onStreamLost = {
@@ -735,9 +737,11 @@ fun AppRoot(repository: HostRepository) {
         screenReconnectJobs.remove(host.id)?.cancel()
         val existingEntry = screenSessions.firstOrNull { it.host.id == host.id }
         val ownerId = existingEntry?.ownerSessionId ?: ""
+        val refreshPermissions = existingEntry?.uiState?.let { it.recordingPermissionMissing || it.controlPermissionMissing } == true
         scope.launch {
             try {
-                establishScreen(host) { session, uiState ->
+                existingEntry?.session?.close()
+                establishScreen(host, refreshPermissionsBeforeStart = refreshPermissions) { session, uiState ->
                     screenSessions.firstOrNull { it.host.id == host.id }?.session?.close()
                     screenSessions.removeAll { it.host.id == host.id }
                     uiState.preferredStreamFps = existingEntry?.uiState?.preferredStreamFps ?: 0

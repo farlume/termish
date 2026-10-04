@@ -73,6 +73,8 @@ class ScreenSession internal constructor(
     private val scope: CoroutineScope,
     private val uiState: ScreenUiState,
     private val messages: ScreenSessionMessages,
+    /** 用户从权限错误主动重连；不用于断流自动重连。 */
+    private val refreshPermissionsBeforeStart: Boolean = false,
     /** 非主动关闭的断流回调（EOF/异常）：AppRoot 借此自动重连（用户反馈：
      * relay 重启/会话切换导致「画面流已断开」需手动重连）。 */
     private val onStreamLost: (() -> Unit)? = null,
@@ -120,6 +122,25 @@ class ScreenSession internal constructor(
                     uiState.error = messages.connectionFailed
                     running = false
                     return@launch
+                }
+                if (refreshPermissionsBeforeStart) {
+                    // CoreGraphics 可保留授权前的结果。只在用户主动重连时刷新
+                    // 自己的 GUI LaunchAgent，不修改系统授权或重签名应用。
+                    val refreshed =
+                        withContext(ioDispatcher()) {
+                            session.runCommandDetailed(REFRESH_PERMISSIONS_SCRIPT, 10_000)
+                        }
+                    if (!running) {
+                        session.close()
+                        return@launch
+                    }
+                    if (refreshed?.stdout?.lineSequence()?.any { it == "SCREEN_PERMISSION_REFRESH_OK" } != true) {
+                        uiState.error = messages.serviceNotRunning
+                        running = false
+                        session.close()
+                        return@launch
+                    }
+                    TermLog.i("screen") { "permission refresh completed ${connection.host}" }
                 }
                 // 控制面探测：relay 存活 + 版本/ffmpeg/屏幕状态 + TCP 内部端口。
                 // 视频面随后用同一 SSH 连接的 direct-tcpip 通道访问远端回环端口，
@@ -267,6 +288,7 @@ class ScreenSession internal constructor(
                             // 首包与后续权限更新：0=OK，1=macOS 缺辅助功能权限，2=不支持控制，
                             // 3=占用，4=缺录屏权限；明确拒绝时不进入自动重连。
                             if (screenStatusRejectsConnection(status)) {
+                                uiState.recordingPermissionMissing = status == SCREEN_TCP_STATUS_CAPTURE_PERMISSION_MISSING
                                 running = false
                                 firstFrameDeadline = 0
                                 TermLog.i("screen") { "screen connection rejected status=$status" }
@@ -289,6 +311,7 @@ class ScreenSession internal constructor(
                                 scope.launch(ioDispatcher()) { session.close() }
                                 false
                             } else {
+                                uiState.recordingPermissionMissing = false
                                 scope.launch {
                                     uiState.controlPermissionMissing = status == 1
                                     uiState.controlUnsupported = status == 2
@@ -739,6 +762,24 @@ class ScreenSession internal constructor(
 
         /** relay 内部 TCP 视频端口（仅监听远端回环，由 SSH direct-tcpip 访问）。 */
         const val SCREEN_TCP_PORT = SCREEN_PORT + 2
+
+        /** 刷新 macOS 进程内权限缓存；Linux 不需要重启。 */
+        internal val REFRESH_PERMISSIONS_SCRIPT =
+            """
+            if [ "${'$'}(uname)" = "Darwin" ]; then
+              launchctl kickstart -k "gui/${'$'}(id -u)/dev.termish.screen" || exit 1
+              for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                if lsof -nP -iTCP:$SCREEN_PORT -sTCP:LISTEN >/dev/null 2>&1 \
+                  && lsof -nP -iTCP:$SCREEN_TCP_PORT -sTCP:LISTEN >/dev/null 2>&1; then
+                  echo SCREEN_PERMISSION_REFRESH_OK
+                  exit 0
+                fi
+                sleep 0.5
+              done
+              exit 1
+            fi
+            echo SCREEN_PERMISSION_REFRESH_OK
+            """.trimIndent()
 
         /** 安装前探测 ffmpeg；与读流/安装脚本使用同一组非交互 SSH PATH 兜底。 */
         internal val FFMPEG_PROBE_SCRIPT =

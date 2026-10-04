@@ -95,6 +95,12 @@ object Sizes {
 
 /** 远程画面悬浮键盘 / 虚拟鼠标尺寸。 */
 object ScreenControlDimens {
+    val PermissionBannerBottom = 48.dp
+    val PermissionBannerSide = 24.dp
+    val PermissionBannerCorner = 8.dp
+    val PermissionBannerHorizontal = 12.dp
+    val PermissionBannerVertical = 6.dp
+
     val FloatingButton = 44.dp
     val FloatingIcon = 24.dp
     val FloatingMargin = 14.dp

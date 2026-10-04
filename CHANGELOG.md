@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [1.8.3] - 2026-10-04
+
+### 修复
+
+- **macOS 授权后重连**：收到录屏或辅助功能权限缺失提示后，用户点击「重新连接」会先重启屏幕服务，刷新授权前缓存的拒绝结果，再恢复画面与操作
+- **辅助功能提示**：增加「重新连接」按钮，中英文指引改为授权后重连；不再默认要求删除权限条目
+- **重连会话清理**：主动重连先关闭旧会话，避免屏幕服务重启触发旧会话的自动重连
+
+### 验证说明
+
+- 已在真实 Mac 确认两种权限开启后旧进程仍报拒绝、重启后恢复录屏与控制；用户已确认手机操作恢复
+- 本次修改手机端重连流程，后台服务保持版本 57；Android/iOS 构建、单元测试和 SSH 集成测试通过。新手机端完整首次授权及撤销权限流程仍需实机验证
+
 ## [1.8.2] - 2026-10-04
 
 ### 修复
@@ -590,7 +603,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.2...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.3...HEAD
+[1.8.3]: https://github.com/farlume/termish/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/farlume/termish/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/farlume/termish/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/farlume/termish/compare/v1.7.3...v1.8.0

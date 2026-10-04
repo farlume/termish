@@ -667,20 +667,29 @@ fun ScreenContent(
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                 )
             } else if (state.controlMode && state.controlPermissionMissing) {
-                Text(
-                    s.screen.controlPermissionHint,
-                    color = Color.White.copy(alpha = 0.9f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier =
                         Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(bottom = 48.dp, start = 24.dp, end = 24.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFFB45309).copy(alpha = 0.85f))
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
+                            .padding(horizontal = ScreenControlDimens.PermissionBannerSide)
+                            .padding(bottom = ScreenControlDimens.PermissionBannerBottom)
+                            .clip(RoundedCornerShape(ScreenControlDimens.PermissionBannerCorner))
+                            .background(ScreenControlTokens.PermissionBackground)
+                            .padding(
+                                horizontal = ScreenControlDimens.PermissionBannerHorizontal,
+                                vertical = ScreenControlDimens.PermissionBannerVertical,
+                            ),
+                ) {
+                    Text(
+                        s.screen.controlPermissionHint,
+                        color = ScreenControlTokens.PermissionText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    TextButton(onClick = onReconnect) {
+                        Text(s.screen.reconnect, color = ScreenControlTokens.PermissionText)
+                    }
+                }
             }
 
             if (virtualMouseOpen && state.controlMode) {
