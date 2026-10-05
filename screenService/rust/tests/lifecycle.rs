@@ -75,6 +75,10 @@ impl Service {
             .args(["--config"])
             .arg(dir.join("config.json"))
             .env_remove("XDG_SESSION_TYPE")
+            .env(
+                "DBUS_SESSION_BUS_ADDRESS",
+                "unix:path=/nonexistent/termish-test-bus",
+            )
             .stdout(Stdio::null())
             .stderr(Stdio::from(fs::File::create(dir.join("stderr")).unwrap()))
             .spawn()
@@ -341,6 +345,10 @@ fn real_x11_capture_keyboard_clipboard_and_disconnect_releases_drag() {
         .arg("--config")
         .arg(service.dir.join("config.json"))
         .env("XDG_SESSION_TYPE", "x11")
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/nonexistent/termish-test-bus",
+        )
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()
@@ -465,6 +473,85 @@ fn missing_heartbeat_expires_connection_and_reaps_encoder() {
     let end = Instant::now() + Duration::from_secs(3);
     while unsafe { libc::kill(pid, 0) } == 0 {
         assert!(Instant::now() < end, "encoder survived lease expiry");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "Requires a disposable Xvfb display and FFmpeg"]
+fn hardware_failure_falls_back_in_the_same_connection_with_increasing_sequences() {
+    let mut service = Service::start().expect("ffmpeg required");
+    unsafe {
+        libc::kill(service.child.id() as i32, libc::SIGTERM);
+    }
+    service.child.wait().unwrap();
+    let ffmpeg = Command::new("sh")
+        .args(["-c", "command -v ffmpeg"])
+        .output()
+        .unwrap();
+    let ffmpeg = String::from_utf8(ffmpeg.stdout).unwrap().trim().to_owned();
+    let wrapper = service.dir.join("ffmpeg");
+    // A codec can pass initialization but fail during recording. Emit a short
+    // real H264 stream before exiting, then allow the actual X11 software capture.
+    fs::write(&wrapper, format!(
+        "#!/bin/sh\ncase \"$*\" in\n*-encoders*) printf ' V..... h264_nvenc test\\n'; exit 0;;\n*h264_nvenc*) exec '{ffmpeg}' -hide_banner -loglevel error -f lavfi -i testsrc2=size=640x360:rate=15 -frames:v 6 -c:v libx264 -threads 1 -preset ultrafast -tune zerolatency -x264opts aud=1 -f h264 -;;\nesac\nexec '{ffmpeg}' \"$@\"\n"
+    )).unwrap();
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(service.dir.join("config.json")).unwrap()).unwrap();
+    config["capture_source"] = json!("desktop");
+    config["encoder"] = json!("nvenc");
+    config["menu_bar"] = json!(false);
+    fs::write(service.dir.join("config.json"), config.to_string()).unwrap();
+    fs::write(service.dir.join("settings"), "fps=15\nscale=640:-2\n").unwrap();
+    fs::write(service.dir.join("log"), "").unwrap();
+    service.child = Command::new(env!("CARGO_BIN_EXE_termish-screen-service"))
+        .arg("--config")
+        .arg(service.dir.join("config.json"))
+        .env("XDG_SESSION_TYPE", "x11")
+        .env(
+            "DBUS_SESSION_BUS_ADDRESS",
+            "unix:path=/nonexistent/termish-test-bus",
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    let end = Instant::now() + Duration::from_secs(5);
+    while !fs::read_to_string(service.dir.join("log"))
+        .unwrap()
+        .contains("service started version=")
+    {
+        assert!(Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut stream = service.auth();
+    let mut previous = None;
+    let mut count = 0;
+    loop {
+        heartbeat(&mut stream);
+        let frame = read_packet(&mut stream);
+        assert_eq!(&frame[..4], b"THV2");
+        let sequence = u64::from_be_bytes(frame[4..12].try_into().unwrap());
+        if let Some(old) = previous {
+            assert!(sequence > old);
+        }
+        previous = Some(sequence);
+        count += 1;
+        let log = fs::read_to_string(service.dir.join("log")).unwrap();
+        if count >= 10 && log.contains("falling back to libx264") {
+            assert!(log.contains("selected encoder=h264_nvenc"));
+            break;
+        }
+        assert!(
+            Instant::now() < end,
+            "hardware failure did not recover: {log}"
+        );
+    }
+    drop(stream);
+    let end = Instant::now() + Duration::from_secs(3);
+    while service.dir.join("encoder.pid").exists() {
+        assert!(Instant::now() < end, "fallback encoder survived disconnect");
         std::thread::sleep(Duration::from_millis(20));
     }
 }

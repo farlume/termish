@@ -81,6 +81,7 @@ class ScreenInstallScriptTest {
             ffmpegPresent: Boolean = false,
             xlibPresent: Boolean = true,
             waylandDependenciesPresent: Boolean = true,
+            desktopManagerPresent: Boolean = true,
             isRoot: Boolean = false,
             hasSudo: Boolean = true,
             passwordless: Boolean = false,
@@ -89,6 +90,7 @@ class ScreenInstallScriptTest {
             ffmpegPresent = ffmpegPresent,
             xlibPresent = xlibPresent,
             waylandDependenciesPresent = waylandDependenciesPresent,
+            desktopManagerPresent = desktopManagerPresent,
             isRoot = isRoot,
             hasSudo = hasSudo,
             sudoPasswordless = passwordless,
@@ -96,6 +98,7 @@ class ScreenInstallScriptTest {
         assertTrue(needs())
         assertTrue(needs(ffmpegPresent = true, xlibPresent = false))
         assertTrue(needs(ffmpegPresent = true, waylandDependenciesPresent = false))
+        assertTrue(needs(ffmpegPresent = true, desktopManagerPresent = false))
         assertFalse(needs(os = "Darwin"))
         assertFalse(needs(ffmpegPresent = true))
         assertFalse(needs(isRoot = true))

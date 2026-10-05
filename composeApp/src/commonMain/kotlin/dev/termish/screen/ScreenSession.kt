@@ -60,7 +60,7 @@ internal data class ScreenSessionMessages(
  * - macOS 的 TCC 只对 GUI 登录会话放行屏幕捕获，SSH/mosh 后台会话无论给
  *   sshd/ffmpeg 授权都无法抓屏（实测：挂起/黑帧/退出）。
  * - 因此推流进程（ffmpeg avfoundation 抓屏 → VideoToolbox 硬编 H.264；
- *   Linux 退回落 libx264 软编）作为
+ *   Linux 自动探测硬件编码，失败时回退 libx264）作为
  *   LaunchAgent 跑在用户 GUI 域（launchctl bootstrap gui/$(id -u)），常驻
  *   监听回环端口；手机侧复用 SSH 传输视频/控制 TCP 流，不需要
  *   额外公网端口或 UDP 回程。
@@ -588,6 +588,11 @@ class ScreenSession internal constructor(
                 val isRoot =
                     os == "Linux" &&
                         withContext(ioDispatcher()) { s.runCommand("id -u", 3_000)?.trim() == "0" }
+                val desktopManagerPresent =
+                    os != "Linux" ||
+                        withContext(ioDispatcher()) {
+                            s.runCommand("command -v zenity", 3_000)?.isNotBlank() == true
+                        }
                 val hasSudo =
                     os == "Linux" &&
                         !isRoot &&
@@ -596,7 +601,7 @@ class ScreenSession internal constructor(
                         }
                 val sudoPasswordless =
                     if (os == "Linux" &&
-                        (!ffmpegPresent || !xlibPresent || !waylandDependenciesPresent) &&
+                        (!ffmpegPresent || !xlibPresent || !waylandDependenciesPresent || !desktopManagerPresent) &&
                         !isRoot &&
                         hasSudo
                     ) {
@@ -614,6 +619,7 @@ class ScreenSession internal constructor(
                         ffmpegPresent = ffmpegPresent,
                         xlibPresent = xlibPresent,
                         waylandDependenciesPresent = waylandDependenciesPresent,
+                        desktopManagerPresent = desktopManagerPresent,
                         isRoot = isRoot,
                         hasSudo = hasSudo,
                         sudoPasswordless = sudoPasswordless,
@@ -821,12 +827,13 @@ class ScreenSession internal constructor(
             ffmpegPresent: Boolean,
             xlibPresent: Boolean = true,
             waylandDependenciesPresent: Boolean = true,
+            desktopManagerPresent: Boolean = true,
             isRoot: Boolean,
             hasSudo: Boolean,
             sudoPasswordless: Boolean,
         ): Boolean =
             os == "Linux" &&
-                (!ffmpegPresent || !xlibPresent || !waylandDependenciesPresent) &&
+                (!ffmpegPresent || !xlibPresent || !waylandDependenciesPresent || !desktopManagerPresent) &&
                 !isRoot &&
                 hasSudo &&
                 !sudoPasswordless
@@ -932,13 +939,14 @@ class ScreenSession internal constructor(
               || ss -ltn 2>/dev/null | grep -q ":${'$'}((PORT + 2)) "); then
               echo "SCREEN_VIDEO_SERVICE_MISSING" >&2; exit 1
             fi
-            # 屏幕状态探测（仅提示，不阻断推流）：息屏时 avfoundation 无帧、
-            # 锁屏时画面为锁屏界面——客户端据此给出明确提示而非「连接不上」
+            # 屏幕状态探测仅提示，不阻断推流；Linux 同样查询当前用户图形会话。
             if [ "${'$'}OS" = "Darwin" ]; then
-            NATIVE="${'$'}HOME/Library/Application Support/termish/Termish Helper.app/Contents/MacOS/Termish Helper"
+              NATIVE="${'$'}HOME/Library/Application Support/termish/Termish Helper.app/Contents/MacOS/Termish Helper"
+            else
+              NATIVE="${'$'}HOME/Library/Application Support/termish/screen-service"
+            fi
             if [ -x "${'$'}NATIVE" ] && [ "${'$'}(cat "${'$'}HOME/Library/Application Support/termish/screen-service.backend" 2>/dev/null)" = "rust" ]; then
               "${'$'}NATIVE" --display-state 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
-            fi
             fi
             # 推流参数回读（客户端同步档位显示；conf 可能为其它端写入的旧值）
             CFG="${'$'}HOME/.termish-screen.conf"

@@ -1,4 +1,4 @@
-mod strings;
+use crate::desktop_strings::AppStrings;
 use crate::{
     config::{CaptureSource, Config, VERSION},
     management::{Action, Management, Outcome},
@@ -13,7 +13,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use strings::AppStrings;
 
 extern "C" {
     fn termish_menu_create(paths: *const c_char, callback: extern "C" fn(u32)) -> bool;

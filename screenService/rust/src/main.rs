@@ -1,10 +1,17 @@
 mod config;
+#[cfg(target_os = "linux")]
+mod desktop;
+#[path = "menu/strings.rs"]
+mod desktop_strings;
+mod encoding;
 mod management;
 #[cfg(target_os = "macos")]
 mod menu;
 #[cfg(any(target_os = "macos", test))]
 mod permission;
 mod platform;
+#[cfg(any(target_os = "linux", test))]
+mod process;
 mod protocol;
 mod service;
 use std::{env, fs, io, path::PathBuf, sync::atomic::Ordering};
@@ -19,14 +26,38 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     let mut port = None;
     let mut ffmpeg = None;
     let mut check = false;
+    #[cfg(target_os = "linux")]
+    let (mut manage, mut install_desktop, mut check_encoder, mut control) =
+        (false, false, false, None);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            #[cfg(target_os = "linux")]
+            "--manage" => manage = true,
+            #[cfg(target_os = "linux")]
+            "--install-desktop" => install_desktop = true,
+            #[cfg(target_os = "linux")]
+            "--check-encoder" => check_encoder = true,
+            #[cfg(target_os = "linux")]
+            "--control" => {
+                control = Some(
+                    match args.next().ok_or("control action missing")?.as_str() {
+                        "status" => 0,
+                        "toggle" => 1,
+                        "disconnect" => 2,
+                        "restart" => 3,
+                        "quit" => 4,
+                        "pause" => 5,
+                        "resume" => 6,
+                        _ => return Err("unknown control action".into()),
+                    },
+                )
+            }
             "--version" => {
                 println!("{}", config::VERSION);
                 return Ok(());
             }
             "--help" => {
-                println!("Termish screen service\n--version --config FILE --port PORT --ffmpeg FILE --check-config\n--write-config FILE PORT FFMPEG\n--write-launch-agent FILE\n--display-state");
+                println!("Termish screen service\n--version --config FILE --port PORT --ffmpeg FILE --check-config\n--write-config FILE PORT FFMPEG\n--write-launch-agent FILE\n--display-state\nLinux: --install-desktop --manage --check-encoder --control {{status|pause|resume|toggle|disconnect|restart|quit}}");
                 return Ok(());
             }
             "--display-state" => {
@@ -123,6 +154,36 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     let config = config::Config::load(path.as_deref(), port, ffmpeg)?;
+    #[cfg(target_os = "linux")]
+    {
+        if check_encoder {
+            let backend = encoding::select(
+                &config.ffmpeg,
+                config.encoder,
+                &std::sync::atomic::AtomicBool::new(false),
+            );
+            println!(
+                "{}",
+                serde_json::json!({"requested":config.encoder,"selected":backend.codec()})
+            );
+            return Ok(());
+        }
+        if install_desktop {
+            desktop::install()?;
+            return Ok(());
+        }
+        if let Some(action) = control {
+            let result = desktop::control(&config, if action == 0 { None } else { Some(action) })?;
+            if !result.is_empty() {
+                println!("{result}");
+            }
+            return Ok(());
+        }
+        if manage {
+            desktop::manage(&config)?;
+            return Ok(());
+        }
+    }
     if check {
         let mut summary = serde_json::to_value(&config)?;
         summary["token_ready"] = true.into();
@@ -140,14 +201,14 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         service::run(config, management)?
     };
-    #[cfg(not(target_os = "macos"))]
-    let outcome = service::run(config, management)?;
+    #[cfg(target_os = "linux")]
+    let outcome = desktop::run(config, management)?;
     if outcome == management::Outcome::Restart {
         let managed = env::var("XPC_SERVICE_NAME").is_ok_and(|name| {
             name == "dev.termish.screen" || name.starts_with("dev.termish.screen.")
-        });
+        }) || env::var("TERMISH_SYSTEMD_SERVICE").is_ok_and(|value| value == "1");
         if managed {
-            // launchd restarts unsuccessful exits, but leaves menu Quit alone.
+            // launchd/systemd restart unsuccessful exits, but leave menu Quit alone.
             std::process::exit(1);
         }
         std::process::Command::new(env::current_exe()?)

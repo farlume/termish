@@ -6,15 +6,14 @@ use std::sync::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-// Linux remains headless; actions are constructed by the macOS menu or tests.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 pub enum Action {
     TogglePause = 1,
     Disconnect = 2,
     Restart = 3,
     Quit = 4,
+    Pause = 5,
+    Resume = 6,
 }
-#[cfg(any(target_os = "macos", test))]
 impl Action {
     pub fn from_raw(value: u32) -> Option<Self> {
         match value {
@@ -22,6 +21,8 @@ impl Action {
             2 => Some(Self::Disconnect),
             3 => Some(Self::Restart),
             4 => Some(Self::Quit),
+            5 => Some(Self::Pause),
+            6 => Some(Self::Resume),
             _ => None,
         }
     }
@@ -37,7 +38,6 @@ pub struct Management {
     pub ready: AtomicBool,
     pub connected: AtomicBool,
     pub paused: AtomicBool,
-    #[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
     sender: Sender<Action>,
     receiver: Mutex<Receiver<Action>>,
 }
@@ -54,7 +54,6 @@ impl Default for Management {
     }
 }
 impl Management {
-    #[cfg(any(target_os = "macos", test))]
     pub fn request(&self, action: Action) {
         let _ = self.sender.send(action);
     }

@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [1.8.6] - 2026-10-05
+
+### 新增
+
+- **Linux 桌面管理**：增加带 Termish 图标的系统托盘和应用列表入口，支持查看连接状态、暂停／恢复访问、断开连接、重启／退出服务、查看日志与打开服务目录；中英文显示，无托盘宿主时可打开管理窗口
+- **Linux 硬件编码**：自动探测 NVENC、QSV、VAAPI 的实际可用性，不可用或运行中失败时回退软件编码；增加编码器诊断与选择配置
+
+### 修复
+
+- **Linux 服务生命周期**：systemd 重启与正常退出采用不同退出状态；修复有用户 D-Bus 但无 systemd 用户管理器时安装中断的问题，回退登录自启动
+- **Linux 显示状态**：补齐本地图形会话锁定状态与 X11 显示器电源检测，手机端可读取被控端状态
+
+### 验证说明
+
+- X11 画面与输入、真实 VAAPI 编码、systemd 重启／退出、完整安装与 LXQt 托盘操作，以及四架构构建、Android/iOS debug 和 SSH/SFTP 集成测试通过
+- 屏幕服务更新至部署版本 59，安装／更新服务后生效；Wayland 锁屏后的采集与控制仍受桌面环境限制，尚未完成真实 GNOME/KDE 锁屏、休眠与解锁验收
+
 ## [1.8.5] - 2026-10-05
 
 ### 修复
@@ -631,7 +648,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.5...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.6...HEAD
+[1.8.6]: https://github.com/farlume/termish/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/farlume/termish/compare/v1.8.4...v1.8.5
 [1.8.4]: https://github.com/farlume/termish/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/farlume/termish/compare/v1.8.2...v1.8.3

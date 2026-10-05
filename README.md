@@ -98,6 +98,10 @@ On macOS, the background companion is **Termish Helper**, with the Termish icon.
 Its menu bar shows connection status and offers pause/resume, disconnect,
 permission settings, restart, logs and quit.
 Screen Recording and Accessibility permissions are granted to this app separately.
+Linux provides the same session controls through a tray menu and an application-list
+management window (including GNOME without tray support). It probes NVENC, QSV and
+VAAPI encoders and falls back to software encoding if hardware is unavailable or fails.
+Lock-screen capture and control remain subject to the desktop's security policy.
 
 See the [Agent Bridge guide](agentBridge/README.md) for the protocol, supported
 approval types and remote storage layout.

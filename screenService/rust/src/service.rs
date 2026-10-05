@@ -20,7 +20,7 @@ use std::{
 
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
-fn log(config: &Config, message: &str) {
+pub(crate) fn log(config: &Config, message: &str) {
     // Deliberately exclude credentials and packet payloads from diagnostics.
     if let Ok(mut file) = OpenOptions::new()
         .create(true)
@@ -101,6 +101,8 @@ struct Session {
     encoder: Mutex<Option<Child>>,
     #[cfg(target_os = "linux")]
     capture: Mutex<Option<platform::wayland::Capture>>,
+    #[cfg(target_os = "linux")]
+    backend: Mutex<Option<crate::encoding::Backend>>,
     adapt: Mutex<Adaptation>,
     input: Mutex<Input>,
 }
@@ -121,6 +123,8 @@ impl Session {
             encoder: Mutex::new(None),
             #[cfg(target_os = "linux")]
             capture: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            backend: Mutex::new(None),
             adapt: Mutex::new(Adaptation::default()),
             input: Mutex::new(Input::default()),
         }
@@ -175,11 +179,38 @@ impl Session {
         let wayland = platform::wayland::active();
         #[cfg(not(target_os = "linux"))]
         let wayland = false;
+        #[cfg(target_os = "linux")]
+        let backend = if self.config.capture_source == CaptureSource::Desktop {
+            let mut selected = self.backend.lock().unwrap();
+            if selected.is_none() {
+                let backend = crate::encoding::select(
+                    &self.config.ffmpeg,
+                    self.config.encoder,
+                    &self.stopped,
+                );
+                log(
+                    &self.config,
+                    &format!("selected encoder={}", backend.codec()),
+                );
+                *selected = Some(backend);
+            }
+            selected.as_ref().unwrap().clone()
+        } else {
+            crate::encoding::Backend::Software
+        };
+        #[cfg(not(target_os = "linux"))]
+        let backend = crate::encoding::Backend::Software;
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "session stopped",
+            ));
+        }
         let mut command = Command::new(&self.config.ffmpeg);
         let args = if self.config.capture_source == CaptureSource::TestPattern {
             cfg.args_for_test_pattern()
         } else {
-            cfg.args_for_capture(scale, wayland)
+            cfg.args_for_encoder(scale, wayland, &backend)
         };
         command
             .args(args)
@@ -233,6 +264,19 @@ impl Session {
         if restart {
             self.kill_encoder();
         }
+    }
+    #[cfg(target_os = "linux")]
+    fn fallback_hardware(&self) -> bool {
+        let mut backend = self.backend.lock().unwrap();
+        if backend.as_ref().is_some_and(|b| b.hardware()) {
+            log(
+                &self.config,
+                "hardware encoder stopped producing video; falling back to libx264",
+            );
+            *backend = Some(crate::encoding::Backend::Software);
+            return true;
+        }
+        false
     }
     fn control(self: Arc<Self>) {
         let Ok(mut reader) = self.socket.try_clone() else {
@@ -378,6 +422,12 @@ impl Session {
                     return Ok(());
                 }
                 let restart = self.adapt.lock().unwrap().restart.take();
+                #[cfg(target_os = "linux")]
+                if (restart.is_none() || restart == Some("encoder output watchdog"))
+                    && self.fallback_hardware()
+                {
+                    continue;
+                }
                 if let Some(reason) = restart {
                     log(
                         &self.config,
@@ -434,8 +484,12 @@ pub fn run(config: Config, management: Arc<Management>) -> io::Result<Outcome> {
         );
         while let Some(action) = management.next_request() {
             match action {
-                Action::TogglePause => {
-                    let paused = !management.paused.load(Ordering::Acquire);
+                Action::TogglePause | Action::Pause | Action::Resume => {
+                    let paused = match action {
+                        Action::Pause => true,
+                        Action::Resume => false,
+                        _ => !management.paused.load(Ordering::Acquire),
+                    };
                     management.paused.store(paused, Ordering::Release);
                     if paused {
                         if let Some(owner) = active.take() {
@@ -569,6 +623,9 @@ mod tests {
     }
     impl ManagedFixture {
         fn start() -> Option<Self> {
+            Self::start_attempt(0)
+        }
+        fn start_attempt(attempt: u8) -> Option<Self> {
             let ffmpeg = crate::config::executable("ffmpeg").ok()?;
             let (probe, video, port) = loop {
                 let probe = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -583,6 +640,7 @@ mod tests {
                 std::env::temp_dir().join(format!("termish-menu-{}-{port}", std::process::id()));
             fs::create_dir_all(&dir).unwrap();
             let config = Config {
+                encoder: crate::encoding::Preference::Software,
                 capture_source: CaptureSource::TestPattern,
                 menu_bar: false,
                 version: crate::config::VERSION,
@@ -600,7 +658,7 @@ mod tests {
             let worker_config = config.clone();
             drop((probe, video));
             let worker = thread::spawn(move || run(worker_config, worker_control));
-            let fixture = Self {
+            let mut fixture = Self {
                 config,
                 control,
                 worker: Some(worker),
@@ -609,10 +667,14 @@ mod tests {
                 fixture.control.ready.load(Ordering::Acquire)
                     || fixture.worker.as_ref().unwrap().is_finished()
             });
-            assert!(
-                fixture.control.ready.load(Ordering::Acquire),
-                "fixture failed to bind"
-            );
+            if !fixture.control.ready.load(Ordering::Acquire) {
+                let error = fixture.worker.take().unwrap().join().unwrap().unwrap_err();
+                drop(fixture);
+                if error.kind() == io::ErrorKind::AddrInUse && attempt < 4 {
+                    return Self::start_attempt(attempt + 1);
+                }
+                panic!("fixture failed to bind: {error}");
+            }
             Some(fixture)
         }
         fn authenticate(&self) -> TcpStream {

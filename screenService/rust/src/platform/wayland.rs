@@ -330,6 +330,9 @@ static PORTAL: OnceLock<Mutex<Option<Portal>>> = OnceLock::new();
 fn portal() -> &'static Mutex<Option<Portal>> {
     PORTAL.get_or_init(|| Mutex::new(None))
 }
+pub fn authorized() -> bool {
+    portal().try_lock().is_ok_and(|p| p.is_some())
+}
 pub fn inject(c: &Control<'_>) -> Result<()> {
     let mut guard = portal().lock().map_err(|_| "portal lock poisoned")?;
     if let Some(p) = guard.as_mut() {

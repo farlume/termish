@@ -92,7 +92,10 @@ echo "==> ffmpeg: $FF_REAL"
 # 每个远端账号独立的 256-bit bearer token：回环 TCP 也会被同机
 # 其它 OS 用户访问，不能把“只监听 127.0.0.1”当作认证边界。
 TOKEN_FILE="$HOME/.termish-screen.token"
-TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)"
+TOKEN=""
+if [ -f "$TOKEN_FILE" ]; then
+  TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)"
+fi
 if ! printf '%s' "$TOKEN" | grep -Eq '^[0-9a-fA-F]{64}$'; then
   umask 077
   TOKEN_TMP="$TOKEN_FILE.tmp.$$"
@@ -102,6 +105,19 @@ fi
 chmod 600 "$TOKEN_FILE"
 # X11 text paste uses xclip; Wayland capture uses the consent-scoped GStreamer PipeWire source.
 if [ "$OS" = "Linux" ]; then
+  # GNOME without a StatusNotifier host uses the application-list management window.
+  if ! command -v zenity >/dev/null 2>&1; then
+    [ "$ADMIN_AVAILABLE" = "1" ] || { echo '==> Desktop management requires zenity and administrator permission' >&2; exit 1; }
+    if command -v apt-get >/dev/null 2>&1; then
+      run_admin sh -c 'apt-get update -qq && apt-get install -y -qq zenity'
+    elif command -v dnf >/dev/null 2>&1; then
+      run_admin dnf install -y -q zenity
+    elif command -v pacman >/dev/null 2>&1; then
+      run_admin pacman -S --needed --noconfirm zenity
+    else
+      echo '==> Install zenity, then retry' >&2; exit 1
+    fi
+  fi
   if [ "${TERMISH_SESSION_TYPE:-}" = "wayland" ]; then
     if ! command -v gst-launch-1.0 >/dev/null 2>&1 || ! gst-inspect-1.0 pipewiresrc >/dev/null 2>&1 || ! gst-inspect-1.0 y4menc >/dev/null 2>&1; then
       [ "$ADMIN_AVAILABLE" = "1" ] || { echo '==> Wayland capture dependencies require administrator permission' >&2; exit 1; }
@@ -337,6 +353,7 @@ After=graphical-session.target
 [Service]
 Type=simple
 ExecStart=%h/.termish-screen-launch.sh
+Environment=TERMISH_SYSTEMD_SERVICE=1
 Restart=on-failure
 RestartSec=2
 
@@ -345,9 +362,10 @@ WantedBy=default.target
 TERMISH_EOF
   export XDG_RUNTIME_DIR="$USER_RUNTIME"
   export DBUS_SESSION_BUS_ADDRESS="unix:path=$USER_RUNTIME/bus"
-  systemctl --user daemon-reload
   # enable --now 不会重启已运行的旧 unit；升级 relay 时必须显式 restart，
-    if systemctl --user enable dev.termish.screen.service \
+  # 会话总线存在不代表 systemd 用户管理器可用；失败时继续桌面自启动。
+  if systemctl --user daemon-reload \
+    && systemctl --user enable dev.termish.screen.service \
     && systemctl --user restart dev.termish.screen.service; then
     SERVICE_STARTED=1
     rm -f "$HOME/.config/autostart/dev.termish.screen.desktop"
@@ -375,6 +393,7 @@ sleep 1.5
 if (lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":$PORT ") \
   && (lsof -nP -iTCP:$((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":$((PORT + 2)) "); then
   echo @RELAY_VERSION@ > "$HOME/.termish-screen.version"
+  "$NATIVE" --install-desktop
   cleanup_legacy_screen_files
   echo "==> TERMISH_SCREEN_OK"
 else

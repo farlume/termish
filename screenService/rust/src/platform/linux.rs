@@ -19,10 +19,22 @@ use x11rb::{
 };
 
 pub fn display_asleep() -> bool {
-    false
+    super::display::state().asleep == Some(true)
 }
-pub fn display_state() {}
+pub fn display_state() {
+    let state = super::display::state();
+    if state.asleep == Some(true) {
+        println!("SCREEN_ASLEEP");
+    }
+    if state.locked == Some(true) {
+        println!("SCREEN_LOCKED");
+    }
+}
 pub fn wake_display() {
+    if super::wayland::active() {
+        // Xwayland DPMS does not control the compositor's physical display.
+        return;
+    }
     // Keep the graphical session awake without changing its DPMS preferences.
     // Installed xset is optional; don't wait indefinitely on a broken display.
     for args in [&["s", "reset"][..], &["dpms", "force", "on"][..]] {

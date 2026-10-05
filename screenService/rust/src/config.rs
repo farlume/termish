@@ -20,6 +20,8 @@ pub struct Settings {
     #[serde(default)]
     pub capture_source: CaptureSource,
     pub menu_bar: Option<bool>,
+    #[serde(default)]
+    pub encoder: crate::encoding::Preference,
     pub port: Option<u16>,
     pub ffmpeg: Option<String>,
     pub token_file: Option<String>,
@@ -32,6 +34,7 @@ pub struct Settings {
 pub struct Config {
     pub capture_source: CaptureSource,
     pub menu_bar: bool,
+    pub encoder: crate::encoding::Preference,
     pub version: &'static str,
     pub port: u16,
     pub ffmpeg: PathBuf,
@@ -130,9 +133,10 @@ impl Config {
         }
         Ok(Self {
             capture_source: settings.capture_source,
-            menu_bar: settings.menu_bar.unwrap_or(
-                cfg!(target_os = "macos") && settings.capture_source == CaptureSource::Desktop,
-            ),
+            encoder: settings.encoder,
+            menu_bar: settings
+                .menu_bar
+                .unwrap_or(settings.capture_source == CaptureSource::Desktop),
             version: VERSION,
             port,
             ffmpeg: executable(
@@ -204,7 +208,16 @@ impl StreamSettings {
     pub fn args(&self, bitrate_scale: u32) -> Vec<String> {
         self.args_for_capture(bitrate_scale, false)
     }
+    #[cfg(test)]
     pub fn args_for_capture(&self, bitrate_scale: u32, wayland: bool) -> Vec<String> {
+        self.args_for_encoder(bitrate_scale, wayland, &crate::encoding::Backend::Software)
+    }
+    pub fn args_for_encoder(
+        &self,
+        bitrate_scale: u32,
+        wayland: bool,
+        backend: &crate::encoding::Backend,
+    ) -> Vec<String> {
         let base = if self.scale == "native" || self.scale.starts_with("2560") {
             24
         } else if self.scale.starts_with("1920") {
@@ -266,10 +279,23 @@ impl StreamSettings {
                 format!("{}.0", env::var("DISPLAY").unwrap_or_else(|_| ":0".into())),
             ]
         };
-        let mut add = |items: &[&str]| args.extend(items.iter().map(|s| s.to_string()));
-        add(&["-hide_banner", "-loglevel", "error", "-vf", &filter]);
+        if !cfg!(target_os = "macos") {
+            args.splice(0..0, backend.device_args());
+        }
+        let filter = if cfg!(target_os = "macos") {
+            filter
+        } else {
+            backend.filter(&filter)
+        };
+        args.extend(["-hide_banner", "-loglevel", "error", "-vf", &filter].map(str::to_owned));
         let rate = format!("{kbps}k");
         let buffer = format!("{}k", (kbps / 2).max(500));
+        if !cfg!(target_os = "macos") && backend.hardware() {
+            args.extend(backend.codec_args(&rate, &buffer, &gop));
+            args.extend(["-f", "h264", "-"].map(str::to_owned));
+            return args;
+        }
+        let mut add = |items: &[&str]| args.extend(items.iter().map(|s| s.to_string()));
         if cfg!(target_os = "macos") {
             add(&[
                 "-c:v",

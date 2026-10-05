@@ -1,4 +1,5 @@
 //! Native desktop strings follow the same bilingual AppStrings convention as the phone.
+#[cfg_attr(target_os = "linux", allow(dead_code))]
 pub struct AppStrings {
     pub starting: &'static str,
     pub idle: &'static str,

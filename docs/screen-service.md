@@ -1,6 +1,6 @@
 # 远程画面服务
 
-> **English summary:** the phone installs precompiled Rust companions over SSH/SFTP for macOS and Linux (X11/Wayland), on arm64 and x86_64. Rust owns authenticated TCP video, native input, portal consent and encoder lifecycle; no remote compiler or interpreter is required. The macOS menu bar exposes session controls, permission settings, restart and diagnostics.
+> **English summary:** the phone installs precompiled Rust companions over SSH/SFTP for macOS and Linux (X11/Wayland), on arm64 and x86_64. Rust owns authenticated TCP video, native input, portal consent and encoder lifecycle; no remote compiler or interpreter is required. macOS provides a menu bar; Linux provides a tray menu and management window, hardware encoder probing with software fallback, and graphical-session lock-state hints.
 
 ## 手机安装与依赖
 
@@ -15,7 +15,11 @@ macOS 后台应用名为 **Termish Helper**，复用 Termish Logo；`LSUIElement
 无需打开应用窗口。Rust 可执行文件位于完整 `.app` 包中，名称同样为 Termish Helper。
 图形登录会话中默认显示菜单栏图标，菜单按系统语言提供中文或英文。
 手机上传整包，经 SHA-256、应用签名和部署版本校验后启用，名称/图标资源属于签名覆盖范围。
-macOS 用 FFmpeg avfoundation/VideoToolbox，X11 用 x11grab/libx264 和 XTEST，文本粘贴依赖 xclip。
+macOS 用 FFmpeg avfoundation/VideoToolbox，X11 用 x11grab 和 XTEST，文本粘贴依赖 xclip。
+Linux 默认先用合成色块探测 NVENC、QSV、VAAPI；FFmpeg 列出编码器不代表驱动能初始化。
+探测有总时限，断开连接可取消；驱动或设备不可用时回退 libx264。实际推流期间硬件编码器退出
+或长时间无输出，同一 TCP 会话内切回软件编码并保留帧序号；软件采集本身失败仍会结束连接。
+系统需有对应显卡驱动及设备访问权限，服务不强制安装或更换驱动。
 Wayland 用 Rust D-Bus RemoteDesktop/ScreenCast Portal 同一授权会话获取画面和输入权限，
 将授权后的 PipeWire FD 交给 GStreamer，视频管道输入 FFmpeg 编码；无需 Xwayland 抓根窗口。
 Portal 响应订阅先于请求，避免快速授权响应丢失；坐标使用授权流的逻辑尺寸。
@@ -98,6 +102,11 @@ Darwin payload 文件名保留 `termish-screen-Darwin-*`，内容为签名应用
 screen-service --config /path/to/screen-service.json --check-config
 screen-service --config /path/to/screen-service.json
 screen-service --display-state
+# Linux：同账号的桌面会话 D-Bus 管理，非网络管理端口
+screen-service --manage
+screen-service --control status
+screen-service --control pause     # resume / disconnect / restart / quit
+screen-service --check-encoder     # 只编码测试色块，不捕获桌面、不绑定端口
 ```
 
 `--version`/`--help` 不需要 FFmpeg/token；`--check-config` 不绑定端口、启动编码器或请求授权，
@@ -108,7 +117,8 @@ screen-service --display-state
 | `port` | 17321 探测、17323 TCP 视频，仅 IPv4 回环 |
 | `ffmpeg` | 安装时解析绝对路径 |
 | `capture_source` | `desktop`；诊断可选 `test_pattern`，只生成测试图案，不抓桌面或注入输入 |
-| `menu_bar` | macOS 桌面采集默认 `true`；`test_pattern` 默认 `false`，可设 `true` 隔离测试菜单；Linux 无菜单 |
+| `menu_bar` | 两个平台的桌面采集默认 `true`；`test_pattern` 默认 `false`，可设 `true` 隔离测试菜单；Linux 为托盘开关，管理窗口和 CLI 独立可用 |
+| `encoder` | Linux 默认 `auto`；可选 `software`、`nvenc`、`qsv`、`vaapi`，指定硬件不可用时仍回退软件；macOS 保持 VideoToolbox |
 | `token_file` | `~/.termish-screen.token`，256-bit token |
 | `log_file` | macOS `~/Library/Logs/termish-screen.err`，Linux `~/.termish-screen.err` |
 | `encoder_pid_file` | `~/.termish-screen-ffmpeg.pid`，诊断及自身子进程清理 |
@@ -122,6 +132,20 @@ screen-service --display-state
 macOS 使用 `dev.termish.screen` LaunchAgent，Linux 使用同名 systemd 用户服务，
 不可用时退回桌面自启动。Linux 启动器重新探测图形会话与 Xauthority。
 
+Linux 用原生 Rust 实现 StatusNotifierItem 与 D-Bus Menu，复用服务的同一生命周期状态；
+KDE 及启用了对应托盘宿主的 GNOME 可显示 Termish 图标。宿主晚启动或重启后自动重新注册。
+GNOME 没有托盘支持时，从应用列表打开 **Termish Helper／Termish 服务管理**，提供相同的管理操作。
+安装器部署品牌 SVG 与桌面启动项，管理窗口依赖 zenity，缺少时与其他系统依赖共用已有 sudo 授权流程。
+服务状态和菜单动作只通过当前账号的会话 D-Bus 暴露（服务名包含端口），不增加公网或回环管理端口。
+无会话总线时远程画面服务仍可运行，管理入口不可用并记录原因。
+
+Linux 菜单显示 X11 桌面可用性或 Wayland Portal 授权状态，查看权限状态不触发授权窗口。
+权限入口提供当前平台的授权指引；Wayland 仍在连接时通过系统窗口选择屏幕并允许控制。
+logind 只读取当前用户活跃、本地的图形会话 `LockedHint`，排除 SSH 与登录界面。
+X11 读取 DPMS 休眠状态并在连接时尝试唤醒；Wayland 不使用 Xwayland DPMS 冒充物理屏幕状态。
+手机端会读取两个平台的锁屏／休眠提示。这是状态提示，不代表 Wayland 允许锁屏捕获或输入；
+不修改安全策略、不保证各桌面支持解锁，真实 GNOME/KDE 锁屏仍需按环境验收。
+
 macOS 菜单由主线程 AppKit `NSStatusItem` 驱动，TCP 接受与会话管理在后台线程运行；
 打开菜单不阻塞视频或心跳。状态显示启动中、等待连接、已连接或访问已暂停。
 「断开连接」清理当前会话，仍允许新连接；「暂停远程访问」清理当前会话并拒绝新鉴权连接，
@@ -133,10 +157,12 @@ macOS 菜单由主线程 AppKit `NSStatusItem` 驱动，TCP 接受与会话管�
 系统设置中已开启但未生效时可选「重启服务／刷新权限」。菜单还可查看日志和打开服务目录。
 诊断画面模式禁用权限入口，避免将测试图案误认为已获得桌面录屏或控制权限。
 
-「重启服务」先释放输入、关闭连接并清理编码器，再由 LaunchAgent 拉起新进程；
-独立运行时用相同路径与参数重启。LaunchAgent 设置 `RunAtLoad=true`、
+「重启服务」先释放输入、关闭连接并清理编码器，再由服务监督器拉起新进程。
+Linux systemd 单元设置 `TERMISH_SYSTEMD_SERVICE=1`、`Restart=on-failure`，重启动作以失败码退出
+让监督器拉起替代进程；正常退出不会立即重启。桌面自启动或独立运行则保留原参数启动替代进程。
+macOS LaunchAgent 设置 `RunAtLoad=true`、
 `KeepAlive={SuccessfulExit:false}`，异常退出会重启，「退出 Termish Helper」正常退出后不会立即拉起。
-退出不移除 LaunchAgent，下次登录仍自动启动；手机重新安装/显式启动服务也会再次启动。
+退出不移除自启动配置，下次登录仍自动启动；手机重新安装/显式启动服务也会再次启动。
 
 鉴权前不启动编码器、不返回状态或画面；健康客户端占用时返回 `THS1 + 3`。
 macOS 缺录屏权限返回 `THS1 + 4` 并关闭连接，不创建编码器或占用画面会话。
@@ -161,9 +187,18 @@ cargo test --locked --manifest-path screenService/rust/Cargo.toml \
 # Linux：独立虚拟桌面的真实捕获、Tab、Unicode 剪贴板与断线释放
 xvfb-run -a -s '-screen 0 640x360x24' cargo test --locked \
   --manifest-path screenService/rust/Cargo.toml real_x11 -- --ignored --test-threads=1
+# 私有会话总线：托盘协议、宿主重启、暂停/断开/退出及 systemd 退出码
+cargo test --locked --manifest-path screenService/rust/Cargo.toml \
+  --test linux_desktop -- --ignored --test-threads=1 --skip management_window
+# 无托盘宿主时的中英文管理窗口，使用虚拟桌面
+xvfb-run -a -s '-screen 0 960x720x24' cargo test --locked \
+  --manifest-path screenService/rust/Cargo.toml management_window -- --ignored --test-threads=1
+# 初始化成功但实际硬件编码失败：不断开连接，回退后帧序号继续递增
+xvfb-run -a -s '-screen 0 640x360x24' cargo test --locked \
+  --manifest-path screenService/rust/Cargo.toml hardware_failure -- --ignored --test-threads=1
 ```
 
-测试依赖 Rust、FFmpeg；Linux 场景另需 dbus-daemon、Xvfb、xauth、xev、xdotool、xclip。
+测试依赖 Rust、FFmpeg；Linux 场景另需 dbus-daemon、Xvfb、xauth、xev、xdotool、xclip、zenity、desktop-file-utils；中文窗口截图需 CJK 字体。
 合成画面测试使用临时 HOME/配置、独立 token 与随机端口。手机测试验证 SFTP 安装与 TCP
 视频解析。真实安装会影响账号已有服务，默认 SKIP，仅显式设置
 `TERMISH_TEST_INSTALL_SCREEN=1` 时运行。真实系统授权、锁屏/休眠、Wayland 桌面行为需人工验证。
