@@ -23,6 +23,8 @@ Linux 默认先用合成色块探测 NVENC、QSV、VAAPI；FFmpeg 列出编码�
 Wayland 用 Rust D-Bus RemoteDesktop/ScreenCast Portal 同一授权会话获取画面和输入权限，
 将授权后的 PipeWire FD 交给 GStreamer，视频管道输入 FFmpeg 编码；无需 Xwayland 抓根窗口。
 Portal 响应订阅先于请求，避免快速授权响应丢失；坐标使用授权流的逻辑尺寸。
+`CreateSession` 响应中的 `session_handle` 按 Portal 的兼容性约定为字符串（`s`），
+校验后再转为后续方法需要的对象路径（`o`）；不能直接按对象路径变体解码。
 
 macOS 屏幕录制、辅助功能与 Wayland Portal 均需系统授权。新的可执行文件身份可能需要重新授权。
 服务运行在图形登录会话中，锁屏、休眠、注销及操作系统安全限制仍然适用。

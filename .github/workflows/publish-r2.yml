@@ -35,8 +35,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Test release tooling
-        run: node --test scripts/tests/*.test.mjs
       - name: Upload release to R2 and verify public downloads
         env:
           GH_TOKEN: ${{ github.token }}

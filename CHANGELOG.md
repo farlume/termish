@@ -5,6 +5,21 @@
 
 ## [Unreleased]
 
+## [1.8.7] - 2026-10-05
+
+### 修复
+
+- **Wayland 授权窗口**：按 Portal 接口约定解析字符串类型的会话句柄，修复连接在请求授权窗口之前报 `incorrect type` 并断开的错误；回归测试改用真实接口返回类型
+
+### 变更
+
+- **构建费用**：CI 仅由 `v*` 标签或手动触发，负责构建、打包和发布；测试与 lint 在本地完成，流程记录在 `AGENTS.md`，避免 `main` 与标签重复构建及云端重复检查
+
+### 验证说明
+
+- Linux 单元测试、真实返回类型的 Portal 回归、四架构构建及 Android debug 检查通过；已在 66 的 KDE Wayland 会话确认真实授权窗口创建，批准后的画面与输入仍待实机验收
+- 屏幕服务更新至部署版本 60；需使用新版 App 更新被控端服务，以免旧 App 重新安装旧版服务
+
 ## [1.8.6] - 2026-10-05
 
 ### 新增
@@ -648,7 +663,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.6...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.7...HEAD
+[1.8.7]: https://github.com/farlume/termish/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/farlume/termish/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/farlume/termish/compare/v1.8.4...v1.8.5
 [1.8.4]: https://github.com/farlume/termish/compare/v1.8.3...v1.8.4

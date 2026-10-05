@@ -8,8 +8,9 @@ Stack: Kotlin 2.1.21 · Compose Multiplatform 1.8.1 · AGP 8.9.2 · Gradle 8.14.
 
 The README introduces the app; full build/test docs live in `CONTRIBUTING.md`
 (Build & Test). All workflow tasks are
-defined in the root `build.gradle.kts`; `Makefile` targets are thin aliases — CI
-reuses the same Gradle tasks, so `make X` and `./gradlew <task>` are equivalent.
+defined in the root `build.gradle.kts`; `Makefile` targets are thin aliases, so
+`make X` and `./gradlew <task>` are equivalent. Tests and lint run locally;
+CI is reserved for building, packaging and publishing.
 
 ## Common commands
 
@@ -105,6 +106,24 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
 - **提交与发版必须等用户明确确认**：本地改动攒批即可，**不得擅自** `git commit` / `make bump` / 打 tag / `git push`（历史教训：用户反馈 bug 后直接推送 GitHub 是不被接受的）。完成一个功能块后：本地验证（①/②）+ 汇报结果，**等用户说「提交/发版」再动 git**；中途防丢失用 `git stash` 或 WIP commit（WIP 不 push）
 - 改动涉及 `term/` 或 `mosh/` 时先跑 ① 再上模拟器（秒级反馈，别浪费模拟器循环）
 
+### 本地检查与 tag 发布流程
+
+- **检查全部在本地完成**：提交前先运行 `./gradlew ktlintFormat`，再运行
+  `make test lint lint-kt`；传输层改动另跑 `make test-integration`。
+  修改 Rust 服务时运行对应服务的 `scripts/service-test.sh`；修改发布工具时运行
+  `node --test scripts/tests/*.test.mjs`。按改动范围完成上面的模拟器、端到端和真机验证，
+  明确记录 PASS / FAIL / SKIP，不能把未验证的场景报为通过。
+- **发版仍需用户明确授权**：获得「提交/发版」指令后，用 `make bump V=X.Y.Z`
+  同步版本，在本地运行 `make release` 并检查签名和产物；检查通过后提交、打
+  `vX.Y.Z` tag，再推送提交和 tag。检查失败先修复，不推送发版 tag。
+- **CI 仅构建、打包和发布**：自动入口只保留 `v*` tag，另保留手动构建入口；
+  `main` 推送和 PR 不触发流水线。tag 推送后直接构建原生服务、打包安装包、发布
+  GitHub Release 并同步 R2，不重复运行单元测试、集成测试或 lint。
+- **保留发布产物校验**：tag 与项目版本一致性、签名配置、安装包签名及文件摘要校验
+  仍属于打包发布流程，用于避免发布错版、未签名或损坏的文件。
+- 用户要求不跟踪 GitHub 状态时，推送成功后结束；如实说明流水线已触发，
+  不轮询构建状态，也不把尚未确认的发布结果报为成功。
+
 ## Testing discipline
 
 - Any change to `term/` (escape sequences, buffer, wide-char behavior) → add a
@@ -127,7 +146,7 @@ make release    # 产物 composeApp/build/outputs/{apk,bundle}/release/
   （自动修复 import 排序/缩进/换行/unused import），再 `./gradlew ktlintCheck`
   确认——**禁止直接 check**（可自动修复的格式问题会导致反复失败，历史教训：
   import 未排序、unused import 残留、Kotlin 字符串里 `${'$'}` 字面转义写错
-  显示变量名）。提交前 `make lint-kt` 必过（CI 同款）
+  显示变量名）。提交前本地 `make lint-kt` 必过
 - **Kotlin 字符串插值**：python 批量脚本写入 Kotlin 源码时，模板串里的 `$var`/
   `${expr}` 直接写（python 无 `$` 语义），**不要用 `${'$'}` 转义**——那会让
   用户看到字面变量名（历史教训：帧率档位显示 `$fps`）

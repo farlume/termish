@@ -2,10 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -28,10 +25,6 @@ jobs:
         run: |
           sh scripts/service-build.sh build-screen --all
           sh scripts/service-build.sh build-agent --all
-      - name: Test isolated native service
-        run: |
-          sh scripts/service-test.sh screenService
-          sh scripts/service-test.sh agentBridge
       - uses: actions/upload-artifact@v4
         with:
           name: remote-service-payloads
@@ -40,19 +33,8 @@ jobs:
             agentBridge/build/binaries/
           if-no-files-found: error
 
-  release-tools:
-    name: Release tooling tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - run: node --test scripts/tests/*.test.mjs
-
   # ---------------------------------------------------------------------------
-  # Android：单测 + lint 始终跑；debug/release 产物全部上传 artifact 留档
-  #（PR 只跑检查，不打包省额度）
+  # Android：检查在本地完成，CI 仅构建打包；tag 只构建 release，手动构建另留 debug。
   #
   # release 签名是可选的：仓库配置好下面 4 个 Secrets 后自动签名，
   # 未配置时产出未签名 APK/AAB（仅用于自测）。
@@ -98,7 +80,7 @@ jobs:
           fi
           echo "版本一致：Android / iOS $TAG"
 
-      # 正式 tag 绝不允许降级为 unsigned 产物；普通 main 构建仍可生成未签名
+      # 正式 tag 绝不允许降级为 unsigned 产物；手动构建仍可生成未签名
       # release artifact 供内部检查，但不会进入 GitHub Release。
       - name: Verify release signing configuration
         if: startsWith(github.ref, 'refs/tags/v')
@@ -109,35 +91,13 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: ./gradlew checkSigningSecrets
 
-      - name: Prepare SSH integration tests
-        # sshd 以 runner 用户启动；Ubuntu 特权分离目录需预先创建。
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openssh-server netcat-openbsd ffmpeg dbus xvfb x11-utils xdotool xclip xauth
-          sudo mkdir -p /run/sshd
-
-      # 检查先行：单测失败即停，不产出包
-      - name: Run checks (unit + integration tests + lint)
-        run: |
-          ./gradlew \
-            agentBridgeTest \
-            ktlintCheck \
-            testIntegration \
-            :composeApp:lintRelease
-
-      - name: Test isolated Linux desktop services
-        run: |
-          cargo test --locked --manifest-path screenService/rust/Cargo.toml portal_scopes_video_and_input_and_passes_owned_fd -- --ignored --test-threads=1
-          xvfb-run -a -s '-screen 0 640x360x24' cargo test --locked --manifest-path screenService/rust/Cargo.toml real_x11 -- --ignored --test-threads=1
-
       - name: Build debug APK
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         run: ./gradlew :composeApp:assembleDebug
 
       # release 签名：仓库 secrets 以进程环境变量注入，构建脚本读取并解码 base64。
       # 本地读取项目根 .env；密钥库解码到 build/signing/。
       - name: Build release APK and AAB
-        if: github.event_name != 'pull_request'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -146,7 +106,10 @@ jobs:
         run: |
           ./gradlew \
             :composeApp:assembleRelease \
-            :composeApp:bundleRelease
+            :composeApp:bundleRelease \
+            -x :composeApp:lintVitalAnalyzeRelease \
+            -x :composeApp:lintVitalReportRelease \
+            -x :composeApp:lintVitalRelease
 
       - name: Verify release artifact signatures
         if: startsWith(github.ref, 'refs/tags/v')
@@ -168,7 +131,7 @@ jobs:
             || { echo "::error::AAB jarsigner 校验未通过（被篡改/损坏？）"; exit 1; }
 
       - name: Upload debug APK
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: android-debug
@@ -176,7 +139,7 @@ jobs:
           if-no-files-found: error
 
       - name: Rename release assets with build stamp
-        if: github.event_name != 'pull_request' && !startsWith(github.ref, 'refs/tags/v')
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         # 测试包不改 versionName/versionCode（同号覆盖安装允许，正式发版不受
         # run_number 膨胀影响）；文件名带 run 号 + 短 SHA，下载后可溯源是
         # 哪次构建。tag 发版不改名：release job 的重命名步骤依赖原始文件名
@@ -192,7 +155,6 @@ jobs:
           ls apk/release bundle/release
 
       - name: Upload release APK and AAB
-        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: android-release
@@ -207,7 +169,7 @@ jobs:
   release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, release-tools]
+    needs: [android]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

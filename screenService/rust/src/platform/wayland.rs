@@ -115,6 +115,18 @@ async fn wait_for_portal<T>(
         result = tokio::time::timeout(Duration::from_secs(90), work) => result.map_err(|_| "portal authorization timed out")?,
     }
 }
+fn session_handle(created: &Options) -> Result<OwnedObjectPath> {
+    // Portal keeps this response value as a string for backwards compatibility,
+    // even though the subsequent methods take an object-path argument.
+    let value = created
+        .get("session_handle")
+        .ok_or("missing portal session")?;
+    let path: &str = value
+        .try_into()
+        .map_err(|e| format!("invalid portal session handle type: {e}"))?;
+    OwnedObjectPath::try_from(path)
+        .map_err(|e| format!("invalid portal session handle path: {e}").into())
+}
 struct Portal {
     runtime: tokio::runtime::Runtime,
     conn: Connection,
@@ -140,11 +152,7 @@ impl Portal {
                 OwnedValue::from(zbus::zvariant::Str::from(session_token.as_str())),
             );
             let created = request(&conn, REMOTE, "CreateSession", None, options, cancelled).await?;
-            let session: OwnedObjectPath = created
-                .get("session_handle")
-                .ok_or("missing portal session")?
-                .try_clone()?
-                .try_into()?;
+            let session = session_handle(&created)?;
             let result: Result<(u32, f64, f64, Option<u64>)> = async {
                 request(
                     &conn,
@@ -461,6 +469,21 @@ pub fn capture(
 mod tests {
     use super::*;
     #[test]
+    fn session_handle_validates_string_paths_from_portal() {
+        let values = HashMap::from([(
+            "session_handle".into(),
+            OwnedValue::from(zbus::zvariant::Str::from(SESSION)),
+        )]);
+        assert_eq!(session_handle(&values).unwrap().as_str(), SESSION);
+        assert!(session_handle(&Options::new()).is_err());
+        for invalid in [
+            OwnedValue::from(3u32),
+            OwnedValue::from(zbus::zvariant::Str::from("not/a/path")),
+        ] {
+            assert!(session_handle(&HashMap::from([("session_handle".into(), invalid)])).is_err());
+        }
+    }
+    #[test]
     fn cancelled_authorization_does_not_wait_for_portal_timeout() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -534,9 +557,7 @@ mod tests {
                 options,
                 HashMap::from([(
                     "session_handle".into(),
-                    zbus::zvariant::Value::from(OwnedObjectPath::try_from(SESSION).unwrap())
-                        .try_to_owned()
-                        .unwrap(),
+                    OwnedValue::from(zbus::zvariant::Str::from(SESSION)),
                 )]),
             )
             .await
