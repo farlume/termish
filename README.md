@@ -95,6 +95,8 @@ configuration and diagnostics are documented in the [screen service guide](docs/
 The phone uploads precompiled Rust services over SSH/SFTP for macOS and Linux
 (X11 or Wayland), on arm64 and x86_64. The computer needs no Rust compiler.
 On macOS, the background companion is **Termish Helper**, with the Termish icon.
+Its menu bar shows connection status and offers pause/resume, disconnect,
+permission settings, restart, logs and quit.
 Screen Recording and Accessibility permissions are granted to this app separately.
 
 See the [Agent Bridge guide](agentBridge/README.md) for the protocol, supported

@@ -1,4 +1,7 @@
 mod config;
+mod management;
+#[cfg(target_os = "macos")]
+mod menu;
 #[cfg(any(target_os = "macos", test))]
 mod permission;
 mod platform;
@@ -53,7 +56,7 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
                     .replace('>', "&gt;")
                     .replace('"', "&quot;")
                     .replace('\'', "&apos;");
-                let plist = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>dev.termish.screen</string>\n<key>ProgramArguments</key><array><string>{escaped}</string></array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><true/>\n</dict></plist>\n");
+                let plist = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict>\n<key>Label</key><string>dev.termish.screen</string>\n<key>ProgramArguments</key><array><string>{escaped}</string></array>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n</dict></plist>\n");
                 let mut output = fs::OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -130,7 +133,27 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         libc::signal(libc::SIGTERM, shutdown as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, shutdown as *const () as libc::sighandler_t);
     }
-    service::run(config)?;
+    let management = std::sync::Arc::new(management::Management::default());
+    #[cfg(target_os = "macos")]
+    let outcome = if config.menu_bar {
+        menu::run(config, management)?
+    } else {
+        service::run(config, management)?
+    };
+    #[cfg(not(target_os = "macos"))]
+    let outcome = service::run(config, management)?;
+    if outcome == management::Outcome::Restart {
+        let managed = env::var("XPC_SERVICE_NAME").is_ok_and(|name| {
+            name == "dev.termish.screen" || name.starts_with("dev.termish.screen.")
+        });
+        if managed {
+            // launchd restarts unsuccessful exits, but leaves menu Quit alone.
+            std::process::exit(1);
+        }
+        std::process::Command::new(env::current_exe()?)
+            .args(env::args_os().skip(1))
+            .spawn()?;
+    }
     Ok(())
 }
 fn main() {

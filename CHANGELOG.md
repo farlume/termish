@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+## [1.8.4] - 2026-10-05
+
+### 新增
+
+- **macOS 菜单栏**：Termish Helper 显示菜单栏图标，提供连接状态、断开当前连接、暂停／恢复访问、录屏与控制权限设置、重启服务、查看日志和打开服务目录；按系统语言显示中文或英文
+
+### 优化
+
+- **服务退出与重启**：菜单动作复用现有会话清理，释放输入并回收编码器；正常退出不再被 LaunchAgent 立即拉起，异常退出仍自动重启，下次登录仍自动启动
+- **菜单与连接并行**：菜单在 macOS 主线程运行，连接管理在后台线程运行，继续使用原有 FFmpeg 采集和编码方案
+
+### 验证说明
+
+- macOS 原生菜单动作、真实合成视频连接的暂停／恢复／断开／重启／退出、隔离 LaunchAgent 生命周期、四种目标构建及 SSH/SFTP 集成测试通过；无窗口菜单的手动视觉点击验收未完成
+- 屏幕服务更新至部署版本 58；暂停只在当前进程有效，重启后恢复访问。macOS 服务仍采用临时签名，升级后若权限失效，需要重新授权 Termish Helper 并重启服务
+
 ## [1.8.3] - 2026-10-04
 
 ### 修复
@@ -603,7 +619,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.3...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.4...HEAD
+[1.8.4]: https://github.com/farlume/termish/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/farlume/termish/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/farlume/termish/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/farlume/termish/compare/v1.8.0...v1.8.1

@@ -1,6 +1,6 @@
 # 远程画面服务
 
-> **English summary:** the phone installs precompiled Rust companions over SSH/SFTP for macOS and Linux (X11/Wayland), on arm64 and x86_64. Rust owns authenticated TCP video, native input, portal consent and encoder lifecycle; no remote compiler or interpreter is required.
+> **English summary:** the phone installs precompiled Rust companions over SSH/SFTP for macOS and Linux (X11/Wayland), on arm64 and x86_64. Rust owns authenticated TCP video, native input, portal consent and encoder lifecycle; no remote compiler or interpreter is required. The macOS menu bar exposes session controls, permission settings, restart and diagnostics.
 
 ## 手机安装与依赖
 
@@ -11,6 +11,7 @@
 
 macOS 后台应用名为 **Termish Helper**，复用 Termish Logo；`LSUIElement` 隐藏 Dock 图标，
 无需打开应用窗口。Rust 可执行文件位于完整 `.app` 包中，名称同样为 Termish Helper。
+图形登录会话中默认显示菜单栏图标，菜单按系统语言提供中文或英文。
 手机上传整包，经 SHA-256、应用签名和部署版本校验后启用，名称/图标资源属于签名覆盖范围。
 macOS 用 FFmpeg avfoundation/VideoToolbox，X11 用 x11grab/libx264 和 XTEST，文本粘贴依赖 xclip。
 Wayland 用 Rust D-Bus RemoteDesktop/ScreenCast Portal 同一授权会话获取画面和输入权限，
@@ -105,6 +106,7 @@ screen-service --display-state
 | `port` | 17321 探测、17323 TCP 视频，仅 IPv4 回环 |
 | `ffmpeg` | 安装时解析绝对路径 |
 | `capture_source` | `desktop`；诊断可选 `test_pattern`，只生成测试图案，不抓桌面或注入输入 |
+| `menu_bar` | macOS 桌面采集默认 `true`；`test_pattern` 默认 `false`，可设 `true` 隔离测试菜单；Linux 无菜单 |
 | `token_file` | `~/.termish-screen.token`，256-bit token |
 | `log_file` | macOS `~/Library/Logs/termish-screen.err`，Linux `~/.termish-screen.err` |
 | `encoder_pid_file` | `~/.termish-screen-ffmpeg.pid`，诊断及自身子进程清理 |
@@ -117,6 +119,22 @@ screen-service --display-state
 
 macOS 使用 `dev.termish.screen` LaunchAgent，Linux 使用同名 systemd 用户服务，
 不可用时退回桌面自启动。Linux 启动器重新探测图形会话与 Xauthority。
+
+macOS 菜单由主线程 AppKit `NSStatusItem` 驱动，TCP 接受与会话管理在后台线程运行；
+打开菜单不阻塞视频或心跳。状态显示启动中、等待连接、已连接或访问已暂停。
+「断开连接」清理当前会话，仍允许新连接；「暂停远程访问」清理当前会话并拒绝新鉴权连接，
+直到选择「恢复远程访问」。暂停只保留在当前进程，重启或下次登录会恢复访问。
+鉴权后的暂停连接直接关闭，不新增手机协议状态码，也不启动编码器或触发权限请求。
+
+录屏与控制权限分开显示，并可直接打开对应系统设置；菜单检查权限不请求授权。
+「未生效」表示当前进程的检测结果，可能来自未授权、代码身份变化或进程缓存；
+系统设置中已开启但未生效时可选「重启服务／刷新权限」。菜单还可查看日志和打开服务目录。
+诊断画面模式禁用权限入口，避免将测试图案误认为已获得桌面录屏或控制权限。
+
+「重启服务」先释放输入、关闭连接并清理编码器，再由 LaunchAgent 拉起新进程；
+独立运行时用相同路径与参数重启。LaunchAgent 设置 `RunAtLoad=true`、
+`KeepAlive={SuccessfulExit:false}`，异常退出会重启，「退出 Termish Helper」正常退出后不会立即拉起。
+退出不移除 LaunchAgent，下次登录仍自动启动；手机重新安装/显式启动服务也会再次启动。
 
 鉴权前不启动编码器、不返回状态或画面；健康客户端占用时返回 `THS1 + 3`。
 macOS 缺录屏权限返回 `THS1 + 4` 并关闭连接，不创建编码器或占用画面会话。

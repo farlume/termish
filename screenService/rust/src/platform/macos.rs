@@ -154,8 +154,8 @@ pub fn request_capture_access() {
     }
 }
 
-// The daemon has no AppKit event loop. Drain main-thread system notifications
-// between accepts so permission changes are not left pending for its lifetime.
+// Drain main-thread system notifications, either alongside the menu's AppKit
+// event loop or between accepts when running without a menu.
 pub fn poll_events() {
     unsafe { CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0., false) };
 }

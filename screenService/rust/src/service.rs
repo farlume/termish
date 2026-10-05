@@ -1,5 +1,6 @@
 use crate::{
     config::{CaptureSource, Config, StreamSettings},
+    management::{Action, Management, Outcome},
     platform::{self, Input},
     protocol::{self, Control, Feedback, Frames},
 };
@@ -401,7 +402,7 @@ impl Session {
     }
 }
 
-pub fn run(config: Config) -> io::Result<()> {
+pub fn run(config: Config, management: Arc<Management>) -> io::Result<Outcome> {
     if let Some(parent) = config.log_file.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -420,11 +421,51 @@ pub fn run(config: Config) -> io::Result<()> {
         ),
     );
     let mut active: Option<Arc<Session>> = None;
+    management.ready.store(true, Ordering::Release);
     #[cfg(target_os = "macos")]
     let mut capture_permission = crate::permission::CapturePermission::default();
-    while !SHUTDOWN.load(Ordering::Acquire) {
+    let outcome = 'server: loop {
+        if SHUTDOWN.load(Ordering::Acquire) {
+            break Outcome::Quit;
+        }
+        management.connected.store(
+            active.as_ref().is_some_and(|owner| !owner.expired()),
+            Ordering::Release,
+        );
+        while let Some(action) = management.next_request() {
+            match action {
+                Action::TogglePause => {
+                    let paused = !management.paused.load(Ordering::Acquire);
+                    management.paused.store(paused, Ordering::Release);
+                    if paused {
+                        if let Some(owner) = active.take() {
+                            owner.stop("paused from menu");
+                        }
+                        management.connected.store(false, Ordering::Release);
+                    }
+                    log(
+                        &config,
+                        if paused {
+                            "remote access paused from menu"
+                        } else {
+                            "remote access resumed from menu"
+                        },
+                    );
+                }
+                Action::Disconnect => {
+                    if let Some(owner) = active.take() {
+                        owner.stop("disconnected from menu");
+                    }
+                    management.connected.store(false, Ordering::Release);
+                }
+                Action::Restart => break 'server Outcome::Restart,
+                Action::Quit => break 'server Outcome::Quit,
+            }
+        }
         #[cfg(target_os = "macos")]
-        platform::poll_events();
+        if !config.menu_bar {
+            platform::poll_events();
+        }
         // Drain liveness probes; they must never start an encoder or capture.
         while probe.accept().is_ok() {}
         let (mut socket, _) = match video.accept() {
@@ -445,6 +486,13 @@ pub fn run(config: Config) -> io::Result<()> {
         if !packet.is_ok_and(|data| protocol::authenticated(&data, &config.token)) {
             log(&config, "authentication rejected");
             let _ = socket.shutdown(Shutdown::Both);
+            continue;
+        }
+        if management.paused.load(Ordering::Acquire) {
+            // No new status code or misleading "busy" reason. An authenticated
+            // paused connection closes before any encoder, permission request or input.
+            let _ = socket.shutdown(Shutdown::Both);
+            log(&config, "connection rejected while remote access paused");
             continue;
         }
         if active.as_ref().is_some_and(|owner| !owner.expired()) {
@@ -476,22 +524,173 @@ pub fn run(config: Config) -> io::Result<()> {
             continue;
         }
         active = Some(session.clone());
+        management.connected.store(true, Ordering::Release);
         let control = session.clone();
         thread::spawn(move || control.control());
         thread::spawn(move || session.pump(status));
-    }
+    };
     if let Some(owner) = active {
         owner.stop("service shutdown");
     }
     #[cfg(target_os = "linux")]
     platform::wayland::close();
     log(&config, "service stopped");
-    Ok(())
+    management.ready.store(false, Ordering::Release);
+    management.connected.store(false, Ordering::Release);
+    Ok(outcome)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+
+    fn wait_for(mut condition: impl FnMut() -> bool) {
+        let end = Instant::now() + Duration::from_secs(5);
+        while !condition() {
+            assert!(Instant::now() < end, "menu lifecycle action timed out");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    struct ManagedFixture {
+        config: Config,
+        control: Arc<Management>,
+        worker: Option<thread::JoinHandle<io::Result<Outcome>>>,
+    }
+    impl Drop for ManagedFixture {
+        fn drop(&mut self) {
+            self.control.request(Action::Quit);
+            if let Some(worker) = self.worker.take() {
+                let _ = worker.join();
+            }
+            let _ = fs::remove_dir_all(self.config.log_file.parent().unwrap());
+        }
+    }
+    impl ManagedFixture {
+        fn start() -> Option<Self> {
+            let ffmpeg = crate::config::executable("ffmpeg").ok()?;
+            let (probe, video, port) = loop {
+                let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+                let port = probe.local_addr().unwrap().port();
+                if port < 65533 {
+                    if let Ok(video) = TcpListener::bind(("127.0.0.1", port + 2)) {
+                        break (probe, video, port);
+                    }
+                }
+            };
+            let dir =
+                std::env::temp_dir().join(format!("termish-menu-{}-{port}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            let config = Config {
+                capture_source: CaptureSource::TestPattern,
+                menu_bar: false,
+                version: crate::config::VERSION,
+                port,
+                ffmpeg,
+                token: [b'a'; 64],
+                token_file: dir.join("token"),
+                log_file: dir.join("log"),
+                encoder_pid_file: dir.join("encoder.pid"),
+                stream_config_file: dir.join("settings"),
+            };
+            fs::write(&config.stream_config_file, "fps=5\nscale=640:-2\n").unwrap();
+            let control = Arc::new(Management::default());
+            let worker_control = control.clone();
+            let worker_config = config.clone();
+            drop((probe, video));
+            let worker = thread::spawn(move || run(worker_config, worker_control));
+            let fixture = Self {
+                config,
+                control,
+                worker: Some(worker),
+            };
+            wait_for(|| {
+                fixture.control.ready.load(Ordering::Acquire)
+                    || fixture.worker.as_ref().unwrap().is_finished()
+            });
+            assert!(
+                fixture.control.ready.load(Ordering::Acquire),
+                "fixture failed to bind"
+            );
+            Some(fixture)
+        }
+        fn authenticate(&self) -> TcpStream {
+            let mut socket = TcpStream::connect(("127.0.0.1", self.config.port + 2)).unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut auth = b"THA1".to_vec();
+            auth.extend(self.config.token);
+            socket
+                .write_all(&(auth.len() as u32).to_be_bytes())
+                .unwrap();
+            socket.write_all(&auth).unwrap();
+            socket
+        }
+        fn stream(&self) -> (TcpStream, i32) {
+            let mut socket = self.authenticate();
+            let mut status = [0; 5];
+            socket.read_exact(&mut status).unwrap();
+            assert_eq!(&status, b"THS1\x02");
+            let mut header = [0; 4];
+            socket.read_exact(&mut header).unwrap();
+            let length = u32::from_be_bytes(header) as usize;
+            assert!(length < 4 * 1024 * 1024);
+            let mut frame = vec![0; length];
+            socket.read_exact(&mut frame).unwrap();
+            assert_eq!(&frame[..4], b"THV2");
+            let pid = fs::read_to_string(&self.config.encoder_pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            (socket, pid)
+        }
+        fn encoder_stopped(&self, pid: i32) {
+            wait_for(|| unsafe { libc::kill(pid, 0) } != 0);
+            assert!(!self.config.encoder_pid_file.exists());
+        }
+    }
+
+    #[test]
+    fn menu_pause_disconnect_restart_and_quit_clean_up_real_streams() {
+        let Some(mut fixture) = ManagedFixture::start() else {
+            eprintln!("SKIP menu lifecycle: ffmpeg missing");
+            return;
+        };
+        let (_socket, pid) = fixture.stream();
+        fixture.control.request(Action::TogglePause);
+        fixture.encoder_stopped(pid);
+        assert!(fixture.control.paused.load(Ordering::Acquire));
+        assert!(!fixture.control.connected.load(Ordering::Acquire));
+        let mut paused = fixture.authenticate();
+        assert_eq!(paused.read(&mut [0]).unwrap(), 0);
+        assert!(!fixture.config.encoder_pid_file.exists());
+        fixture.control.request(Action::TogglePause);
+        wait_for(|| !fixture.control.paused.load(Ordering::Acquire));
+        let (_socket, pid) = fixture.stream();
+        fixture.control.request(Action::Disconnect);
+        fixture.encoder_stopped(pid);
+        let (_socket, pid) = fixture.stream();
+        fixture.control.request(Action::Restart);
+        assert_eq!(
+            fixture.worker.take().unwrap().join().unwrap().unwrap(),
+            Outcome::Restart
+        );
+        fixture.encoder_stopped(pid);
+        assert!(!fixture.control.ready.load(Ordering::Acquire));
+        assert!(TcpStream::connect(("127.0.0.1", fixture.config.port + 2)).is_err());
+        let mut fixture = ManagedFixture::start().unwrap();
+        let (_socket, pid) = fixture.stream();
+        fixture.control.request(Action::Quit);
+        assert_eq!(
+            fixture.worker.take().unwrap().join().unwrap().unwrap(),
+            Outcome::Quit
+        );
+        fixture.encoder_stopped(pid);
+        assert!(!fixture.control.connected.load(Ordering::Acquire));
+    }
     #[test]
     fn feedback_cooldown_does_not_commit_an_unapplied_bitrate() {
         let mut state = Adaptation::default();

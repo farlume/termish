@@ -88,6 +88,7 @@ fn source_hash(service: &Path) -> Result<String> {
         files.extend([
             service.join("macos/Info.plist"),
             service.join("macos/AppIcon.icns"),
+            service.join("macos/MenuBar.m"),
         ]);
     }
     let mut digest = Sha256::new();

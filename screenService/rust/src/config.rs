@@ -19,6 +19,7 @@ pub enum CaptureSource {
 pub struct Settings {
     #[serde(default)]
     pub capture_source: CaptureSource,
+    pub menu_bar: Option<bool>,
     pub port: Option<u16>,
     pub ffmpeg: Option<String>,
     pub token_file: Option<String>,
@@ -30,6 +31,7 @@ pub struct Settings {
 #[derive(Clone, Serialize)]
 pub struct Config {
     pub capture_source: CaptureSource,
+    pub menu_bar: bool,
     pub version: &'static str,
     pub port: u16,
     pub ffmpeg: PathBuf,
@@ -128,6 +130,9 @@ impl Config {
         }
         Ok(Self {
             capture_source: settings.capture_source,
+            menu_bar: settings.menu_bar.unwrap_or(
+                cfg!(target_os = "macos") && settings.capture_source == CaptureSource::Desktop,
+            ),
             version: VERSION,
             port,
             ffmpeg: executable(

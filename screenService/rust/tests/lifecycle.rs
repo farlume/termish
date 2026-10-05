@@ -238,6 +238,16 @@ fn native_configuration_is_atomic_and_preserves_paths() {
         .unwrap();
     assert!(!status.success());
     assert_eq!(fs::read(&path).unwrap(), before);
+    let agent = dir.join("agent.plist");
+    let status = Command::new(env!("CARGO_BIN_EXE_termish-screen-service"))
+        .arg("--write-launch-agent")
+        .arg(&agent)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let plist = fs::read_to_string(agent).unwrap();
+    assert!(plist.contains("<key>RunAtLoad</key><true/>"));
+    assert!(plist.contains("<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>"));
     fs::remove_dir_all(dir).unwrap();
 }
 

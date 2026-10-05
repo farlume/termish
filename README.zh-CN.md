@@ -85,6 +85,7 @@ Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。�
 手机通过 SSH/SFTP 上传预编译 Rust 服务，支持 macOS 和 Linux（X11/Wayland）
 的 arm64、x86_64 架构；电脑端无需安装 Rust 编译器。
 macOS 后台应用名为 **Termish Helper**，使用 Termish 图标；录屏与辅助功能权限分别授予此应用。
+菜单栏可查看连接状态、暂停/恢复访问、断开连接、打开权限设置、重启服务、查看日志与退出。
 
 协议、支持的审批类型和远程存储目录详见 [Agent Bridge 文档](agentBridge/README.md)。
 
