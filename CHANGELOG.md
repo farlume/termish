@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.8.5] - 2026-10-05
+
+### 修复
+
+- **旧屏幕服务残留**：原生服务安装并验证启动成功后，清理旧 Python 脚本及对应字节码缓存，保留配置、token、日志与其他文件
+- **旧 Agent 后台进程**：原生 Bridge 成功启动后，核对账号、完整命令和解释器，停止旧 Python companion 并清理旧安装文件；旧进程未退出时保留文件并报告失败，保留会话数据
+
+### 验证说明
+
+- 清理边界、进程核验、退出失败、路径含空格、重复清理和缓存符号链接测试，以及 Android debug 和 SSH/SFTP 集成测试通过；已在真实 Mac 备份并清理旧残留，当前 Rust 服务保持正常运行
+- 本次修改手机端安装流程，屏幕服务仍为版本 58、Agent Bridge 仍为 0.9.0；清理在安装／重新安装服务时执行
+
 ## [1.8.4] - 2026-10-05
 
 ### 新增
@@ -619,7 +631,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.4...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.5...HEAD
+[1.8.5]: https://github.com/farlume/termish/compare/v1.8.4...v1.8.5
 [1.8.4]: https://github.com/farlume/termish/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/farlume/termish/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/farlume/termish/compare/v1.8.1...v1.8.2

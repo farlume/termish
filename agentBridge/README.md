@@ -39,6 +39,9 @@ sh scripts/service-test.sh agentBridge        # 不依赖 Gradle 的相同测试
 服务版本从 0.9.0 起使用独立 JSON 存储，旧版本的 SQLite 记录不迁移、不读取。
 每次保存以临时文件和原子替换落盘；目录权限为 0700，文件/socket 为 0600，umask 为 077。
 原生运行目录独立于旧服务，避免旧 socket 被当成 Rust 服务。
+手机安装并成功启动原生服务后，会核对进程所属账号、完整命令和 Python 解释器，
+停止该账号的旧 Python companion，并删除 `current/termish-agent.pyz`。
+若旧进程未退出，保留旧文件并报告安装失败；旧 SQLite 数据与当前 Rust 会话不删除。
 
 `ensure-running` 按需启动 daemon，`restart` 经私有 socket 请求旧 Rust 实例退出后重新启动。
 无需 systemd 或 root。SSH relay 断开不终止 Agent 任务；重连可获取正在运行的文本、工具和审批。

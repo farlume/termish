@@ -6,9 +6,59 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 import org.junit.Assume.assumeTrue
 
 class ScreenInstallScriptSyntaxTest {
+    @Test
+    fun `legacy cleanup removes only known scripts and caches and is repeatable`() {
+        val directory = Files.createTempDirectory("termish-screen-cleanup-").toFile()
+        try {
+            val obsolete = listOf("screen-relay.py", "screen_service_config.py", "__pycache__/screen-relay.cpython-314.pyc", "__pycache__/screen_service_config.cpython-314.pyc")
+            val retained = listOf("screen-service.json", "screen-service.NOTICE", "Termish Helper.app/Contents/MacOS/Termish Helper", "custom.py", "__pycache__/custom.pyc")
+            (obsolete + retained).forEach { path ->
+                File(directory, path).apply { parentFile.mkdirs() }.writeText(path)
+            }
+            repeat(2) { runCleanup(directory) }
+            obsolete.forEach { assertFalse(File(directory, it).exists(), it) }
+            retained.forEach { assertEquals(it, File(directory, it).readText()) }
+            File(directory, "__pycache__/custom.pyc").delete()
+            runCleanup(directory)
+            assertFalse(File(directory, "__pycache__").exists())
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `legacy cleanup does not follow a cache directory symlink`() {
+        val directory = Files.createTempDirectory("termish-screen-symlink-").toFile()
+        val external = Files.createTempDirectory("termish-unrelated-cache-").toFile()
+        try {
+            val cache = File(external, "screen-relay.cpython-314.pyc").apply { writeText("keep") }
+            Files.createSymbolicLink(File(directory, "__pycache__").toPath(), external.toPath())
+            runCleanup(directory)
+            assertEquals("keep", cache.readText())
+            assertTrue(Files.isSymbolicLink(File(directory, "__pycache__").toPath()))
+        } finally {
+            Files.deleteIfExists(File(directory, "__pycache__").toPath())
+            directory.deleteRecursively()
+            external.deleteRecursively()
+        }
+    }
+
+    private fun runCleanup(directory: File) {
+        val function = "cleanup_legacy_screen_files() {" + ScreenSession.INSTALL_SCRIPT.substringAfter("cleanup_legacy_screen_files() {").substringBefore("\n}\n") + "\n}\ncleanup_legacy_screen_files"
+        val process =
+            ProcessBuilder("/bin/sh", "-ec", function)
+                .redirectErrorStream(true)
+                .apply {
+                    environment()["APP_DIR"] = directory.absolutePath
+                }.start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(0, process.waitFor(), output)
+    }
+
     @Test
     fun `generated remote installer is valid POSIX shell`() {
         val script = Files.createTempFile("termish-screen-install-", ".sh")

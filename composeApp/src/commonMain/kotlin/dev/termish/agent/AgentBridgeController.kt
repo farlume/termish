@@ -227,7 +227,8 @@ class AgentBridgeController(
                         "else ACTUAL=\$(sha256sum \"\$STAGE\" | awk '{print \$1}'); fi; " +
                         "[ \"\$ACTUAL\" = \"\$EXPECTED\" ] && chmod 700 \"\$STAGE\" && " +
                         "[ \"\$(\"\$STAGE\" --version)\" = \"$MINIMUM_BRIDGE_VERSION\" ] && " +
-                        "mv \"\$STAGE\" \"$REMOTE_BRIDGE\" && \"$REMOTE_BRIDGE\" --licenses > \"$REMOTE_BRIDGE.NOTICE\" && \"$REMOTE_BRIDGE\" restart"
+                        "mv \"\$STAGE\" \"$REMOTE_BRIDGE\" && \"$REMOTE_BRIDGE\" --licenses > \"$REMOTE_BRIDGE.NOTICE\" && \"$REMOTE_BRIDGE\" restart && " +
+                        "sh -c ${shellQuote(legacyBridgeCleanupScript)}"
                 val result = withContext(ioDispatcher()) { control.runCommandDetailed(installCommand, 30_000) }
                 if (result == null || result.exitCode != 0) {
                     throw IllegalStateException(result?.stderr?.ifBlank { result.stdout } ?: "Bridge install failed")

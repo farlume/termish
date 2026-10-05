@@ -8,6 +8,8 @@
 安装器校验 SHA-256、可执行性与部署版本后，安装或复用 FFmpeg，生成或复用 token，
 由 Rust 校验配置并原子启用可执行文件，再注册图形会话服务和验证回环端口。
 不支持或未打包的架构会返回明确错误。
+原生服务启动验证成功后，安装器清理旧 `screen-relay.py`、`screen_service_config.py`
+及对应字节码缓存；保留配置、token、日志和其他文件，不跟随缓存目录的符号链接。
 
 macOS 后台应用名为 **Termish Helper**，复用 Termish Logo；`LSUIElement` 隐藏 Dock 图标，
 无需打开应用窗口。Rust 可执行文件位于完整 `.app` 包中，名称同样为 Termish Helper。

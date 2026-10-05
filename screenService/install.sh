@@ -3,6 +3,15 @@ PORT=@SCREEN_PORT@
 OS=$(uname)
 PLIST="$HOME/Library/LaunchAgents/dev.termish.screen.plist"
 @NATIVE_SOURCE@
+cleanup_legacy_screen_files() {
+  # Called only after the native service passes startup verification.
+  rm -f "$APP_DIR/screen-relay.py" "$APP_DIR/screen_service_config.py"
+  [ ! -L "$APP_DIR/__pycache__" ] || return 0
+  for CACHE in "$APP_DIR"/__pycache__/screen-relay.*.pyc "$APP_DIR"/__pycache__/screen_service_config.*.pyc; do
+    rm -f "$CACHE"
+  done
+  rmdir "$APP_DIR/__pycache__" 2>/dev/null || true
+}
 # ---- ffmpeg：缺失时安装（查找路径与读流脚本一致，避免装完仍被非交互
 # PATH 误报缺失）。macOS 走 brew/静态包；Linux 需 apt（sudo）——
 # 检测不到且无 apt 权限时给出明确提示（日志可见）----
@@ -179,6 +188,7 @@ if launchctl print gui/$(id -u)/dev.termish.screen 2>/dev/null | grep -q "state 
   rm -rf "$APP_BACKUP"
   rm -f "$PLIST_BACKUP"
   rm -f "$APP_DIR/screen-service"
+  cleanup_legacy_screen_files
   echo "==> TERMISH_SCREEN_OK"
 else
   restore_macos_service
@@ -365,6 +375,7 @@ sleep 1.5
 if (lsof -nP -iTCP:$PORT -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":$PORT ") \
   && (lsof -nP -iTCP:$((PORT + 2)) -sTCP:LISTEN >/dev/null 2>&1 || ss -ltn 2>/dev/null | grep -q ":$((PORT + 2)) "); then
   echo @RELAY_VERSION@ > "$HOME/.termish-screen.version"
+  cleanup_legacy_screen_files
   echo "==> TERMISH_SCREEN_OK"
 else
   echo "==> 服务未启动（检查 $LOG）" >&2
