@@ -666,7 +666,7 @@ class ScreenSession internal constructor(
                     nativeEnvironment +
                         (if (sudoNeedsPassword) "TERMISH_SUDO_STDIN=1\n" else "") +
                         INSTALL_SCRIPT
-                val ch = withContext(ioDispatcher()) { s.startExecRaw(command) }
+                val ch = withContext(ioDispatcher()) { s.startExecRaw(screenInstallCommand(command)) }
                 if (ch != null) {
                     // 无 PTY 的 stdin 不回显；sudo -S 只为本次安装读取这一行。
                     if (sudoNeedsPassword) {
@@ -684,15 +684,8 @@ class ScreenSession internal constructor(
                         }
                     }
 
-                    // stdout = 安装进度；stderr 错误合并进日志
-                    val errJob =
-                        scope.launch {
-                            while (true) {
-                                val err = withContext(ioDispatcher()) { ch.readErr() } ?: break
-                                log.append(err.decodeToString().replace("\r", ""))
-                                onLog(visibleLog())
-                            }
-                        }
+                    // 远端合并 stdout/stderr，读到 EOF 后日志完整，避免提前关闭
+                    // 通道丢失最后的错误输出；StringBuilder 也只由一个读取者写入。
                     withContext(ioDispatcher()) {
                         while (true) {
                             val data = ch.read() ?: break
@@ -701,7 +694,6 @@ class ScreenSession internal constructor(
                         }
                         ch.close()
                     }
-                    errJob.cancel()
                 }
                 installing = false
                 uiState.installing = false
@@ -1036,3 +1028,7 @@ class ScreenSession internal constructor(
 }
 
 internal fun screenShellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
+
+// SSH exec 默认使用账号登录 shell；zsh 的未匹配 glob 会中断 POSIX 安装脚本。
+// 显式选择 sh，保留 stdin 给 sudo，并将错误输出与进度放进同一个流。
+internal fun screenInstallCommand(script: String): String = "exec /bin/sh -c ${screenShellQuote(script)} 2>&1"

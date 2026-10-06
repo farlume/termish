@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.8.8] - 2026-10-06
+
+### 修复
+
+- **屏幕服务安装误报失败**：显式使用 `/bin/sh` 执行安装脚本，修复 macOS 账号使用 zsh 时，旧缓存不存在导致安装在服务启动成功后中断、未返回成功标记的问题
+- **安装错误日志**：合并进度与错误输出并读取至结束，避免最后的错误日志在关闭 SSH 通道时丢失
+
+### 验证说明
+
+- zsh 下无缓存、部分缓存、重复清理、特殊字符路径、stdin 与错误输出回归测试，以及真实 SSH 清理、Android/iOS debug 构建与 iOS 模拟器启动通过；真机完整升级界面尚未实测
+- 本次修改手机端安装流程，屏幕服务仍为部署版本 60；已安装成功的服务可关闭远程画面后重新连接
+
 ## [1.8.7] - 2026-10-05
 
 ### 修复
@@ -663,7 +675,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.7...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.8...HEAD
+[1.8.8]: https://github.com/farlume/termish/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/farlume/termish/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/farlume/termish/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/farlume/termish/compare/v1.8.4...v1.8.5
