@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.8.9] - 2026-10-13
+
+### 修复
+
+- **macOS 远程画面连接失败**：安装时保留 FFmpeg 的稳定入口及符号链接，避免 Homebrew 升级依赖后仍调用旧版本目录，导致编码器启动即退出
+- **Wayland 断线后无法重连**：连接结束后关闭 Portal 授权会话，失效时清除缓存；新连接等待旧连接清理完成，避免旧连接关闭新会话
+
+### 验证说明
+
+- macOS 原生服务连续推流 40 秒、2358 帧无断开；安装路径升级回归通过。Wayland 会话清理和失效重建有隔离回归测试，真实 GNOME/KDE 长时推流仍待实机验收
+- 屏幕服务更新至部署版本 61；使用新版 App 更新被控端服务后生效
+
 ## [1.8.8] - 2026-10-06
 
 ### 修复
@@ -675,7 +687,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.8...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.9...HEAD
+[1.8.9]: https://github.com/farlume/termish/compare/v1.8.8...v1.8.9
 [1.8.8]: https://github.com/farlume/termish/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/farlume/termish/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/farlume/termish/compare/v1.8.5...v1.8.6

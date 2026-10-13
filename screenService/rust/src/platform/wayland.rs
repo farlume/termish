@@ -138,6 +138,22 @@ struct Portal {
     left: bool,
     right: bool,
 }
+impl Drop for Portal {
+    fn drop(&mut self) {
+        let _ = self.runtime.block_on(async {
+            let proxy = Proxy::new(
+                &self.conn,
+                DEST,
+                self.session.as_str(),
+                "org.freedesktop.portal.Session",
+            )
+            .await?;
+            tokio::time::timeout(Duration::from_secs(3), proxy.call::<_, _, ()>("Close", &()))
+                .await??;
+            Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+        });
+    }
+}
 impl Portal {
     fn create(cancelled: &AtomicBool) -> Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -362,20 +378,7 @@ pub fn release() -> Result<()> {
 }
 pub fn close() {
     if let Ok(mut guard) = portal().lock() {
-        if let Some(p) = guard.take() {
-            let _ = p.runtime.block_on(async {
-                let proxy = Proxy::new(
-                    &p.conn,
-                    DEST,
-                    p.session.as_str(),
-                    "org.freedesktop.portal.Session",
-                )
-                .await?;
-                tokio::time::timeout(Duration::from_secs(3), proxy.call::<_, _, ()>("Close", &()))
-                    .await??;
-                Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
-            });
-        }
+        guard.take();
     }
 }
 pub struct Capture {
@@ -399,21 +402,27 @@ pub fn capture(
         *guard = Some(Portal::create(cancelled).map_err(|e| io::Error::other(e.to_string()))?);
     }
     let p = guard.as_ref().unwrap();
-    let fd: OwnedFd = p
-        .runtime
-        .block_on(async {
-            let proxy = Proxy::new(&p.conn, DEST, PATH, SCREEN).await?;
-            wait_for_portal(
-                async {
-                    Ok(proxy
-                        .call::<_, _, OwnedFd>("OpenPipeWireRemote", &(&p.session, Options::new()))
-                        .await?)
-                },
-                cancelled,
-            )
-            .await
-        })
-        .map_err(|e| io::Error::other(e.to_string()))?;
+    let result: Result<OwnedFd> = p.runtime.block_on(async {
+        let proxy = Proxy::new(&p.conn, DEST, PATH, SCREEN).await?;
+        wait_for_portal(
+            async {
+                Ok(proxy
+                    .call::<_, _, OwnedFd>("OpenPipeWireRemote", &(&p.session, Options::new()))
+                    .await?)
+            },
+            cancelled,
+        )
+        .await
+    });
+    let fd = match result {
+        Ok(fd) => fd,
+        Err(error) => {
+            // A closed or revoked compositor session cannot be reused on reconnect.
+            guard.take();
+            return Err(io::Error::other(error.to_string()));
+        }
+    };
+    let p = guard.as_ref().unwrap();
     let raw = fd.as_raw_fd();
     let target = p
         .serial
@@ -650,6 +659,7 @@ mod tests {
     }
     struct Screen {
         events: Arc<Mutex<Vec<String>>>,
+        invalid_session: Arc<AtomicBool>,
     }
     #[zbus::interface(name = "org.freedesktop.portal.ScreenCast")]
     impl Screen {
@@ -663,7 +673,15 @@ mod tests {
             self.events.lock().unwrap().push("sources".into());
             response(conn, &header, options, Options::new()).await
         }
-        fn open_pipe_wire_remote(&self, _session: OwnedObjectPath, _options: Options) -> OwnedFd {
+        fn open_pipe_wire_remote(
+            &self,
+            _session: OwnedObjectPath,
+            _options: Options,
+        ) -> zbus::fdo::Result<OwnedFd> {
+            if self.invalid_session.swap(false, Ordering::AcqRel) {
+                self.events.lock().unwrap().push("invalid-session".into());
+                return Err(zbus::fdo::Error::AccessDenied("Invalid session".into()));
+            }
             self.events.lock().unwrap().push("pipewire".into());
             let mut descriptors = [0; 2];
             assert_eq!(
@@ -672,7 +690,9 @@ mod tests {
             );
             let mut output = unsafe { fs::File::from_raw_fd(descriptors[1]) };
             output.write_all(b"consented-video").unwrap();
-            OwnedFd::from(unsafe { std::os::fd::OwnedFd::from_raw_fd(descriptors[0]) })
+            Ok(OwnedFd::from(unsafe {
+                std::os::fd::OwnedFd::from_raw_fd(descriptors[0])
+            }))
         }
     }
     struct Session {
@@ -713,6 +733,8 @@ mod tests {
         fs::set_permissions(gst, fs::Permissions::from_mode(0o700)).unwrap();
         let events = Arc::new(Mutex::new(Vec::new()));
         let server_events = events.clone();
+        let invalid_session = Arc::new(AtomicBool::new(false));
+        let server_invalid_session = invalid_session.clone();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         let server_address = address.clone();
@@ -737,6 +759,7 @@ mod tests {
                         PATH,
                         Screen {
                             events: server_events.clone(),
+                            invalid_session: server_invalid_session,
                         },
                     )
                     .unwrap()
@@ -758,7 +781,8 @@ mod tests {
         let original_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &address);
         std::env::set_var("PATH", format!("{}:{original_path}", dir.display()));
-        let (capture, mut stdout) = capture(30, &dir.join("log"), &AtomicBool::new(false)).unwrap();
+        let (first_capture, mut stdout) =
+            capture(30, &dir.join("log"), &AtomicBool::new(false)).unwrap();
         let mut bytes = Vec::new();
         stdout.read_to_end(&mut bytes).unwrap();
         assert_eq!(bytes, b"consented-video");
@@ -787,7 +811,18 @@ mod tests {
         })
         .unwrap();
         release().unwrap();
-        drop(capture);
+        drop(first_capture);
+        // A compositor may revoke the session after its PipeWire stream ends.
+        // The next attempt must discard that session rather than cache the error.
+        invalid_session.store(true, Ordering::Release);
+        assert!(capture(30, &dir.join("log"), &AtomicBool::new(false)).is_err());
+        assert!(!authorized(), "a revoked portal must not remain cached");
+        let (second_capture, mut stdout) =
+            capture(30, &dir.join("log"), &AtomicBool::new(false)).unwrap();
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, b"consented-video");
+        drop(second_capture);
         close();
         let events = events.lock().unwrap();
         assert_eq!(
@@ -798,6 +833,8 @@ mod tests {
         assert!(events.contains(&format!("key:{}:1", 0x01000000u32 | '中' as u32)));
         assert!(events.contains(&"key:65289:1".into()));
         assert_eq!(events.last().unwrap(), "close");
+        assert_eq!(events.iter().filter(|event| *event == "create").count(), 2);
+        assert_eq!(events.iter().filter(|event| *event == "close").count(), 2);
         drop(events);
         std::env::set_var("PATH", original_path);
         let _ = stop_tx.send(());

@@ -87,8 +87,14 @@ if [ -z "$FF" ]; then
     [ -n "$FF" ] || FF="/usr/bin/ffmpeg"
   fi
 fi
-FF_REAL=$(readlink -f "$FF" 2>/dev/null || echo "$FF")
-echo "==> ffmpeg: $FF_REAL"
+# Keep package-manager symlinks so upgrades do not pin an obsolete binary.
+# The service runs outside this SSH shell, so relative PATH entries need an absolute path.
+FF_PATH="$FF"
+case "$FF_PATH" in
+  /*) ;;
+  *) FF_PATH="$(pwd)/$FF_PATH" ;;
+esac
+echo "==> ffmpeg: $FF_PATH"
 # 每个远端账号独立的 256-bit bearer token：回环 TCP 也会被同机
 # 其它 OS 用户访问，不能把“只监听 127.0.0.1”当作认证边界。
 TOKEN_FILE="$HOME/.termish-screen.token"
@@ -145,7 +151,7 @@ if [ "$OS" = "Linux" ]; then
   fi
 fi
 mkdir -p "$APP_DIR"
-"$TERMISH_NATIVE_EXEC" --write-config "$APP_DIR/screen-service.json" "$PORT" "$FF_REAL"
+"$TERMISH_NATIVE_EXEC" --write-config "$APP_DIR/screen-service.json" "$PORT" "$FF_PATH"
 "$TERMISH_NATIVE_EXEC" --check-config --config "$APP_DIR/screen-service.json"
 restore_macos_service() {
   launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true

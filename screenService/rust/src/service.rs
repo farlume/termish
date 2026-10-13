@@ -97,6 +97,7 @@ struct Session {
     config: Arc<Config>,
     socket: TcpStream,
     stopped: AtomicBool,
+    stop_lock: Mutex<()>,
     last_heartbeat: Mutex<Instant>,
     encoder: Mutex<Option<Child>>,
     #[cfg(target_os = "linux")]
@@ -119,6 +120,7 @@ impl Session {
             config,
             socket,
             stopped: AtomicBool::new(false),
+            stop_lock: Mutex::new(()),
             last_heartbeat: Mutex::new(Instant::now()),
             encoder: Mutex::new(None),
             #[cfg(target_os = "linux")]
@@ -140,6 +142,9 @@ impl Session {
         }
     }
     fn stop(&self, reason: &str) {
+        // The listener may replace an expired owner while its control/pump thread
+        // is still cleaning up. Wait for that cleanup before a new portal is created.
+        let _guard = self.stop_lock.lock().unwrap();
         if self.stopped.swap(true, Ordering::AcqRel) {
             return;
         }
@@ -147,6 +152,10 @@ impl Session {
         let _ = self.socket.shutdown(Shutdown::Both);
         self.input.lock().unwrap().release();
         self.reap_encoder();
+        #[cfg(target_os = "linux")]
+        if self.config.capture_source == CaptureSource::Desktop {
+            platform::wayland::close();
+        }
     }
     fn reap_encoder(&self) {
         #[cfg(target_os = "linux")]
@@ -752,6 +761,35 @@ mod tests {
         );
         fixture.encoder_stopped(pid);
         assert!(!fixture.control.connected.load(Ordering::Acquire));
+    }
+    #[test]
+    fn replacing_stopped_owner_waits_for_in_progress_cleanup() {
+        let Some(fixture) = ManagedFixture::start() else {
+            return;
+        };
+        let socket = TcpStream::connect(("127.0.0.1", fixture.config.port)).unwrap();
+        let session = Arc::new(Session::new(Arc::new(fixture.config.clone()), socket));
+        let input = session.input.lock().unwrap();
+        let old = session.clone();
+        let first = thread::spawn(move || old.stop("first cleanup"));
+        wait_for(|| session.stopped.load(Ordering::Acquire));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let old = session.clone();
+        let second = thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            old.stop("replace expired owner");
+            finished_tx.send(()).unwrap();
+        });
+        entered_rx.recv().unwrap();
+        assert!(
+            finished_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "replacement must wait for input/capture/portal cleanup"
+        );
+        drop(input);
+        finished_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
     }
     #[test]
     fn feedback_cooldown_does_not_commit_an_unapplied_bitrate() {

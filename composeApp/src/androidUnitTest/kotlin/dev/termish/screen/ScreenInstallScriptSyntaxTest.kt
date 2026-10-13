@@ -11,6 +11,48 @@ import org.junit.Assume.assumeTrue
 
 class ScreenInstallScriptSyntaxTest {
     @Test
+    fun `ffmpeg configuration follows package upgrades through a stable symlink`() {
+        val directory = Files.createTempDirectory("termish-ffmpeg-upgrade-").toFile().canonicalFile
+        try {
+            val first = File(directory, "Cellar/ffmpeg/1/bin/ffmpeg")
+            val second = File(directory, "Cellar/ffmpeg/2/bin/ffmpeg")
+            listOf(first, second).forEachIndexed { index, executable ->
+                checkNotNull(executable.parentFile).mkdirs()
+                executable.writeText("#!/bin/sh\nprintf '%s' '${index + 1}'\n")
+                assertTrue(executable.setExecutable(true))
+            }
+            val entry = File(directory, "bin/ffmpeg")
+            checkNotNull(entry.parentFile).mkdirs()
+            Files.createSymbolicLink(entry.toPath(), first.toPath())
+            val script = ScreenSession.INSTALL_SCRIPT
+            val start = script.indexOf("FF_PATH=")
+            val end = script.indexOf("echo \"==> ffmpeg:", start)
+            assertTrue(start >= 0 && end > start, "installer FFmpeg path resolver missing")
+            val resolver = script.substring(start, end)
+            listOf(entry.absolutePath, "bin/ffmpeg").forEach { path ->
+                val process =
+                    ProcessBuilder("/bin/sh", "-ec", "$resolver\nprintf '%s' \"${'$'}FF_PATH\"")
+                        .directory(directory)
+                        .redirectErrorStream(true)
+                        .apply { environment()["FF"] = path }
+                        .start()
+                val configured = process.inputStream.bufferedReader().readText()
+                assertEquals(0, process.waitFor(), configured)
+                assertEquals(entry.absolutePath, configured)
+                Files.delete(entry.toPath())
+                Files.createSymbolicLink(entry.toPath(), second.toPath())
+                first.delete()
+                val upgraded = ProcessBuilder(configured).redirectErrorStream(true).start()
+                val output = upgraded.inputStream.bufferedReader().readText()
+                assertEquals(0, upgraded.waitFor(), output)
+                assertEquals("2", output)
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `legacy cleanup removes only known scripts and caches and is repeatable`() {
         val directory = Files.createTempDirectory("termish-screen-cleanup-").toFile()
         try {
