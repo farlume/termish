@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
@@ -386,6 +387,87 @@ class TerminalControllerTest {
     }
 
     @Test
+    fun specialKeyDispatchReadsRemoteCursorModeWithoutRecreatingCallback() {
+        val (c, fake, _) = controller(FakeSsh())
+        c.connect(80, 24)
+        awaitStatus(c, ConnStatus.CONNECTED)
+        val onKey = c::sendSpecialKey
+        val keys =
+            listOf(
+                SpecialKey.UP to 'A',
+                SpecialKey.DOWN to 'B',
+                SpecialKey.RIGHT to 'C',
+                SpecialKey.LEFT to 'D',
+                SpecialKey.HOME to 'H',
+                SpecialKey.END to 'F',
+            )
+
+        try {
+            for ((mode, prefix) in listOf(false to 0x5b, true to 0x4f, false to 0x5b)) {
+                // Split DECSET/DECRST across output chunks as a real SSH stream can do.
+                runBlocking {
+                    fake.callbacks.onOutput("\u001b[?1".encodeToByteArray())
+                    fake.callbacks.onOutput((if (mode) "h" else "l").encodeToByteArray())
+                }
+                scheduler.advanceUntilIdle()
+                assertEquals(mode, c.buffer.applicationCursorKeys)
+                for ((key, final) in keys) {
+                    onKey(key)
+                    assertContentEquals(byteArrayOf(0x1b, prefix.toByte(), final.code.toByte()), fake.sent.last(), key.name)
+                }
+            }
+        } finally {
+            c.destroy()
+        }
+    }
+
+    @Test
+    fun existingSessionTabsKeepIndependentCursorModesAcrossBackgroundResume() {
+        val r = repo()
+        val (first, firstSsh, _) = controller(FakeSsh(), repo = r)
+        val (second, secondSsh, _) = controller(FakeSsh(), repo = r)
+        val manager = SessionManager(r)
+        manager.sessions.addAll(listOf(first, second))
+        first.connect(80, 24)
+        second.connect(80, 24)
+        awaitStatus(first, ConnStatus.CONNECTED)
+        awaitStatus(second, ConnStatus.CONNECTED)
+        val firstBuffer = first.buffer
+        val firstTab = SessionTab.Terminal(first)
+        val secondTab = SessionTab.Terminal(second)
+
+        try {
+            runBlocking { firstSsh.callbacks.onOutput("\u001b[?1h".encodeToByteArray()) }
+            scheduler.advanceUntilIdle()
+            secondTab.controller.sendSpecialKey(SpecialKey.UP)
+            assertContentEquals(byteArrayOf(0x1b, 0x5b, 0x41), secondSsh.sent.last())
+            firstTab.controller.sendSpecialKey(SpecialKey.UP)
+            assertContentEquals(byteArrayOf(0x1b, 0x4f, 0x41), firstSsh.sent.last())
+
+            manager.noteBackgrounded()
+            // Output still updates each session's emulator while its UI is absent.
+            runBlocking { secondSsh.callbacks.onOutput("\u001b[?1h".encodeToByteArray()) }
+            scheduler.advanceUntilIdle()
+            manager.reconnectDroppedSessions()
+
+            val resumed = SessionTab.Terminal(manager.sessions.first { it.sessionId == firstTab.id })
+            assertTrue(resumed.controller === first)
+            assertTrue(resumed.controller.buffer === firstBuffer)
+            resumed.controller.sendSpecialKey(SpecialKey.DOWN)
+            assertContentEquals(byteArrayOf(0x1b, 0x4f, 0x42), firstSsh.sent.last())
+
+            runBlocking { firstSsh.callbacks.onOutput("\u001b[?1l".encodeToByteArray()) }
+            scheduler.advanceUntilIdle()
+            resumed.controller.sendSpecialKey(SpecialKey.UP)
+            assertContentEquals(byteArrayOf(0x1b, 0x5b, 0x41), firstSsh.sent.last())
+            secondTab.controller.sendSpecialKey(SpecialKey.UP)
+            assertContentEquals(byteArrayOf(0x1b, 0x4f, 0x41), secondSsh.sent.last())
+        } finally {
+            manager.sessions.forEach { it.destroy() }
+        }
+    }
+
+    @Test
     fun unexpectedCloseInitiatesReconnect() {
         val (c, fake, _) = controller(FakeSsh())
         c.connect(80, 24)
@@ -403,6 +485,8 @@ class TerminalControllerTest {
         val (c, fake, _) = controller(FakeSsh())
         c.connect(80, 24)
         awaitStatus(c, ConnStatus.CONNECTED)
+        runBlocking { fake.callbacks.onOutput("\u001b[?1h".encodeToByteArray()) }
+        scheduler.advanceUntilIdle()
 
         c.verifySshConnection(SessionReconnectCause.FOREGROUND_RESUME)
         runBlocking {
@@ -415,6 +499,9 @@ class TerminalControllerTest {
         assertTrue(c.session === fake)
         assertFalse(fake.closed)
         assertEquals(0, c.reconnectCount)
+        assertTrue(c.buffer.applicationCursorKeys)
+        c.sendSpecialKey(SpecialKey.UP)
+        assertContentEquals(byteArrayOf(0x1b, 0x4f, 0x41), fake.sent.last())
         c.destroy()
     }
 

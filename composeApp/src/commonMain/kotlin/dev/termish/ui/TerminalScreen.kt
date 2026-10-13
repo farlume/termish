@@ -844,8 +844,6 @@ private fun TerminalBody(
         }
     }
 
-    val appCursorKeys = controller.buffer.applicationCursorKeys
-
     // OSC 52：远端程序（nvim/yazi/tmux）写系统剪贴板（静默写入，不弹提示，
     // 避免 herdr 拖拽/滚动误触复制时反复打扰）
     controller.onRemoteClipboard = { text ->
@@ -1357,7 +1355,6 @@ private fun TerminalBody(
                             altActive = altActive,
                             onToggleCtrl = { ctrlActive = !ctrlActive },
                             onToggleAlt = { altActive = !altActive },
-                            applicationCursorKeys = appCursorKeys,
                             expanded = toolbarExpanded,
                             onExpandedChange = { toolbarExpanded = it },
                             // 回报高度必须含 KeyToolbar 全部自身 padding（含底部 10dp）
@@ -1365,7 +1362,7 @@ private fun TerminalBody(
                             onBaseHeightChanged = { toolbarBaseHeightPx = it.toFloat() },
                             onKey = { key ->
                                 if (settings.hapticFeedback) hapticTick()
-                                controller.sendBytes(specialKeyBytes(key, appCursorKeys))
+                                controller.sendSpecialKey(key)
                                 // 任何按键发出后消耗粘性修饰键，避免 CTRL 残留污染后续输入
                                 // （残留会导致下个字母变成 Ctrl+D/C 等而意外退出会话）
                                 ctrlActive = false

@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.8.10] - 2026-10-14
+
+### 修复
+
+- **方向键输入字母**：修正应用光标模式下方向键及 HOME/END 的转义序列，使用 `ESC O`（SS3），避免错误的 `ESC [ O` 序列留下 A/B/C/D 等字符
+- **光标模式更新滞后**：工具栏每次发送按键时读取当前会话模式，避免界面未重组时继续使用旧模式；会话切换及健康连接回前台时保留各自状态
+
+### 验证说明
+
+- 两种光标模式、HOME/END、其他功能键、分片模式更新、会话状态隔离及后台恢复的单元回归测试通过；Android 模拟器安装启动、lint、签名包校验及 iOS 共享代码构建通过
+- 模拟器真实 SSH 切 tab／前后台端到端检查尚未完成验收；间歇性问题仍需在原设备和远端环境复核
+
 ## [1.8.9] - 2026-10-13
 
 ### 修复
@@ -687,7 +699,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.9...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.10...HEAD
+[1.8.10]: https://github.com/farlume/termish/compare/v1.8.9...v1.8.10
 [1.8.9]: https://github.com/farlume/termish/compare/v1.8.8...v1.8.9
 [1.8.8]: https://github.com/farlume/termish/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/farlume/termish/compare/v1.8.6...v1.8.7

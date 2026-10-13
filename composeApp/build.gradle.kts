@@ -182,8 +182,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 47
-        versionName = "1.8.9"
+        versionCode = 48
+        versionName = "1.8.10"
     }
     packaging {
         resources {

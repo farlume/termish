@@ -511,6 +511,11 @@ class TerminalController(
         moshSession?.sendData(bytes) ?: session?.sendData(bytes)
     }
 
+    /** Read DECCKM at dispatch time; it can change without recomposing the toolbar. */
+    fun sendSpecialKey(key: SpecialKey) {
+        sendBytes(specialKeyBytes(key, buffer.applicationCursorKeys))
+    }
+
     fun resize(
         columns: Int,
         rows: Int,

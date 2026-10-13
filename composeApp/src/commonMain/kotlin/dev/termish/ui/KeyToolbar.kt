@@ -100,10 +100,10 @@ fun specialKeyBytes(
     when (key) {
         SpecialKey.ESC -> byteArrayOf(0x1b)
         SpecialKey.TAB -> byteArrayOf(0x09)
-        SpecialKey.UP -> escapeSeq(if (applicationCursorKeys) "OA" else "A")
-        SpecialKey.DOWN -> escapeSeq(if (applicationCursorKeys) "OB" else "B")
-        SpecialKey.RIGHT -> escapeSeq(if (applicationCursorKeys) "OC" else "C")
-        SpecialKey.LEFT -> escapeSeq(if (applicationCursorKeys) "OD" else "D")
+        SpecialKey.UP -> cursorKeySeq('A', applicationCursorKeys)
+        SpecialKey.DOWN -> cursorKeySeq('B', applicationCursorKeys)
+        SpecialKey.RIGHT -> cursorKeySeq('C', applicationCursorKeys)
+        SpecialKey.LEFT -> cursorKeySeq('D', applicationCursorKeys)
         SpecialKey.CTRL_C -> byteArrayOf(0x03)
         SpecialKey.CTRL_D -> byteArrayOf(0x04)
         SpecialKey.CTRL_L -> byteArrayOf(0x0c)
@@ -114,8 +114,8 @@ fun specialKeyBytes(
         SpecialKey.SHIFT_TAB -> byteArrayOf(0x1b, 0x5b, 0x5a) // ESC [ Z
         SpecialKey.CTRL_BACKSLASH -> byteArrayOf(0x1c) // SIGQUIT
         SpecialKey.DEL -> byteArrayOf(0x7f)
-        SpecialKey.HOME -> escapeSeq(if (applicationCursorKeys) "OH" else "H")
-        SpecialKey.END -> escapeSeq(if (applicationCursorKeys) "OF" else "F")
+        SpecialKey.HOME -> cursorKeySeq('H', applicationCursorKeys)
+        SpecialKey.END -> cursorKeySeq('F', applicationCursorKeys)
         SpecialKey.PGUP -> escapeSeq("5~")
         SpecialKey.PGDN -> escapeSeq("6~")
         SpecialKey.F1 -> byteArrayOf(0x1b, 0x4f, 0x50) // ESC O P
@@ -134,6 +134,12 @@ fun specialKeyBytes(
     }
 
 private fun escapeSeq(suffix: String): ByteArray = ("\u001b[$suffix").encodeToByteArray()
+
+/** DECCKM selects SS3 (ESC O) instead of CSI (ESC [) for cursor keys. */
+private fun cursorKeySeq(
+    final: Char,
+    applicationCursorKeys: Boolean,
+): ByteArray = byteArrayOf(0x1b, if (applicationCursorKeys) 0x4f else 0x5b, final.code.toByte())
 
 /** 按住连发参数（对齐实体键盘手感）：先延迟后连发，越按越快不会失控。 */
 private const val REPEAT_INITIAL_DELAY_MS = 400L
@@ -166,7 +172,6 @@ fun KeyToolbar(
     altActive: Boolean,
     onToggleCtrl: () -> Unit,
     onToggleAlt: () -> Unit,
-    applicationCursorKeys: Boolean,
     onKey: (SpecialKey) -> Unit,
     onToggleKeyboard: () -> Unit = {},
     onPaste: () -> Unit = {},
