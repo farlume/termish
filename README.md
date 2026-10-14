@@ -92,13 +92,12 @@ public listening port is needed. It keeps conversations on the host and lets an 
 Remote screen uses a versioned companion service in the computer's graphical
 session, installed from the app and accessed over SSH. Its standalone source,
 configuration and diagnostics are documented in the [screen service guide](docs/screen-service.md).
-The phone uploads precompiled Rust services over SSH/SFTP for macOS and Linux
-(X11 or Wayland), on arm64 and x86_64. The computer needs no Rust compiler.
-On macOS, the background companion is **Termish Helper**, with the Termish icon.
-Its menu bar shows connection status and offers pause/resume, disconnect,
-permission settings, restart, logs and quit.
-Screen Recording and Accessibility permissions are granted to this app separately.
-Linux provides the same session controls through a tray menu and an application-list
+macOS uses the previous system-Python LaunchAgent and direct FFmpeg capture path,
+with existing operating-system permissions. Script updates keep the interpreter identity
+and no longer require a separate recording preflight for Termish Helper.
+Linux uses precompiled Rust services for X11 or Wayland on arm64 and x86_64;
+the computer needs no Rust compiler.
+Linux provides session controls through a tray menu and an application-list
 management window (including GNOME without tray support). It probes NVENC, QSV and
 VAAPI encoders and falls back to software encoding if hardware is unavailable or fails.
 Lock-screen capture and control remain subject to the desktop's security policy.

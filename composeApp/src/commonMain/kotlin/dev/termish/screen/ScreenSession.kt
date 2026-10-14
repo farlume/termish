@@ -937,7 +937,8 @@ class ScreenSession internal constructor(
             else
               NATIVE="${'$'}HOME/Library/Application Support/termish/screen-service"
             fi
-            if [ -x "${'$'}NATIVE" ] && [ "${'$'}(cat "${'$'}HOME/Library/Application Support/termish/screen-service.backend" 2>/dev/null)" = "rust" ]; then
+            BACKEND="${'$'}(cat "${'$'}HOME/Library/Application Support/termish/screen-service.backend" 2>/dev/null)"
+            if [ -x "${'$'}NATIVE" ] && { [ "${'$'}BACKEND" = "rust" ] || [ "${'$'}BACKEND" = "python-macos" ]; }; then
               "${'$'}NATIVE" --display-state 2>&1 | grep -E 'SCREEN_(ASLEEP|LOCKED)' >&2 || true
             fi
             # 推流参数回读（客户端同步档位显示；conf 可能为其它端写入的旧值）

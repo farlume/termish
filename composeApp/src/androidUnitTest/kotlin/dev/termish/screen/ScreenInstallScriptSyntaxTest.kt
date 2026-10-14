@@ -7,9 +7,104 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assume.assumeTrue
 
 class ScreenInstallScriptSyntaxTest {
+    @Test
+    fun `macOS migration starts system Python and failed bootstrap restores prior service`() {
+        assumeTrue("macOS payload verification required", System.getProperty("os.name").orEmpty().startsWith("Mac"))
+        val root = File(checkNotNull(System.getProperty("user.dir"))).let { if (it.name == "composeApp") it.parentFile else it }
+        val artifact = checkNotNull(ScreenServiceAssets.binaryFor("Darwin", System.getProperty("os.arch")))
+        val payload = File(root, "screenService/build/binaries/${artifact.filename}")
+        for (fail in listOf(false, true)) {
+            val directory = Files.createTempDirectory("termish-mac-migration-中文-'-$-").toFile().canonicalFile
+            try {
+                val taskHome = File(directory, "user").apply { mkdirs() }
+                val app = File(taskHome, "Library/Application Support/termish").apply { mkdirs() }
+                val bin = File(directory, "bin").apply { mkdirs() }
+
+                fun mock(
+                    name: String,
+                    content: String,
+                ) {
+                    File(bin, name).apply {
+                        writeText("#!/bin/sh\n$content\n")
+                        assertTrue(setExecutable(true))
+                    }
+                }
+                mock("launchctl", "if [ \"${'$'}1\" = bootstrap ] && [ -f \"${'$'}TERMISH_TEST_FAIL\" ]; then rm -f \"${'$'}TERMISH_TEST_FAIL\"; exit 1; fi\nif [ \"${'$'}1\" = print ]; then echo 'state = running'; fi\nexit 0")
+                mock("lsof", "exit 0")
+                mock("sleep", "exit 0")
+                mock("ffmpeg", "exit 0")
+                val relay = File(app, "screen-relay.py").apply { writeText("# prior Python relay\n") }
+                val priorBundle =
+                    File(app, "Termish Helper.app/prior").apply {
+                        parentFile.mkdirs()
+                        writeText("prior bundle")
+                    }
+                val plist =
+                    File(taskHome, "Library/LaunchAgents/dev.termish.screen.plist").apply {
+                        parentFile.mkdirs()
+                        writeText("prior launch agent")
+                    }
+                val backend = File(app, "screen-service.backend").apply { writeText("rust\n") }
+                val token = File(directory, "token").apply { writeText("a".repeat(64)) }
+                File(app, "screen-service.json").writeText(
+                    buildJsonObject {
+                        put("token_file", token.absolutePath)
+                        put("log_file", File(directory, "log").absolutePath)
+                        put("encoder_pid_file", File(directory, "encoder.pid").absolutePath)
+                        put("stream_config_file", File(directory, "quality").absolutePath)
+                    }.toString(),
+                )
+                val staged = File(app, "screen-service.upload-test").apply { payload.copyTo(this) }
+                val failure = File(directory, "fail")
+                if (fail) failure.writeText("fail once")
+                val script = ScreenSession.INSTALL_SCRIPT.replace("${'$'}HOME", "${'$'}TERMISH_TEST_HOME")
+                val process =
+                    ProcessBuilder("/bin/sh", "-c", script)
+                        .redirectErrorStream(true)
+                        .apply {
+                            environment()["TERMISH_TEST_HOME"] = taskHome.absolutePath
+                            environment()["TERMISH_TEST_FAIL"] = failure.absolutePath
+                            environment()["TERMISH_NATIVE_STAGE"] = staged.absolutePath
+                            environment()["TERMISH_NATIVE_SHA256"] = artifact.sha256
+                            environment()["PATH"] = bin.absolutePath + ":" + environment()["PATH"]
+                        }.start()
+                val output = process.inputStream.bufferedReader().readText()
+                if (fail) {
+                    assertTrue(process.waitFor() != 0, output)
+                    assertEquals("prior launch agent", plist.readText())
+                    assertEquals("# prior Python relay\n", relay.readText())
+                    assertEquals("prior bundle", priorBundle.readText())
+                    assertEquals("rust\n", backend.readText())
+                    assertFalse(output.contains("TERMISH_SCREEN_OK"))
+                } else {
+                    assertEquals(0, process.waitFor(), output)
+                    assertTrue(output.contains("TERMISH_SCREEN_OK"), output)
+                    assertTrue(plist.readText().contains("/usr/bin/python3"))
+                    assertTrue(plist.readText().contains("screen-relay.py"))
+                    assertTrue(relay.readText().contains("VERSION = int(\"${ScreenSession.RELAY_VERSION}\")"))
+                    assertEquals("python-macos\n", backend.readText())
+                    assertEquals(ScreenSession.RELAY_VERSION.toString(), File(taskHome, ".termish-screen.version").readText().trim())
+                    val version = ProcessBuilder("/usr/bin/python3", relay.absolutePath, "--version").start()
+                    assertEquals(
+                        ScreenSession.RELAY_VERSION.toString(),
+                        version.inputStream
+                            .bufferedReader()
+                            .readText()
+                            .trim(),
+                    )
+                    assertEquals(0, version.waitFor())
+                }
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+    }
+
     @Test
     fun `ffmpeg configuration follows package upgrades through a stable symlink`() {
         val directory = Files.createTempDirectory("termish-ffmpeg-upgrade-").toFile().canonicalFile
@@ -181,7 +276,7 @@ class ScreenInstallScriptSyntaxTest {
             val output = process.inputStream.bufferedReader().readText()
             assertEquals(0, process.waitFor(), output)
             assertEquals(ScreenSession.RELAY_VERSION.toString(), output.trim())
-            assertFalse(ScreenSession.INSTALL_SCRIPT.contains("python3"))
+            assertTrue(ScreenSession.INSTALL_SCRIPT.contains("'ProgramArguments': ['/usr/bin/python3'"))
         } finally {
             temporary.deleteRecursively()
         }

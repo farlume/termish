@@ -27,7 +27,7 @@ if [ -n "${TERMISH_NATIVE_STAGE:-}" ]; then
   if [ "$OS" = "Darwin" ]; then
     APP_BUNDLE="$APP_DIR/Termish Helper.app"
     TERMISH_APP_STAGE="$TERMISH_NATIVE_STAGE.app"
-    trap 'rm -rf "$TERMISH_APP_STAGE"' 0
+    trap 'rm -rf "$TERMISH_APP_STAGE"; [ -z "${RELAY_STAGE:-}" ] || rm -f "$RELAY_STAGE"' 0
     mkdir -m 700 "$TERMISH_APP_STAGE"
     tar -xzf "$TERMISH_NATIVE_STAGE" -C "$TERMISH_APP_STAGE"
     TERMISH_NATIVE_EXEC="$TERMISH_APP_STAGE/Contents/MacOS/Termish Helper"

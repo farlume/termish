@@ -89,6 +89,7 @@ fn source_hash(service: &Path) -> Result<String> {
             service.join("macos/Info.plist"),
             service.join("macos/AppIcon.icns"),
             service.join("macos/MenuBar.m"),
+            service.join("macos/screen-relay.py"),
             service.join("linux/icon.svg"),
         ]);
     }
@@ -331,6 +332,20 @@ fn pack() -> Result<()> {
     script = script.replace(
         "@NATIVE_SOURCE@",
         fs::read_to_string(service.join("native-install.sh"))?.trim_end(),
+    );
+    if !script.contains("@MACOS_SOURCE@") {
+        return Err("missing macOS relay installer marker".into());
+    }
+    let macos = fs::read_to_string(service.join("macos/screen-relay.py"))?;
+    if macos.lines().any(|line| line == "TERMISH_MACOS_RELAY") {
+        return Err("macOS relay contains installer delimiter".into());
+    }
+    script = script.replace(
+        "@MACOS_SOURCE@",
+        &format!(
+            "write_macos_relay() {{\ncat <<'TERMISH_MACOS_RELAY'\n{}\nTERMISH_MACOS_RELAY\n}}",
+            macos.trim_end()
+        ),
     );
     for key in ["RELAY_VERSION", "SCREEN_PORT"] {
         script = script.replace(&format!("@{key}@"), &metadata[key].to_string());

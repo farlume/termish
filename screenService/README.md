@@ -1,24 +1,23 @@
 # Termish Screen Service
 
-> **English summary:** a precompiled Rust companion captures and controls macOS, X11 or consented Wayland desktops through an authenticated, loopback-only H.264 connection tunneled over SSH. On macOS, its menu bar provides connection status, pause/resume, disconnect, permission settings, restart, logs and quit.
+> **English summary:** macOS restores the system-Python GUI LaunchAgent and direct FFmpeg capture path. Linux keeps the Rust X11/Wayland service. Both stream authenticated H.264 video through loopback TCP over SSH.
 
-- `rust/`：TCP 服务、FFmpeg 生命周期、macOS CGEvent、X11 XTEST、Wayland D-Bus Portal。
-- `service.properties`：部署版本与默认端口，Rust 构建工具共享读取。
-- `install.sh`：依赖探测/安装及图形会话服务注册。
-- `native-install.sh`：上传二进制的 SHA-256 与版本校验。
-- `rust/tests/`：独立配置、合成视频、鉴权、反馈恢复和子进程清理测试。
-- `macos/MenuBar.m`：AppKit 菜单栏桥接，服务和会话管理仍在 Rust 中执行。
+- `macos/screen-relay.py`：macOS 系统 Python 服务模板，直接启动 FFmpeg AVFoundation/VideoToolbox，标准库 CGEvent 输入。
+- `macos/tests/`：Python 服务鉴权、视频包、反馈恢复、心跳与编码器清理回归。
+- `rust/`：Linux TCP、FFmpeg、X11 XTEST、Wayland Portal；macOS 安装与状态探测工具保留。
+- `service.properties`：部署版本与默认端口，构建工具共享读取。
+- `install.sh`、`native-install.sh`：校验上传产物、配置并注册图形会话服务，失败时恢复旧 macOS 服务。
 
 ```bash
 make screen-service
 ./gradlew screenServiceTest
-sh scripts/service-build.sh build-screen --all  # Mac + Xcode SDK，四种目标
+sh scripts/service-build.sh build-screen --all
+python3 -m unittest discover -s screenService/macos/tests -v
 ```
 
-手机内置 macOS/Linux arm64 与 x86_64 的二进制，通过 SSH/SFTP 安装，无需在电脑端编译。
-FFmpeg 仍负责视频编码，X11 文本粘贴依赖 xclip，Wayland 视频依赖 PipeWire/GStreamer，
-macOS 服务打包为带 Termish 图标的 `Termish Helper.app`，由 LaunchAgent 启动并显示菜单栏图标；
-配置留在应用包外，手机仍可自动安装。桌面录屏/控制授权仍由操作系统管理。
-菜单可查看连接状态、断开连接、暂停/恢复远程访问、进入权限设置、重启服务、查看日志与退出。
-暂停仅作用于当前进程，重启后恢复访问；退出清理当前会话且不会立即自动拉起，下次登录仍自动启动。
+macOS 用已有 `/usr/bin/python3` 运行 `screen-relay.py`；脚本更新保留解释器身份，
+不再因新 Helper 的录屏预检拒绝抓屏。控制权限仍由 macOS 管理，缺控制权限可继续看画面。
+Helper 包仅用于安装配置和显示状态探测，不再自动启动菜单栏。
+Linux 继续通过托盘和管理窗口提供暂停、恢复、断开、重启、日志及退出操作。
+配置、token 和日志留在应用包外；新版本需在 App 中更新电脑端服务一次。
 构建与诊断详见[远程画面服务文档](../docs/screen-service.md)。

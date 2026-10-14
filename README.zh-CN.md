@@ -82,11 +82,10 @@ Bridge 运行你选择的 Agent，消息通过已认证的 SSH 连接传输。�
 
 远程画面使用带部署版本的电脑端服务，运行在图形登录会话中，由 App 引导安装并通过 SSH 访问。
 独立源码、配置与诊断方式详见 [远程画面服务文档](docs/screen-service.md)。
-手机通过 SSH/SFTP 上传预编译 Rust 服务，支持 macOS 和 Linux（X11/Wayland）
-的 arm64、x86_64 架构；电脑端无需安装 Rust 编译器。
-macOS 后台应用名为 **Termish Helper**，使用 Termish 图标；录屏与辅助功能权限分别授予此应用。
-菜单栏可查看连接状态、暂停/恢复访问、断开连接、打开权限设置、重启服务、查看日志与退出。
-Linux 通过托盘菜单和应用列表中的管理窗口提供同样的会话管理功能，GNOME 无托盘支持时也可使用。
+macOS 恢复系统 Python LaunchAgent＋FFmpeg 的旧抓屏方式，继续使用已有的系统权限。
+更新脚本保持解释器身份，不再额外要求 Termish Helper 的录屏预检。
+Linux 继续使用预编译 Rust 服务，支持 X11/Wayland 的 arm64、x86_64 架构；电脑端无需 Rust 编译器。
+Linux 通过托盘菜单和应用列表中的管理窗口提供会话管理功能，GNOME 无托盘支持时也可使用。
 自动探测 NVENC、QSV、VAAPI 硬件编码，不可用或推流失败时回退软件编码。
 锁屏期间的采集与控制仍受当前桌面的安全策略限制。
 

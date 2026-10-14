@@ -65,12 +65,19 @@ class ScreenInstallScriptTest {
     }
 
     @Test
-    fun `desktop dependency probes and installer require no interpreter`() {
+    fun `Linux desktop dependency probes require no interpreter and macOS restores Python`() {
         assertContains(ScreenSession.XCLIP_PROBE_SCRIPT, "command -v xclip")
         assertContains(ScreenSession.WAYLAND_PROBE_SCRIPT, "gst-inspect-1.0 pipewiresrc")
         assertContains(ScreenSession.INSTALL_SCRIPT, "Rust service payload verified")
         assertContains(ScreenSession.INSTALL_SCRIPT, "Native payload required")
-        assertFalse(ScreenSession.INSTALL_SCRIPT.contains("python3"))
+        assertContains(ScreenSession.INSTALL_SCRIPT, "'ProgramArguments': ['/usr/bin/python3', sys.argv[2], '--config', sys.argv[3]]")
+        assertContains(ScreenSession.INSTALL_SCRIPT, "printf 'python-macos\\n'")
+        val macStartup =
+            ScreenSession.INSTALL_SCRIPT
+                .substringAfter("# ---- 服务启动：macOS")
+                .substringBefore("# Linux：重启 relay")
+        assertFalse(macStartup.contains("--write-launch-agent"))
+        assertFalse(macStartup.contains("cleanup_legacy_screen_files"))
         assertFalse(ScreenSession.READ_STREAM_SCRIPT.contains("python3"))
     }
 

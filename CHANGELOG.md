@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [1.8.11] - 2026-10-15
+
+### 修复
+
+- **macOS 远程画面恢复旧实现**：恢复系统 Python GUI LaunchAgent＋FFmpeg 直接抓屏的启动链路，移除新 Helper 应用包录屏预检对连接的阻断；更新脚本保留解释器身份，继续使用系统已有授权
+- **服务迁移与重连**：保留已认证 SSH 视频、控制、心跳和画质反馈；安装失败恢复旧脚本、启动配置及后台程序，断开与异常退出回收自己的编码器
+
+### 验证说明
+
+- Python 服务回归、真实 SSH/SFTP 视频解析、macOS 安装迁移和失败回滚通过；当前测试机 GUI 系统 Python 的录屏预检为未授权，真实桌面采集未完成验收
+- 屏幕服务部署版本升至 62；手机升级后，在远程画面入口更新 Mac 服务一次即可切回旧启动链路。首次系统授权仍由 macOS 管理，Linux 抓屏实现保持不变
+
 ## [1.8.10] - 2026-10-14
 
 ### 修复
@@ -699,7 +711,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.10...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.11...HEAD
+[1.8.11]: https://github.com/farlume/termish/compare/v1.8.10...v1.8.11
 [1.8.10]: https://github.com/farlume/termish/compare/v1.8.9...v1.8.10
 [1.8.9]: https://github.com/farlume/termish/compare/v1.8.8...v1.8.9
 [1.8.8]: https://github.com/farlume/termish/compare/v1.8.7...v1.8.8

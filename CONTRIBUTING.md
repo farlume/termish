@@ -15,7 +15,7 @@ cd termish
 | --- | --- |
 | Android | JDK 17, Android SDK, and an emulator or device for UI checks |
 | iOS | macOS and Xcode; build native dependencies with `make ios-native` |
-| Remote services and build tool | Rust via rustup; supported target libraries; Xcode SDK for macOS payloads |
+| Remote services and build tool | Rust via rustup; supported target libraries; Xcode SDK for macOS payloads; Python 3 for macOS relay tests |
 | R2 release tools | Node.js 22 and curl with `--aws-sigv4` support |
 
 Set the Android SDK path in `local.properties` or `ANDROID_HOME`.

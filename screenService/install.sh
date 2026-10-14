@@ -153,10 +153,21 @@ fi
 mkdir -p "$APP_DIR"
 "$TERMISH_NATIVE_EXEC" --write-config "$APP_DIR/screen-service.json" "$PORT" "$FF_PATH"
 "$TERMISH_NATIVE_EXEC" --check-config --config "$APP_DIR/screen-service.json"
+@MACOS_SOURCE@
 restore_macos_service() {
   launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
   rm -rf "$APP_BUNDLE"
   if [ -d "$APP_BACKUP" ]; then mv "$APP_BACKUP" "$APP_BUNDLE"; fi
+  if [ -f "$RELAY_BACKUP" ]; then
+    mv "$RELAY_BACKUP" "$RELAY"
+  elif [ "$RELAY_REPLACED" = "1" ]; then
+    rm -f "$RELAY"
+  fi
+  if [ -f "$BACKEND_BACKUP" ]; then
+    mv "$BACKEND_BACKUP" "$APP_DIR/screen-service.backend"
+  else
+    rm -f "$APP_DIR/screen-service.backend"
+  fi
   if [ -f "$PLIST_BACKUP" ]; then
     mv "$PLIST_BACKUP" "$PLIST"
     launchctl bootstrap gui/$(id -u) "$PLIST" 2>/dev/null || true
@@ -165,31 +176,68 @@ restore_macos_service() {
   fi
 }
 if [ "$OS" = "Darwin" ]; then
+  /usr/bin/python3 --version >/dev/null 2>&1 || { echo '==> macOS system Python is required' >&2; exit 1; }
+  RELAY="$APP_DIR/screen-relay.py"
+  RELAY_STAGE="$TERMISH_NATIVE_STAGE.py"
+  RELAY_BACKUP="$APP_DIR/.screen-relay.previous"
+  RELAY_REPLACED=0
+  BACKEND_BACKUP="$APP_DIR/.screen-service.backend.previous"
+  write_macos_relay > "$RELAY_STAGE"
+  chmod 600 "$RELAY_STAGE"
+  /usr/bin/python3 "$RELAY_STAGE" --check-config --config "$APP_DIR/screen-service.json"
+  /usr/bin/python3 - "$RELAY_STAGE" <<'TERMISH_PY_CHECK'
+import ast, sys
+with open(sys.argv[1]) as source:
+    ast.parse(source.read())
+TERMISH_PY_CHECK
   # Only replace this service after checksum, bundle signature and config pass.
   PLIST_BACKUP="$PLIST.termish-previous"
   rm -f "$PLIST_BACKUP"
   if [ -f "$PLIST" ]; then cp "$PLIST" "$PLIST_BACKUP"; fi
+  rm -f "$BACKEND_BACKUP"
+  if [ -f "$APP_DIR/screen-service.backend" ]; then cp "$APP_DIR/screen-service.backend" "$BACKEND_BACKUP"; fi
   launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
   APP_BACKUP="$APP_DIR/.Termish Helper.previous"
   rm -rf "$APP_BACKUP"
   if [ -d "$APP_BUNDLE" ]; then mv "$APP_BUNDLE" "$APP_BACKUP"; fi
+  rm -f "$RELAY_BACKUP"
+  if [ -f "$RELAY" ]; then cp "$RELAY" "$RELAY_BACKUP"; fi
   if ! mv "$TERMISH_APP_STAGE" "$APP_BUNDLE"; then
     restore_macos_service
     exit 1
   fi
+  if ! mv "$RELAY_STAGE" "$RELAY"; then
+    restore_macos_service
+    exit 1
+  fi
+  RELAY_REPLACED=1
   rm -f "$TERMISH_NATIVE_STAGE"
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_BUNDLE" || true
 else
   mv "$TERMISH_NATIVE_STAGE" "$NATIVE"
 fi
 "$NATIVE" --licenses > "$APP_DIR/screen-service.NOTICE"
-printf 'rust\n' > "$APP_DIR/screen-service.backend"
+if [ "$OS" = "Darwin" ]; then
+  printf 'python-macos\n' > "$APP_DIR/screen-service.backend"
+else
+  printf 'rust\n' > "$APP_DIR/screen-service.backend"
+fi
 # ---- 服务启动：macOS 用 LaunchAgent（GUI 域录屏权限）；
 # Linux 用 systemd 用户服务（桌面自启动兜底），机器重启后随图形登录
 # 自动恢复。旧版仅 nohup，进程在本次 SSH 断开后能活、重启后必丢。----
 if [ "$OS" = "Darwin" ]; then
 mkdir -p "$HOME/Library/LaunchAgents"
-if ! "$NATIVE" --write-launch-agent "$PLIST"; then
+if ! /usr/bin/python3 - "$PLIST" "$RELAY" "$APP_DIR/screen-service.json" <<'TERMISH_PLIST'
+import os, plistlib, sys
+os.umask(0o077)
+with open(sys.argv[1], 'wb') as output:
+    plistlib.dump({
+        'Label': 'dev.termish.screen',
+        'ProgramArguments': ['/usr/bin/python3', sys.argv[2], '--config', sys.argv[3]],
+        'RunAtLoad': True,
+        'KeepAlive': {'SuccessfulExit': False},
+    }, output)
+TERMISH_PLIST
+then
   restore_macos_service
   exit 1
 fi
@@ -209,8 +257,9 @@ if launchctl print gui/$(id -u)/dev.termish.screen 2>/dev/null | grep -q "state 
   echo @RELAY_VERSION@ > "$HOME/.termish-screen.version"
   rm -rf "$APP_BACKUP"
   rm -f "$PLIST_BACKUP"
+  rm -f "$RELAY_BACKUP"
+  rm -f "$BACKEND_BACKUP"
   rm -f "$APP_DIR/screen-service"
-  cleanup_legacy_screen_files
   echo "==> TERMISH_SCREEN_OK"
 else
   restore_macos_service

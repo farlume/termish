@@ -1,6 +1,6 @@
 # 远程画面服务
 
-> **English summary:** the phone installs precompiled Rust companions over SSH/SFTP for macOS and Linux (X11/Wayland), on arm64 and x86_64. Rust owns authenticated TCP video, native input, portal consent and encoder lifecycle; no remote compiler or interpreter is required. macOS provides a menu bar; Linux provides a tray menu and management window, hardware encoder probing with software fallback, and graphical-session lock-state hints.
+> **English summary:** macOS restores the system-Python GUI LaunchAgent and direct FFmpeg capture path; Linux keeps the precompiled Rust X11/Wayland service. Both use authenticated, loopback-only H.264 video over SSH. macOS updates preserve the interpreter identity and avoid a separate Helper recording preflight.
 
 ## 手机安装与依赖
 
@@ -13,14 +13,16 @@ FFmpeg 配置保留包管理器的绝对路径入口及符号链接，不解析�
 可重新安装服务以更新路径，或将配置中的 `ffmpeg` 改为当前稳定入口后重启服务。
 SSH 安装命令显式使用 `/bin/sh`，避免账号登录 shell（如 zsh）的未匹配通配符规则
 中断安装；进度与错误输出合并读取，保留最后的成功标记或失败原因。
-原生服务启动验证成功后，安装器清理旧 `screen-relay.py`、`screen_service_config.py`
-及对应字节码缓存；保留配置、token、日志和其他文件，不跟随缓存目录的符号链接。
+Linux 原生服务启动验证成功后清理旧 Python 脚本及对应缓存。macOS 保留并更新
+`screen-relay.py`，安装失败恢复原脚本、原启动配置、原后台程序和后端标记；配置、token、日志保留。
 
-macOS 后台应用名为 **Termish Helper**，复用 Termish Logo；`LSUIElement` 隐藏 Dock 图标，
-无需打开应用窗口。Rust 可执行文件位于完整 `.app` 包中，名称同样为 Termish Helper。
-图形登录会话中默认显示菜单栏图标，菜单按系统语言提供中文或英文。
-手机上传整包，经 SHA-256、应用签名和部署版本校验后启用，名称/图标资源属于签名覆盖范围。
-macOS 用 FFmpeg avfoundation/VideoToolbox，X11 用 x11grab 和 XTEST，文本粘贴依赖 xclip。
+macOS 从部署版本 62 起恢复旧启动链路：`dev.termish.screen` GUI LaunchAgent 运行
+`/usr/bin/python3 ~/Library/Application Support/termish/screen-relay.py`，直接拉起 FFmpeg
+AVFoundation/VideoToolbox 抓屏和硬编。Python 使用标准库调用 CGEvent，无需安装 PyObjC。
+已有的系统 Python 授权继续使用；升级脚本不更换解释器可执行文件。
+Helper 包仅保留为安装配置校验、版本与显示状态探测工具，安装器不再启动其菜单栏服务。
+手机上传的原生工具包仍校验 SHA-256、签名和部署版本；Python 脚本随已认证 SSH 安装正文部署。
+X11 使用 Rust x11grab/XTEST，文本粘贴依赖 xclip。
 Linux 默认先用合成色块探测 NVENC、QSV、VAAPI；FFmpeg 列出编码器不代表驱动能初始化。
 探测有总时限，断开连接可取消；驱动或设备不可用时回退 libx264。实际推流期间硬件编码器退出
 或长时间无输出，同一 TCP 会话内切回软件编码并保留帧序号；软件采集本身失败仍会结束连接。
@@ -33,28 +35,13 @@ Portal 响应订阅先于请求，避免快速授权响应丢失；坐标使用�
 连接结束时关闭其 Portal 会话；重连等待旧连接清理完毕后重新获取授权，避免复用已失效的
 会话。`OpenPipeWireRemote` 拒绝时也会清除缓存。同一连接内调整码率继续复用当前授权。
 
-macOS 屏幕录制、辅助功能与 Wayland Portal 均需系统授权。新的可执行文件身份可能需要重新授权。
-服务运行在图形登录会话中，锁屏、休眠、注销及操作系统安全限制仍然适用。
-macOS 控制权限使用 CoreGraphics 的事件发送权限检测，后台服务处理主线程系统事件。
-缺控制权限时每个服务进程只请求一次，在同一进程内重连和连续操作不会重复请求辅助功能授权；
-控制权限变化每秒检查，并通过视频通道同步到手机。若检测结果被进程缓存，需重启服务刷新。
-若从辅助功能列表删除了 Helper，仍在运行的进程不会重复请求授权。可用菜单「重启服务／刷新权限」
-后重新连接并尝试控制，或在系统设置的辅助功能页面点击「＋」，添加
-`~/Library/Application Support/termish/Termish Helper.app` 并开启权限，再重启服务。
-录屏权限使用 `CGPreflightScreenCaptureAccess` 单独检查：鉴权后、启动/重启 FFmpeg 前
-以及抓屏期间每秒检查。拒绝时不启动编码器，返回独立录屏状态，手机停止自动重连。
-服务仅在首次被拒绝的已鉴权连接上请求一次录屏授权；授权后由用户重新连接。
-macOS 的进程内权限检测可能保留授权前的结果。手机收到录屏或辅助功能权限缺失后，
-用户点击「重新连接」会先重启当前用户的 `dev.termish.screen` LaunchAgent，等待服务端口恢复再建立画面。
-断流自动重连、画质切换和正常连接不重启服务；此操作不修改 TCC 授权记录。
-录屏与辅助功能是两种授权，开启其中一种不会自动获得另一种。
-若旧版本已经卡在“已授权但不能控制”，重启 `dev.termish.screen` LaunchAgent 后再连接。
-若更新后录屏已勾选但仍被拒绝，应在录屏列表中删除旧 `screen-service` 或失效的 Termish Helper 条目，重新添加
-`~/Library/Application Support/termish/Termish Helper.app` 并重启服务。从裸程序迁移到应用包可能需首次重新授权。
-当前未配置发行证书的 Mac payload 使用
-ad hoc 签名，代码摘要随构建改变；权限预检和提示限流不会让旧签名授权自动适用于新文件。
-跨版本保留授权需要同一受信任证书与稳定标识的正式代码签名；不能以放宽代码要求绕过校验。
-参考 [Apple DTS 对 ad hoc 录屏授权的说明](https://developer.apple.com/forums/thread/819406)。
+macOS 的画面访问由 FFmpeg 采集和操作系统已有授权决定。服务不再额外检查或请求
+Helper 的录屏权限，不因 Helper 自身的预检结果拒绝连接。首次使用的系统授权仍由 macOS 管理。
+控制使用系统 Python 身份的 CGEvent 事件发送权限；缺控制权限仍可观看画面，首次实际控制
+才请求一次事件发送权限，心跳不触发权限请求。手机在缺控制权限后的显式重连会刷新同一
+LaunchAgent，已有许可可在新进程中生效。程序不修改 TCC 数据库或系统安全设置。
+
+Wayland 的 Portal 授权流程保持不变。服务仍运行在图形登录会话，锁屏、休眠和注销限制适用。
 
 ## 构建
 
@@ -72,11 +59,10 @@ sh scripts/service-build.sh build-agent --all
 make screen-service
 ```
 
-发行用 Mac 录屏服务可设置 `TERMISH_SCREEN_MACOS_SIGN_IDENTITY` 为钥匙串中固定的
-Developer ID Application 证书名称或指纹。构建工具以稳定标识 `dev.termish.screen-service`
-签名两个 Darwin 应用包、校验签名，再打包并计算上传/安装使用的 SHA-256；签名失败即停止构建。
-manifest 保留签名身份，Android/Linux 打包导入时不改签名。未设置时仍为 ad hoc 构建，
-不能保证升级后保留权限；不接受 `-` 作为保留授权的签名身份。证书私钥不提交到仓库。
+Darwin 安装工具包仍支持 `TERMISH_SCREEN_MACOS_SIGN_IDENTITY`，可使用固定 Developer ID
+证书签名并校验完整应用包；未设置时使用 ad hoc 签名，manifest 保留签名信息。
+该工具包用于配置、版本与状态探测，macOS 抓屏服务继续由系统 Python 启动，
+不会因为工具包的构建摘要变化增加一层 Helper 录屏预检。证书私钥不提交到仓库。
 
 Linux 至少安装对应 musl 目标，使用 Rust 自带链接器，无需交叉 C 编译器或 X11 开发库。
 默认构建本机已安装且可用的目标；相同源码指纹的导入产物会保留。CI 先在 Mac 构建全部四种
@@ -158,26 +144,18 @@ X11 读取 DPMS 休眠状态并在连接时尝试唤醒；Wayland 不使用 Xway
 手机端会读取两个平台的锁屏／休眠提示。这是状态提示，不代表 Wayland 允许锁屏捕获或输入；
 不修改安全策略、不保证各桌面支持解锁，真实 GNOME/KDE 锁屏仍需按环境验收。
 
-macOS 菜单由主线程 AppKit `NSStatusItem` 驱动，TCP 接受与会话管理在后台线程运行；
-打开菜单不阻塞视频或心跳。状态显示启动中、等待连接、已连接或访问已暂停。
-「断开连接」清理当前会话，仍允许新连接；「暂停远程访问」清理当前会话并拒绝新鉴权连接，
-直到选择「恢复远程访问」。暂停只保留在当前进程，重启或下次登录会恢复访问。
-鉴权后的暂停连接直接关闭，不新增手机协议状态码，也不启动编码器或触发权限请求。
-
-录屏与控制权限分开显示，并可直接打开对应系统设置；菜单检查权限不请求授权。
-「未生效」表示当前进程的检测结果，可能来自未授权、代码身份变化或进程缓存；
-系统设置中已开启但未生效时可选「重启服务／刷新权限」。菜单还可查看日志和打开服务目录。
-诊断画面模式禁用权限入口，避免将测试图案误认为已获得桌面录屏或控制权限。
+macOS 恢复旧后台服务，不再自动显示 Helper 菜单栏。手机端的断线、重新连接和更新入口
+继续可用；退出连接会释放当前编码器与鼠标按键，随后允许新连接。
 
 「重启服务」先释放输入、关闭连接并清理编码器，再由服务监督器拉起新进程。
 Linux systemd 单元设置 `TERMISH_SYSTEMD_SERVICE=1`、`Restart=on-failure`，重启动作以失败码退出
 让监督器拉起替代进程；正常退出不会立即重启。桌面自启动或独立运行则保留原参数启动替代进程。
 macOS LaunchAgent 设置 `RunAtLoad=true`、
-`KeepAlive={SuccessfulExit:false}`，异常退出会重启，「退出 Termish Helper」正常退出后不会立即拉起。
+`KeepAlive={SuccessfulExit:false}`，异常退出会重启，正常退出不会立即拉起。
 退出不移除自启动配置，下次登录仍自动启动；手机重新安装/显式启动服务也会再次启动。
 
 鉴权前不启动编码器、不返回状态或画面；健康客户端占用时返回 `THS1 + 3`。
-macOS 缺录屏权限返回 `THS1 + 4` 并关闭连接，不创建编码器或占用画面会话。
+`THS1 + 4` 仅保留兼容旧 Helper；新 macOS 服务直接启动 FFmpeg，采集失败以编码器退出或超时报告。
 连接首包仍为未分帧的 `THS1 + status`；后续权限更新为 `[4B 大端长度=5][THS1 + status]`，
 由唯一视频写入线程在完整视频包之间发送，手机解析后更新控制权限提示。
 6 秒未续租会关闭连接并释放编码器；反馈触发恢复保留 TCP 与帧序号，并发送新关键帧。
@@ -210,8 +188,9 @@ xvfb-run -a -s '-screen 0 640x360x24' cargo test --locked \
   --manifest-path screenService/rust/Cargo.toml hardware_failure -- --ignored --test-threads=1
 ```
 
-测试依赖 Rust、FFmpeg；Linux 场景另需 dbus-daemon、Xvfb、xauth、xev、xdotool、xclip、zenity、desktop-file-utils；中文窗口截图需 CJK 字体。
-合成画面测试使用临时 HOME/配置、独立 token 与随机端口。手机测试验证 SFTP 安装与 TCP
+测试依赖 Rust、Python 3、FFmpeg；Linux 场景另需 dbus-daemon、Xvfb、xauth、xev、xdotool、xclip、zenity、desktop-file-utils；中文窗口截图需 CJK 字体。
+macOS Python 回归通过 `python3 -m unittest discover -s screenService/macos/tests -v` 运行，
+验证鉴权、帧格式、心跳、占用保护、反馈重启和编码器清理。合成测试使用独立配置、token 与随机端口。手机测试验证 SFTP 安装与 TCP
 视频解析。真实安装会影响账号已有服务，默认 SKIP，仅显式设置
 `TERMISH_TEST_INSTALL_SCREEN=1` 时运行。真实系统授权、锁屏/休眠、Wayland 桌面行为需人工验证。
 端到端用例与报告保存在本地 `.aiadb/`，不随仓库分发。

@@ -22,6 +22,16 @@ import org.junit.Assume.assumeTrue
 class ScreenNativeServiceIntegrationTest {
     @Test
     fun `uploaded native service streams packets accepted by the mobile parser`() {
+        checkUploadedService(macosPython = false)
+    }
+
+    @Test
+    fun `restored macOS Python service streams over the mobile SSH and SFTP engines`() {
+        assumeTrue("macOS test host required", System.getProperty("os.name").orEmpty().startsWith("Mac"))
+        checkUploadedService(macosPython = true)
+    }
+
+    private fun checkUploadedService(macosPython: Boolean) {
         val port = System.getenv("Termish_TEST_PORT")?.toInt() ?: 22222
         assumeTrue(
             "SKIP: local test sshd unavailable",
@@ -85,6 +95,23 @@ class ScreenNativeServiceIntegrationTest {
             } finally {
                 sftp.close()
             }
+            if (macosPython) {
+                val source =
+                    listOf(File("screenService/macos/screen-relay.py"), File("../screenService/macos/screen-relay.py"))
+                        .first { it.exists() }
+                        .readText()
+                        .replace("@RELAY_VERSION@", ScreenSession.RELAY_VERSION.toString())
+                        .encodeToByteArray()
+                val pythonSftp = createSftpSession(connection, callbacks)
+                try {
+                    var sent = false
+                    pythonSftp.upload("$root/screen-relay.py", source.size.toLong()) {
+                        if (sent) null else source.also { sent = true }
+                    }
+                } finally {
+                    pythonSftp.close()
+                }
+            }
             val probePort = ServerSocket(0).use { it.localPort - 2 }
             val token = "a".repeat(64)
             val config =
@@ -119,7 +146,8 @@ class ScreenNativeServiceIntegrationTest {
                     "${screenShellQuote(remoteBinary)} --check-config >/dev/null && " +
                     "${screenShellQuote(remoteBinary)} --version"
             assertEquals(ScreenSession.RELAY_VERSION.toString(), ssh.runCommand(setup)?.trim())
-            val service = ssh.startExecRaw("echo ${'$'}${'$'} > ${screenShellQuote("$root/service.pid")}; exec ${screenShellQuote(remoteBinary)}")
+            val runner = if (macosPython) "/usr/bin/python3 ${screenShellQuote("$root/screen-relay.py")} --config ${screenShellQuote("$root/screen-service.json")}" else screenShellQuote(remoteBinary)
+            val service = ssh.startExecRaw("echo ${'$'}${'$'} > ${screenShellQuote("$root/service.pid")}; exec $runner")
             assertNotNull(service)
             try {
                 val deadline = System.currentTimeMillis() + 5_000
