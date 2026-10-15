@@ -92,9 +92,10 @@ public listening port is needed. It keeps conversations on the host and lets an 
 Remote screen uses a versioned companion service in the computer's graphical
 session, installed from the app and accessed over SSH. Its standalone source,
 configuration and diagnostics are documented in the [screen service guide](docs/screen-service.md).
-macOS uses the previous system-Python LaunchAgent and direct FFmpeg capture path,
-with existing operating-system permissions. Script updates keep the interpreter identity
-and no longer require a separate recording preflight for Termish Helper.
+macOS uses a Python session relay with native ScreenCaptureKit/CoreGraphics capture
+and VideoToolbox encoding. Authenticated sessions wake the display and hold temporary
+power assertions; disconnecting releases them. macOS recording consent is required,
+and a stable signing certificate preserves the Helper's identity across updates.
 Linux uses precompiled Rust services for X11 or Wayland on arm64 and x86_64;
 the computer needs no Rust compiler.
 Linux provides session controls through a tray menu and an application-list

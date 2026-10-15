@@ -5,6 +5,23 @@
 
 ## [Unreleased]
 
+## [1.8.12] - 2026-10-15
+
+### 新增
+
+- **macOS 原生采集与恢复**：优先使用 ScreenCaptureKit，必要时回退 CoreGraphics，使用 VideoToolbox 编码；显示配置变化后重建采集子进程，保留认证通道及帧序号
+- **会话电源管理**：认证后尝试唤醒显示器，画面连接期间保持系统与显示器活动，断开、心跳超时或退出后释放电源声明；不修改持久电源设置
+
+### 修复
+
+- **画面通道断开**：消除 AVFoundation 固定屏幕编号对摄像头数量的依赖；原生采集缺少系统录屏许可时显示明确授权提示，停止无限重连
+- **Mac Helper 固定证书签名**：本版使用 Apple Development 证书签名 arm64/x86_64 Helper，CI 验证固定证书和源码指纹后原样打包；Android 继续使用原发布签名。私钥不上传 CI，本版尚非 Developer ID 公证分发
+
+### 验证说明
+
+- 原生 VideoToolbox 图案编码、认证 TCP 封包及 FFmpeg 解码、权限拒绝、电源清理、子进程恢复和安装回滚回归通过；真实合盖/锁屏桌面采集因测试机系统录屏访问被拒绝，尚未完成授权后的验收
+- 屏幕服务部署版本升至 63。手机升级后更新 Mac 服务，在系统设置中允许 Termish Helper 录屏后重新连接；现阶段不能据自动测试宣称已达到 ToDesk 的全部合盖效果
+
 ## [1.8.11] - 2026-10-15
 
 ### 修复
@@ -711,7 +728,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.11...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.12...HEAD
+[1.8.12]: https://github.com/farlume/termish/compare/v1.8.11...v1.8.12
 [1.8.11]: https://github.com/farlume/termish/compare/v1.8.10...v1.8.11
 [1.8.10]: https://github.com/farlume/termish/compare/v1.8.9...v1.8.10
 [1.8.9]: https://github.com/farlume/termish/compare/v1.8.8...v1.8.9

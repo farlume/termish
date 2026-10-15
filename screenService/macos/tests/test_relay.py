@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import socket
 import struct
 import subprocess
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / "screenService/macos/screen-relay.py"
@@ -58,7 +60,10 @@ class Fixture:
         self.script = self.root / "relay.py"
         self.script.write_text(RENDERED)
         self.encoder = self.root / "encoder"
-        self.encoder.write_text("#!/bin/sh\necho started >> '%s'\n" % (self.root / "runs") + (
+        self.encoder.write_text("#!/bin/sh\n" + (
+            "case \"$*\" in *-list_devices*) printf '%s\\n' 'AVFoundation video devices:' '[0] Camera' '[3] Capture screen 0' 'AVFoundation audio devices:' >&2; exit 1;; esac\n"
+            if desktop else ""
+        ) + "echo started >> '%s'\n" % (self.root / "runs") + (
             "printf '%s\\n' \"$@\" > '%s'\nexec '%s' -hide_banner -loglevel error -re -f lavfi -i testsrc2=size=320x180:rate=30 -c:v libx264 -preset ultrafast -tune zerolatency -x264-params aud=1 -f h264 -\n" % ("%s", self.root / "args", encoder)
             if desktop else "exec '%s' \"$@\"\n" % encoder
         ))
@@ -73,11 +78,24 @@ class Fixture:
             "stream_config_file": str(self.root / "quality"),
         }))
         args = [sys.executable, str(self.script), "--config", str(self.config)]
+        # Fixture capture is synthetic, including the desktop-command wrapper.
+        # Record assertion lifetimes without changing this Mac's power state.
+        loader = """import runpy
+from pathlib import Path
+m=runpy.run_path(%r); g=m['main'].__globals__
+class Power:
+    def __init__(self,*args): pass
+    def wake(self): pass
+    def start(self):
+        with Path(%r).open('a') as f: f.write('start\\n')
+    def close(self):
+        with Path(%r).open('a') as f: f.write('close\\n')
+g['Power']=Power
+""" % (str(self.script), str(self.root / "power"), str(self.root / "power"))
         if desktop:
-            # Exercise desktop encoder selection while denying input. The fake
-            # encoder produces a diagnostic pattern and never captures a desktop.
-            loader = "import runpy; m=runpy.run_path(%r); m['main'].__globals__['Input']=type('DeniedInput',(),{'__init__':lambda self,*a:None,'status':lambda self:1,'release':lambda self:None}); m['main']()" % str(self.script)
-            args = [sys.executable, "-c", loader, "--config", str(self.config)]
+            loader += "g['Input']=type('DeniedInput',(),{'__init__':lambda self,*a:None,'status':lambda self:1,'release':lambda self:None})\n"
+        loader += "m['main']()"
+        args = [sys.executable, "-c", loader, "--config", str(self.config)]
         self.stderr = (self.root / "stderr").open("w")
         self.process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=self.stderr)
         try:
@@ -121,6 +139,26 @@ class Fixture:
 
 
 class RelayTest(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin" and os.environ.get("TERMISH_CAPTURE_TEST_HELPER"), "macOS capture helper build required")
+    def test_native_videotoolbox_annex_b_stream_decodes_without_capture_permission(self):
+        helper = os.environ["TERMISH_CAPTURE_TEST_HELPER"]
+        result = subprocess.run([helper, "--capture-test", "30", "320", "1000000"], capture_output=True, timeout=10)
+        self.assertEqual(0, result.returncode, result.stderr.decode(errors="replace"))
+        types = {result.stdout[m.end()] & 31 for m in relay.START_CODE.finditer(result.stdout) if m.end() < len(result.stdout)}
+        self.assertTrue({5, 7, 8, 9}.issubset(types), types)
+        decoder = subprocess.run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", "pipe:0", "-f", "framemd5", "-"],
+                                 input=result.stdout, capture_output=True, timeout=10)
+        self.assertEqual(0, decoder.returncode, decoder.stderr.decode(errors="replace"))
+        self.assertGreater(len([line for line in decoder.stdout.splitlines() if not line.startswith(b"#")]), 30)
+        f = self.fixture(desktop=True)
+        self.native_helper(f, "exec %s --capture-test 30 320 1000000\n" % shlex.quote(helper))
+        frames = f.frames(f.auth(status=1), 20)
+        self.assertEqual(list(range(20)), [struct.unpack(">Q", frame[4:12])[0] for frame in frames])
+        decoder = subprocess.run([shutil.which("ffmpeg"), "-hide_banner", "-loglevel", "error", "-f", "h264", "-i", "pipe:0", "-f", "framemd5", "-"],
+                                 input=b"".join(frame[21:] for frame in frames), capture_output=True, timeout=10)
+        self.assertEqual(0, decoder.returncode, decoder.stderr.decode(errors="replace"))
+        self.assertEqual(20, len([line for line in decoder.stdout.splitlines() if not line.startswith(b"#")]))
+
     def fixture(self, **kwargs):
         fixture = Fixture(**kwargs)
         self.addCleanup(fixture.close)
@@ -134,6 +172,7 @@ class RelayTest(unittest.TestCase):
             self.assertEqual(b"", conn.recv(1))
         self.assertFalse((f.root / "runs").exists())
         self.assertFalse((f.root / "encoder.pid").exists())
+        self.assertFalse((f.root / "power").exists())
 
     def test_video_frames_preserve_parameter_sets_and_monotonic_sequence(self):
         f = self.fixture()
@@ -152,7 +191,67 @@ class RelayTest(unittest.TestCase):
         args = (f.root / "args").read_text().splitlines()
         self.assertIn("avfoundation", args)
         self.assertIn("h264_videotoolbox", args)
+        self.assertIn("3:none", args)
         self.assertNotIn("CGPreflightScreenCaptureAccess", RENDERED)
+
+    def native_helper(self, fixture, body):
+        helper = fixture.root / "Termish Helper.app/Contents/MacOS/Termish Helper"
+        helper.parent.mkdir(parents=True)
+        helper.write_text("#!/bin/sh\n" + body)
+        helper.chmod(0o700)
+
+    def test_native_capture_preferred_when_installed(self):
+        f = self.fixture(desktop=True)
+        self.native_helper(f, "exec '%s' \"$@\"\n" % f.encoder)
+        self.assertTrue(f.frames(f.auth(status=1)))
+        args = (f.root / "args").read_text().splitlines()
+        self.assertEqual(["--capture-native", "30", "0", "24000000"], args)
+
+    def test_denied_capture_reports_permission_once_and_releases_power(self):
+        f = self.fixture(desktop=True)
+        self.native_helper(f, "echo started >> '%s'\nexit 77\n" % (f.root / "runs"))
+        conn = f.auth(status=1)
+        self.assertEqual(b"THS1\x04", relay.read_packet(conn, 5, 5))
+        self.assertEqual(b"", conn.recv(1))
+        eventually(lambda: (f.root / "power").read_text().splitlines() == ["start", "close"])
+        self.assertEqual(["started"], (f.root / "runs").read_text().splitlines())
+
+    def test_display_child_restart_preserves_socket_sequence_and_power_lease(self):
+        f = self.fixture(desktop=True)
+        encoder = shutil.which("ffmpeg")
+        self.native_helper(f, """extra=''
+if [ ! -f '%s' ]; then extra='-frames:v 6'; fi
+echo started >> '%s'
+exec '%s' -hide_banner -loglevel error -re -f lavfi -i testsrc2=size=320x180:rate=30 -c:v libx264 -preset ultrafast -tune zerolatency -x264-params aud=1 $extra -f h264 -
+""" % (f.root / "runs", f.root / "runs", encoder))
+        conn = f.auth(status=1)
+        frames = f.frames(conn, 15)
+        self.assertEqual(list(range(15)), [struct.unpack(">Q", frame[4:12])[0] for frame in frames])
+        self.assertEqual(2, len((f.root / "runs").read_text().splitlines()))
+        self.assertEqual(["start"], (f.root / "power").read_text().splitlines())
+        conn.shutdown(socket.SHUT_RDWR)
+        conn.close()
+        eventually(lambda: (f.root / "power").read_text().splitlines() == ["start", "close"])
+
+    def test_screen_selection_tracks_camera_count_and_prefers_first_display(self):
+        config = relay.Config.__new__(relay.Config)
+        config.ffmpeg = "/test/ffmpeg"
+        for cameras in (0, 1, 3):
+            listing = "[AVFoundation indev @ 0x1] AVFoundation video devices:\n"
+            listing += "".join("[AVFoundation indev @ 0x1] [%d] Camera\n" % n for n in range(cameras))
+            listing += "[AVFoundation indev @ 0x1] [%d] Capture screen 1\n" % (cameras + 1)
+            listing += "[AVFoundation indev @ 0x1] [%d] Capture screen 0\n" % cameras
+            listing += "AVFoundation audio devices:\n[0] Capture screen 0\n"
+            with patch.object(relay.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", listing)):
+                self.assertEqual("%d:none" % cameras, config.screen_input())
+
+    def test_missing_display_never_falls_back_to_a_camera(self):
+        config = relay.Config.__new__(relay.Config)
+        config.ffmpeg = "/test/ffmpeg"
+        listing = "AVFoundation video devices:\n[0] Camera\nAVFoundation audio devices:\n[1] Capture screen 0\n"
+        with patch.object(relay.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", listing)):
+            with self.assertRaisesRegex(ValueError, "open/wake the Mac"):
+                config.screen_input()
 
     def test_busy_client_and_bad_auth_cannot_replace_a_healthy_owner(self):
         f = self.fixture()
@@ -177,6 +276,30 @@ class RelayTest(unittest.TestCase):
             eventually(lambda: not (f.root / "encoder.pid").exists())
             with self.assertRaises(ProcessLookupError):
                 os.kill(pid, 0)
+
+    def test_power_assertions_release_only_successful_acquisitions(self):
+        power = relay.Power(True)
+        released, attempts, freed = [], [], []
+        class CF:
+            CFStringCreateWithCString = staticmethod(lambda _, name, encoding: name)
+            CFRelease = staticmethod(freed.append)
+        class IO:
+            def IOPMAssertionCreateWithName(self, kind, level, name, result):
+                attempts.append(kind)
+                c = relay.c
+                c.cast(result, c.POINTER(c.c_uint32))[0] = len(attempts)
+                return 1 if len(attempts) == 1 else 0
+            def IOPMAssertionDeclareUserActivity(self, name, kind, result):
+                relay.c.cast(result, relay.c.POINTER(relay.c.c_uint32))[0] = 3
+                return 0
+            IOPMAssertionRelease = staticmethod(released.append)
+        power.cf, power.io = CF(), IO()
+        power.start()
+        power.close()
+        power.close()
+        self.assertEqual([2, 3], released)
+        self.assertEqual([b"PreventUserIdleDisplaySleep", b"PreventUserIdleSystemSleep"], attempts)
+        self.assertEqual(3, len(freed))
 
     def test_heartbeat_expiry_stops_capture_and_reclaims_session(self):
         f = self.fixture()

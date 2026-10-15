@@ -1,6 +1,6 @@
 # 远程画面服务
 
-> **English summary:** macOS restores the system-Python GUI LaunchAgent and direct FFmpeg capture path; Linux keeps the precompiled Rust X11/Wayland service. Both use authenticated, loopback-only H.264 video over SSH. macOS updates preserve the interpreter identity and avoid a separate Helper recording preflight.
+> **English summary:** macOS uses a Python session relay, native ScreenCaptureKit/CoreGraphics capture, VideoToolbox encoding, and session-scoped power assertions. Linux keeps the precompiled Rust X11/Wayland service. Both use authenticated, loopback-only H.264 video over SSH. Closed-lid recovery requires real-device validation and macOS capture consent.
 
 ## 手机安装与依赖
 
@@ -16,11 +16,12 @@ SSH 安装命令显式使用 `/bin/sh`，避免账号登录 shell（如 zsh）�
 Linux 原生服务启动验证成功后清理旧 Python 脚本及对应缓存。macOS 保留并更新
 `screen-relay.py`，安装失败恢复原脚本、原启动配置、原后台程序和后端标记；配置、token、日志保留。
 
-macOS 从部署版本 62 起恢复旧启动链路：`dev.termish.screen` GUI LaunchAgent 运行
-`/usr/bin/python3 ~/Library/Application Support/termish/screen-relay.py`，直接拉起 FFmpeg
-AVFoundation/VideoToolbox 抓屏和硬编。Python 使用标准库调用 CGEvent，无需安装 PyObjC。
-已有的系统 Python 授权继续使用；升级脚本不更换解释器可执行文件。
-Helper 包仅保留为安装配置校验、版本与显示状态探测工具，安装器不再启动其菜单栏服务。
+macOS 的 `dev.termish.screen` GUI LaunchAgent 运行
+`/usr/bin/python3 ~/Library/Application Support/termish/screen-relay.py`。部署版本 63 起优先由
+Helper 的 `--capture-native FPS WIDTH BITRATE` 子进程抓屏和编码，ScreenCaptureKit 无首帧或不可用时
+尝试 CoreGraphics 显示流，VideoToolbox 输出 Annex-B H.264。原生子进程不存在时保留 AVFoundation
+回退，设备编号从 FFmpeg 的视频设备列表识别，禁止退回摄像头或把音频编号当成屏幕。
+Python 使用标准库调用 CGEvent，无需 PyObjC；安装器不启动菜单栏服务。
 手机上传的原生工具包仍校验 SHA-256、签名和部署版本；Python 脚本随已认证 SSH 安装正文部署。
 X11 使用 Rust x11grab/XTEST，文本粘贴依赖 xclip。
 Linux 默认先用合成色块探测 NVENC、QSV、VAAPI；FFmpeg 列出编码器不代表驱动能初始化。
@@ -35,8 +36,9 @@ Portal 响应订阅先于请求，避免快速授权响应丢失；坐标使用�
 连接结束时关闭其 Portal 会话；重连等待旧连接清理完毕后重新获取授权，避免复用已失效的
 会话。`OpenPipeWireRemote` 拒绝时也会清除缓存。同一连接内调整码率继续复用当前授权。
 
-macOS 的画面访问由 FFmpeg 采集和操作系统已有授权决定。服务不再额外检查或请求
-Helper 的录屏权限，不因 Helper 自身的预检结果拒绝连接。首次使用的系统授权仍由 macOS 管理。
+macOS 原生抓屏需要 Helper 的系统录屏许可。服务先尝试实际采集，不用额外预检阻断抓屏；
+失败后才区分缺少许可（状态 4）与显示设备暂不可用。缺少许可不会不断重试并反复弹窗，
+手机提示在系统设置中允许 Helper 后重连。系统 Python 的控制权限与原生抓屏权限分别管理。
 控制使用系统 Python 身份的 CGEvent 事件发送权限；缺控制权限仍可观看画面，首次实际控制
 才请求一次事件发送权限，心跳不触发权限请求。手机在缺控制权限后的显式重连会刷新同一
 LaunchAgent，已有许可可在新进程中生效。程序不修改 TCC 数据库或系统安全设置。
@@ -61,8 +63,28 @@ make screen-service
 
 Darwin 安装工具包仍支持 `TERMISH_SCREEN_MACOS_SIGN_IDENTITY`，可使用固定 Developer ID
 证书签名并校验完整应用包；未设置时使用 ad hoc 签名，manifest 保留签名信息。
-该工具包用于配置、版本与状态探测，macOS 抓屏服务继续由系统 Python 启动，
-不会因为工具包的构建摘要变化增加一层 Helper 录屏预检。证书私钥不提交到仓库。
+原生采集也位于该包内，正式分发应使用固定 Developer ID 证书，避免更新 ad hoc 包后丢失
+录屏授权身份。本地开发可用已有 Apple Development 身份验收，不能据此宣称已完成公开分发签名。
+证书私钥不提交到仓库。
+
+正式 tag 流程从同名 Release 草稿导入签名机预先构建的
+`Termish-X.Y.Z-remote-services.tar.gz`，校验归档内的提交 SHA、源码指纹、每个文件摘要，
+并核对两个 Mac Helper 的签名证书必须匹配 `.github/macos-signing-certificate.sha1`。
+归档只包含可分发产物和清单，不包含私钥；CI 不重新签名或降级为 ad hoc。
+本版现有身份为 Apple Development；签名校验与 Developer ID 公证是不同的验证项。
+
+签名机本地完成所有检查、bump 和提交后，用同一证书构建服务及 APK/AAB：
+
+```bash
+TERMISH_SCREEN_MACOS_SIGN_IDENTITY='签名机的固定证书身份' sh scripts/service-build.sh build-screen --all
+sh scripts/service-build.sh build-agent --all
+python3 scripts/remote-payloads.py verify-macos
+python3 scripts/remote-payloads.py pack /tmp/Termish-X.Y.Z-remote-services.tar.gz "$(git rev-parse HEAD)"
+```
+
+推送 tag 后立即创建同名 Release 草稿并上传该归档；CI 最多等两分钟，缺包、签名不符或
+源码不一致即停止发布。发布任务保留该归档、上传签名 Android 包和摘要后再公开 Release。
+更新签名身份时需明确轮换证书指纹，并重新验证升级授权，不将证书私钥传给 GitHub。
 
 Linux 至少安装对应 musl 目标，使用 Rust 自带链接器，无需交叉 C 编译器或 X11 开发库。
 默认构建本机已安装且可用的目标；相同源码指纹的导入产物会保留。CI 先在 Mac 构建全部四种
@@ -85,7 +107,7 @@ Termish Helper.app/        # macOS 后台应用（Linux 仍为 screen-service）
   Contents/MacOS/Termish Helper
   Contents/Resources/AppIcon.icns
 screen-service.NOTICE      # 完整第三方版权声明
-screen-service.backend     # rust
+screen-service.backend     # macOS: python-macos；Linux: rust
 screen-service.json        # 配置，0600
 ```
 
@@ -115,7 +137,7 @@ screen-service --check-encoder     # 只编码测试色块，不捕获桌面、�
 | `port` | 17321 探测、17323 TCP 视频，仅 IPv4 回环 |
 | `ffmpeg` | 安装时解析绝对路径 |
 | `capture_source` | `desktop`；诊断可选 `test_pattern`，只生成测试图案，不抓桌面或注入输入 |
-| `menu_bar` | 两个平台的桌面采集默认 `true`；`test_pattern` 默认 `false`，可设 `true` 隔离测试菜单；Linux 为托盘开关，管理窗口和 CLI 独立可用 |
+| `menu_bar` | Linux 桌面采集默认 `true`；`test_pattern` 默认 `false`。macOS Python 会话服务不启动菜单栏；原生菜单可独立诊断 |
 | `encoder` | Linux 默认 `auto`；可选 `software`、`nvenc`、`qsv`、`vaapi`，指定硬件不可用时仍回退软件；macOS 保持 VideoToolbox |
 | `token_file` | `~/.termish-screen.token`，256-bit token |
 | `log_file` | macOS `~/Library/Logs/termish-screen.err`，Linux `~/.termish-screen.err` |
@@ -155,12 +177,18 @@ macOS LaunchAgent 设置 `RunAtLoad=true`、
 退出不移除自启动配置，下次登录仍自动启动；手机重新安装/显式启动服务也会再次启动。
 
 鉴权前不启动编码器、不返回状态或画面；健康客户端占用时返回 `THS1 + 3`。
-`THS1 + 4` 仅保留兼容旧 Helper；新 macOS 服务直接启动 FFmpeg，采集失败以编码器退出或超时报告。
+`THS1 + 4` 表示实际采集失败且缺少 macOS 录屏许可，手机停止自动重连并提示授权。
 连接首包仍为未分帧的 `THS1 + status`；后续权限更新为 `[4B 大端长度=5][THS1 + status]`，
 由唯一视频写入线程在完整视频包之间发送，手机解析后更新控制权限提示。
 6 秒未续租会关闭连接并释放编码器；反馈触发恢复保留 TCP 与帧序号，并发送新关键帧。
 断开或退出补发鼠标释放事件，清理 FFmpeg/GStreamer；Linux 子进程设置父进程死亡信号。
 Wayland Portal 会话在服务退出时关闭。
+
+macOS 在 THA1 认证后才创建 `PreventUserIdleDisplaySleep`、`PreventUserIdleSystemSleep` 和用户活动声明；
+断开、心跳超时、服务退出都会释放。操作不需要 sudo、不修改持久电源设置、不解锁系统。
+显示重配置或原生采集退出后，服务重建子进程并保留 TCP、帧序号和电源租约；静止画面重复最近帧，
+避免被传输与渲染看门狗当成停流。无输出的子进程有超时并会被回收。
+合盖并不保证系统一定提供显示流，不能用合成图案或唤醒 API 返回成功替代真实采集验收。
 
 日志记录版本、端口、拒绝、编码器启动/恢复和关闭原因，不记录 token 或输入内容。
 先查 `--check-config`、服务进程与首帧，再查手机解码、反馈和重连日志。服务迁移不代表
@@ -194,3 +222,5 @@ macOS Python 回归通过 `python3 -m unittest discover -s screenService/macos/t
 视频解析。真实安装会影响账号已有服务，默认 SKIP，仅显式设置
 `TERMISH_TEST_INSTALL_SCREEN=1` 时运行。真实系统授权、锁屏/休眠、Wayland 桌面行为需人工验证。
 端到端用例与报告保存在本地 `.aiadb/`，不随仓库分发。
+Mac 上 `scripts/service-test.sh screenService` 还验证原生 VideoToolbox 图案编码、Annex-B 参数集与 FFmpeg 解码，
+此项不访问桌面、不需要录屏许可。另需实际验证授权后合盖、锁屏、显示重配置和断开后电源声明释放。

@@ -16,15 +16,36 @@ jobs:
   screen-service:
     name: Rust remote services (macOS + Linux)
     runs-on: macos-14
+    permissions:
+      contents: write # Read the signed payload asset from the release draft.
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin,aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
       - name: Build all remote service payloads
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         run: |
           sh scripts/service-build.sh build-screen --all
           sh scripts/service-build.sh build-agent --all
+      - name: Import signed release service payloads
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          ARCHIVE="Termish-${GITHUB_REF_NAME#v}-remote-services.tar.gz"
+          # The publisher uploads the locally signed archive immediately after
+          # pushing the tag. Private signing keys stay on the signing Mac.
+          for attempt in $(seq 1 12); do
+            if gh release download "$GITHUB_REF_NAME" --pattern "$ARCHIVE" --dir "$RUNNER_TEMP" --clobber; then break; fi
+            echo "Waiting for signed payload archive ($attempt/12)"
+            sleep 10
+          done
+          python3 scripts/remote-payloads.py unpack "$RUNNER_TEMP/$ARCHIVE" "$(git rev-parse HEAD)"
+          sh scripts/service-build.sh pack-screen
+          sh scripts/service-build.sh pack-agent
+          python3 scripts/remote-payloads.py verify-macos
       - uses: actions/upload-artifact@v4
         with:
           name: remote-service-payloads
@@ -36,8 +57,7 @@ jobs:
   # ---------------------------------------------------------------------------
   # Android：检查在本地完成，CI 仅构建打包；tag 只构建 release，手动构建另留 debug。
   #
-  # release 签名是可选的：仓库配置好下面 4 个 Secrets 后自动签名，
-  # 未配置时产出未签名 APK/AAB（仅用于自测）。
+  # 正式 tag 必须签名；未配置时仅允许手动构建 unsigned 自测产物。
   #   ANDROID_KEYSTORE_BASE64       – 签名密钥库的 base64 内容
   #   ANDROID_KEYSTORE_PASSWORD     – 密钥库密码
   #   ANDROID_KEY_ALIAS             – 别名
@@ -124,6 +144,8 @@ jobs:
           # 这是预期；而「未签名」的 jar 无论 strict 与否都返回 0。改为：
           # ① 断言签名条目存在（META-INF/*.{RSA,DSA,EC} + *.SF 只会由签名产生）
           # ② jarsigner 输出含 verified（未签名/被篡改时输出 unsigned/error）
+          # Both signature entries are required; either failure must reject the AAB.
+          # shellcheck disable=SC2015
           unzip -l "$AAB" | grep -Eq 'META-INF/[^/]+\.(RSA|DSA|EC)$' \
             && unzip -l "$AAB" | grep -Eq 'META-INF/[^/]+\.SF$' \
             || { echo "::error::AAB 缺少签名条目（未签名产物不得发版）"; exit 1; }
@@ -198,10 +220,15 @@ jobs:
           rm -rf apk bundle
           ls -l
 
+      - name: Include signed companion service archive
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$GITHUB_REF_NAME" --pattern "Termish-${GITHUB_REF_NAME#v}-remote-services.tar.gz" --dir dist
+
       - name: Generate SHA-256 checksums
         run: |
           cd dist
-          shasum -a 256 * > SHA256SUMS
+          shasum -a 256 -- * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create GitHub Release (idempotent)
@@ -210,19 +237,19 @@ jobs:
         run: |
           set -e
           TAG="$GITHUB_REF_NAME"
-          # 上次失败可能留下同名 release（资产不完整）：删掉重建
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release delete "$TAG" --yes
+          # Preserve the signed service archive staged by the signing Mac.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --draft --generate-notes
           fi
           # 先建空 release，资产逐个 --clobber 上传：gh release create 带资产
           # 不支持覆盖同名资产（delete 后立即重建同名资产会遇 uploads 服务
           # 去重延迟 → 422 ReleaseAsset.name already exists），逐资产上传
           # 幂等且单资产失败可单独补传
-          gh release create "$TAG" --title "$TAG" --generate-notes
           for f in dist/*; do
             gh release upload "$TAG" "$f" --clobber
             echo "✅ 已上传 $(basename "$f")"
           done
+          gh release edit "$TAG" --draft=false --latest
           echo "✅ Release $TAG 完成"
 
   publish-r2:

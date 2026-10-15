@@ -38,7 +38,7 @@ composeApp/
 Android 本地测试通过 `:composeApp:testDebugUnitTest` 运行，也包含 `commonTest`。
 会话与控制器测试使用 Robolectric 提供 Android 环境；仓库测试使用内存 `MapSettings`。
 
-仓库根目录的 `screenService/` 保存 macOS 系统 Python 远程画面服务、Linux Rust X11/Wayland 服务、配置与安装脚本。
+仓库根目录的 `screenService/` 保存 macOS Python 会话服务、ScreenCaptureKit/CoreGraphics 原生采集、Linux Rust X11/Wayland 服务、配置与安装脚本。
 Gradle 在 Kotlin 编译前生成 `ScreenServiceAssets`，手机端保留现有 SSH 安装/探测入口；
 服务运行在远端图形会话中，视频与控制经 SSH direct-tcpip 访问回环端口。
 源码分工、配置和日志见 [远程画面服务](screen-service.md)。

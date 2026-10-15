@@ -31,6 +31,34 @@ fn execute() -> Result<(), Box<dyn std::error::Error>> {
         (false, false, false, None);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            #[cfg(target_os = "macos")]
+            "--capture-native" | "--capture-test" => {
+                let fps = args.next().ok_or("capture fps missing")?.parse::<i32>()?;
+                let width = args.next().ok_or("capture width missing")?.parse::<i32>()?;
+                let bitrate = args
+                    .next()
+                    .ok_or("capture bitrate missing")?
+                    .parse::<i32>()?;
+                if !(1..=120).contains(&fps)
+                    || !(0..=16384).contains(&width)
+                    || width % 2 != 0
+                    || !(100_000..=200_000_000).contains(&bitrate)
+                    || args.next().is_some()
+                {
+                    return Err("invalid capture parameters".into());
+                }
+                extern "C" {
+                    fn termish_capture_main(
+                        fps: i32,
+                        width: i32,
+                        bitrate: i32,
+                        diagnostic: bool,
+                    ) -> i32;
+                }
+                std::process::exit(unsafe {
+                    termish_capture_main(fps, width, bitrate, arg == "--capture-test")
+                });
+            }
             #[cfg(target_os = "linux")]
             "--manage" => manage = true,
             #[cfg(target_os = "linux")]

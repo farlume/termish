@@ -43,6 +43,73 @@ class Rect(c.Structure):
     _fields_ = [("origin", Point), ("size", Size)]
 
 
+class ProcessInfo(c.Structure):
+    # Public Darwin proc_bsdinfo ABI, including the microsecond birth time.
+    _fields_ = [(name, c.c_uint32) for name in (
+        "flags", "status", "xstatus", "pid", "ppid", "uid", "gid", "ruid", "rgid", "svuid", "svgid", "reserved",
+    )] + [("comm", c.c_char * 16), ("name", c.c_char * 32)] + [
+        (name, c.c_uint32) for name in ("nfiles", "pgid", "jobc", "tdev", "tpgid")
+    ] + [("nice", c.c_int32), ("seconds", c.c_uint64), ("microseconds", c.c_uint64)]
+
+
+class Power:
+    """Power assertions exist only for the authenticated owner's capture lease."""
+
+    def __init__(self, diagnostic=False):
+        self.io = None
+        self.assertions = []
+        self.activity = c.c_uint32()
+        if diagnostic or sys.platform != "darwin":
+            return
+        self.io = c.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+        self.cf = c.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        self.cf.CFStringCreateWithCString.argtypes = [c.c_void_p, c.c_char_p, c.c_uint32]
+        self.cf.CFStringCreateWithCString.restype = c.c_void_p
+        self.cf.CFRelease.argtypes = [c.c_void_p]
+        self.io.IOPMAssertionCreateWithName.argtypes = [c.c_void_p, c.c_uint32, c.c_void_p, c.POINTER(c.c_uint32)]
+        self.io.IOPMAssertionDeclareUserActivity.argtypes = [c.c_void_p, c.c_uint32, c.POINTER(c.c_uint32)]
+        self.io.IOPMAssertionRelease.argtypes = [c.c_uint32]
+
+    def start(self):
+        if self.io is None:
+            return
+        name = self.cf.CFStringCreateWithCString(None, b"Termish authenticated remote screen", 0x08000100)
+        try:
+            for kind in (b"PreventUserIdleDisplaySleep", b"PreventUserIdleSystemSleep"):
+                text = self.cf.CFStringCreateWithCString(None, kind, 0x08000100)
+                try:
+                    assertion = c.c_uint32()
+                    if self.io.IOPMAssertionCreateWithName(text, 255, name, c.byref(assertion)) == 0:
+                        self.assertions.append(assertion.value)
+                finally:
+                    self.cf.CFRelease(text)
+            self.wake(name)
+        finally:
+            self.cf.CFRelease(name)
+
+    def wake(self, name=None):
+        if self.io is None:
+            return
+        owned = name is None
+        if owned:
+            name = self.cf.CFStringCreateWithCString(None, b"Termish remote display recovery", 0x08000100)
+        try:
+            previous = self.activity.value
+            if self.io.IOPMAssertionDeclareUserActivity(name, 0, c.byref(self.activity)) != 0:
+                self.activity.value = previous
+        finally:
+            if owned:
+                self.cf.CFRelease(name)
+
+    def close(self):
+        for assertion in self.assertions:
+            self.io.IOPMAssertionRelease(assertion)
+        self.assertions.clear()
+        if self.activity.value:
+            self.io.IOPMAssertionRelease(self.activity.value)
+            self.activity.value = 0
+
+
 class Input:
     """The same CGEvent input API as the native service, under Python's identity."""
 
@@ -240,11 +307,20 @@ class Config:
         self.pid = Path(os.path.expanduser(settings.get("encoder_pid_file", "~/.termish-screen-ffmpeg.pid")))
         self.identity = self.pid.with_name(self.pid.name + ".identity")
         self.quality = Path(os.path.expanduser(settings.get("stream_config_file", "~/.termish-screen.conf")))
+        self.helper = Path(path).parent / "Termish Helper.app/Contents/MacOS/Termish Helper"
         self.log.parent.mkdir(parents=True, exist_ok=True)
         self.pid.parent.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def process_identity(pid):
+        if sys.platform == "darwin":
+            api = c.CDLL("/usr/lib/libproc.dylib")
+            api.proc_pidinfo.argtypes = [c.c_int, c.c_int, c.c_uint64, c.c_void_p, c.c_int]
+            info = ProcessInfo()
+            count = api.proc_pidinfo(pid, 3, 0, c.byref(info), c.sizeof(info))
+            if count != c.sizeof(info) or info.status == 5:
+                return ""
+            return "darwin:%d:%d:%d" % (pid, info.seconds, info.microseconds)
         result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=", "-o", "stat="],
                                 capture_output=True, text=True, timeout=2)
         fields = result.stdout.split()
@@ -286,6 +362,28 @@ class Config:
         with self.log.open("a") as log:
             log.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), message))
 
+    def screen_input(self):
+        # AVFoundation numbers screens after cameras. Camera changes and a
+        # sleeping/closed display can invalidate the former fixed index 1.
+        result = subprocess.run(
+            [self.ffmpeg, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+            capture_output=True, text=True, errors="replace", timeout=5,
+        )
+        video = False
+        screens = []
+        for line in result.stderr.splitlines():
+            if "AVFoundation video devices:" in line:
+                video = True
+            elif "AVFoundation audio devices:" in line:
+                video = False
+            elif video:
+                match = re.search(r"\[(\d+)\]\s+Capture screen (\d+)\s*$", line)
+                if match:
+                    screens.append((int(match[2]), int(match[1])))
+        if not screens:
+            raise ValueError("no AVFoundation screen available; open/wake the Mac display and reconnect")
+        return "%d:none" % min(screens)[1]
+
     def args(self, scale):
         fps, size = 30, "1280:-2"
         for line in self.quality.read_text().splitlines() if self.quality.exists() else []:
@@ -301,18 +399,21 @@ class Config:
         base = 24 if size == "native" or size.startswith("2560") else 10 if size.startswith("1920") else 6 if size.startswith("1280") else 4
         kbps = max(1000, base * (2 if fps >= 120 else 1.5 if fps >= 60 else 1) * 1000 * scale // 100)
         bitrate = "%dk" % kbps
+        if not self.diagnostic and self.helper.is_file():
+            width = "0" if size == "native" else size.split(":")[0]
+            return [str(self.helper), "--capture-native", str(fps), width, str(int(kbps * 1000))]
         if self.diagnostic:
             source = ["-re", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=%d" % fps]
             encoder = ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-x264-params", "aud=1"]
         else:
             # Restore the former AVFoundation/VideoToolbox capture command.
-            source = ["-f", "avfoundation", "-capture_cursor", "1", "-pixel_format", "uyvy422", "-framerate", str(fps), "-i", "1:none"]
+            source = ["-f", "avfoundation", "-capture_cursor", "1", "-pixel_format", "uyvy422", "-framerate", str(fps), "-i", self.screen_input()]
             encoder = ["-c:v", "h264_videotoolbox", "-realtime", "1"]
         vf = "fps=%d" % fps
         if size != "native":
             vf += ",scale=%s:flags=lanczos" % size
         framing = [] if self.diagnostic else ["-bsf:v", "dump_extra=freq=keyframe,h264_metadata=aud=insert"]
-        return source + ["-hide_banner", "-loglevel", "error", "-vf", vf] + encoder + [
+        return [self.ffmpeg] + source + ["-hide_banner", "-loglevel", "error", "-vf", vf] + encoder + [
             "-b:v", bitrate, "-maxrate", bitrate, "-bufsize", "%dk" % max(500, kbps // 2), "-g", str(max(15, fps // 2)),
             "-pix_fmt", "yuv420p",
         ] + framing + ["-f", "h264", "-"]
@@ -331,6 +432,7 @@ class Session:
         self.restart = False
         self.last_restart = time.monotonic()
         self.sequence = 0
+        self.power = Power(self.config.diagnostic)
 
     def send(self, data):
         with self.write_lock:
@@ -410,13 +512,14 @@ class Session:
         status = self.server.input.status()
         checked = time.monotonic()
         try:
+            self.power.start()
             while not self.stopped.is_set():
                 with self.encoder_lock:
                     if self.stopped.is_set():
                         break
                     self.restart = False
                     with self.config.log.open("ab") as log:
-                        self.encoder = subprocess.Popen([self.config.ffmpeg] + self.config.args(self.bitrate_scale),
+                        self.encoder = subprocess.Popen(self.config.args(self.bitrate_scale),
                                                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=log,
                                                         close_fds=True)
                     encoder = self.encoder
@@ -435,7 +538,10 @@ class Session:
                             self.send(b"THS1" + bytes([status]))
                     if not select.select([encoder.stdout], [], [], 0.25)[0]:
                         if now - last_data > 20:
-                            raise TimeoutError("ffmpeg output stalled")
+                            self.config.write_log("capture output stalled; restarting child")
+                            self.restart = True
+                            encoder.kill()
+                            break
                         continue
                     data = os.read(encoder.stdout.fileno(), 262144)
                     if not data:
@@ -452,16 +558,31 @@ class Session:
                         starts = [at - cut for at in starts[1:]]
                     if len(buffer) > MAX_FRAME:
                         raise ValueError("oversized encoder output")
+                try:
+                    code = encoder.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    code = None
                 with self.encoder_lock:
                     restart = self.restart
                     self.reap_encoder()
-                if not restart:
+                if code == 77:
+                    self.send(b"THS1\x04")
                     break
+                if code == 75:
+                    self.power.wake()
+                if not restart:
+                    if self.config.diagnostic:
+                        break
+                    # Display sleep/reconfiguration can end the capture child.
+                    # Preserve the authenticated socket and its THV2 sequence.
+                    if self.stopped.wait(1):
+                        break
                 self.config.write_log("encoder restarted in-place scale=%d" % self.bitrate_scale)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
             self.config.write_log("encoder ended: " + str(error))
         finally:
             self.stop("encoder ended")
+            self.power.close()
 
 
 class Server:
