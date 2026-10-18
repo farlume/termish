@@ -2,10 +2,13 @@ package dev.termish.ssh
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.RandomAccessFile
 import java.net.InetSocketAddress
 import java.net.Socket
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.junit.Rule
 import org.junit.rules.Timeout
@@ -118,6 +121,41 @@ class SftpIntegrationTest {
             println("binary round-trip OK: ${data.size} bytes")
         } finally {
             session.close()
+        }
+    }
+
+    @Test
+    fun randomReadUsesIndependentConnectionAndLongOffsets() {
+        if (!sshdReachable()) return
+        val path = "/tmp/termish_test/视频 范围_${System.nanoTime()}.mp4"
+        val start = 4L * 1024 * 1024 * 1024 + 17
+        val tail = ByteArray(1024) { (it % 251).toByte() }
+        val session = newSession()
+        var reader: SftpReadHandle? = null
+        try {
+            // 稀疏文件实际只占几 KB，验证 >4GB offset 不经 Int 截断。
+            RandomAccessFile(path, "rw").use {
+                it.write(byteArrayOf(1, 2, 3))
+                it.seek(start)
+                it.write(tail)
+            }
+            reader = session.openRead(path)
+            assertEquals(start + tail.size, reader.size)
+            assertContentEquals(byteArrayOf(1, 2, 3), reader.read(0, 3))
+            assertContentEquals(tail, reader.read(start, 2048))
+            assertTrue(session.list("/tmp/termish_test").any { it.name == File(path).name })
+            assertContentEquals(byteArrayOf(2, 3), reader.read(1, 2))
+            session.close()
+            assertContentEquals(tail.copyOfRange(1000, 1024), reader.read(start + 1000, 100))
+            assertTrue(reader.read(reader.size, 64).isEmpty())
+            assertTrue(reader.read(reader.size + 10, 64).isEmpty())
+            assertFailsWith<IllegalArgumentException> { reader.read(-1, 1) }
+            reader.close()
+            assertFailsWith<IllegalStateException> { reader.read(0, 1) }
+        } finally {
+            reader?.close()
+            session.close()
+            File(path).delete()
         }
     }
 }

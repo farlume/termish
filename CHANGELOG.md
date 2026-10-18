@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [1.8.13] - 2026-10-18
+
+### 新增
+
+- **文件管理在线视频播放**：点击视频进入 Android / iOS 原生播放器，通过独立 SFTP 连接按需读取，提供播放、暂停与进度跳转，无需先下载完整文件
+- **播放会话管理**：应用进入后台暂停；离开预览释放播放连接，文件标签保留各自播放位置，视频读取不占用目录浏览通道
+- **播放失败提示**：编码不受设备支持或连接异常时显示中英文提示，仍可通过更多菜单下载文件
+
+### 验证说明
+
+- Android / iOS 模拟器均已实际播放含中文及空格文件名的 H.264 + AAC MP4；iOS 暂停、10 秒跳转、后台暂停、损坏文件提示通过；真实 SFTP >4 GB 范围读取及资源释放回归通过
+- 原生进度条拖动仍待真机验收，Android 后台与跨标签手动场景尚未完整执行；实际支持的容器、编码取决于设备的原生解码能力
+
 ## [1.8.12] - 2026-10-15
 
 ### 新增
@@ -728,7 +741,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.12...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.13...HEAD
+[1.8.13]: https://github.com/farlume/termish/compare/v1.8.12...v1.8.13
 [1.8.12]: https://github.com/farlume/termish/compare/v1.8.11...v1.8.12
 [1.8.11]: https://github.com/farlume/termish/compare/v1.8.10...v1.8.11
 [1.8.10]: https://github.com/farlume/termish/compare/v1.8.9...v1.8.10

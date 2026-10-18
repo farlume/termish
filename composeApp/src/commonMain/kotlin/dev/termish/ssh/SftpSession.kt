@@ -17,6 +17,12 @@ data class SftpEntry(
  * 复用 [SshCallbacks]，弹窗由 UI 层全局处理）。
  */
 interface SftpSession {
+    /**
+     * 打开随机读取句柄（阻塞调用，调用方在后台串行使用并负责关闭）。
+     * 句柄独占另一条 SSH/SFTP 连接，不与目录浏览/下载共享通道；父会话关闭不影响它。
+     */
+    fun openRead(remotePath: String): SftpReadHandle = throw UnsupportedOperationException("Random reads unavailable")
+
     /** 列目录；失败抛异常（由 UI 层提示）。 */
     fun list(path: String): List<SftpEntry>
 
@@ -66,6 +72,27 @@ interface SftpSession {
 
     fun close()
 }
+
+/** 有界随机读取：64 位字节位置，EOF 返回空数组；关闭后不可再次读取。 */
+interface SftpReadHandle {
+    val size: Long
+
+    /** 最多返回 min([maxBytes], 64KB) 字节，允许短读。 */
+    fun read(
+        offset: Long,
+        maxBytes: Int,
+    ): ByteArray
+
+    fun close()
+}
+
+/** 播放连接有自己的生命周期，不能把关闭/trace 事件回传给目录会话。 */
+internal fun SshCallbacks.forSftpReader(): SshCallbacks =
+    object : SshCallbacks by this {
+        override fun onClosed(reason: String?) {}
+
+        override fun onTraceStep(step: String) {}
+    }
 
 /** 平台工厂：JVM=sshj SFTPClient；iOS=libssh2_sftp。 */
 expect fun createSftpSession(

@@ -80,6 +80,8 @@ data class AppStrings(
     val sftpPreviewCopied: String,
     /** 图片过大，无法预览。 */
     val sftpPreviewImageTooLarge: String,
+    /** 视频加载/编码失败，仍可从更多菜单下载。 */
+    val sftpVideoFailed: String,
     /** 图片预览：适配 / 原始大小切换。 */
     val sftpPreviewZoom: String,
     /** 卡片第二行：有活跃会话时显示（Termius 风格）。 */
@@ -854,6 +856,7 @@ private val EnStrings =
         sftpPreviewTruncated = { "File too large — showing first $it" },
         sftpPreviewCopied = "Preview copied",
         sftpPreviewImageTooLarge = "Image too large to preview",
+        sftpVideoFailed = "Unable to play this video. Check the connection, or download it from the menu to open with another player.",
         sftpPreviewZoom = "Toggle fit / original size",
         hostsActive = "Active",
         hostsConnected = "Connected",
@@ -1492,6 +1495,7 @@ private val ZhStrings =
         sftpPreviewTruncated = { "文件过大，仅显示前 $it" },
         sftpPreviewCopied = "预览内容已复制",
         sftpPreviewImageTooLarge = "图片过大，无法预览",
+        sftpVideoFailed = "无法播放此视频，请检查连接，或通过更多菜单下载后使用其他播放器打开。",
         sftpPreviewZoom = "切换适配 / 原始大小",
         hostsActive = "Active",
         hostsConnected = "已连接",

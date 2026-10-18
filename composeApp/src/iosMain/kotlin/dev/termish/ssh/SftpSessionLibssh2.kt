@@ -34,6 +34,7 @@ import libssh2.libssh2_sftp_read
 import libssh2.libssh2_sftp_readdir_ex
 import libssh2.libssh2_sftp_rename_ex
 import libssh2.libssh2_sftp_rmdir_ex
+import libssh2.libssh2_sftp_seek64
 import libssh2.libssh2_sftp_shutdown
 import libssh2.libssh2_sftp_stat_ex
 import libssh2.libssh2_sftp_symlink_ex
@@ -60,6 +61,69 @@ private class SftpSessionLibssh2(
     private fun sftpOrThrow(): CPointer<LIBSSH2_SFTP> =
         sftp ?: ssh.openSftp()?.also { sftp = it }
             ?: throw SshException("SFTP 通道打开失败")
+
+    override fun openRead(remotePath: String): SftpReadHandle {
+        val owner = SftpSessionLibssh2(connection, callbacks.forSftpReader())
+        try {
+            val handle =
+                libssh2_sftp_open_ex(
+                    owner.sftpOrThrow(),
+                    remotePath,
+                    remotePath.encodeToByteArray().size.toUInt(),
+                    LIBSSH2_FXF_READ.toULong(),
+                    0L,
+                    0,
+                ) ?: throw SshException("SFTP open failed")
+            try {
+                val length = owner.fileSize(handle)
+                return object : SftpReadHandle {
+                    override val size = length
+                    private var closed = false
+
+                    override fun read(
+                        offset: Long,
+                        maxBytes: Int,
+                    ): ByteArray {
+                        check(!closed) { "SFTP reader closed" }
+                        require(offset >= 0 && maxBytes > 0)
+                        if (offset >= size) return ByteArray(0)
+                        libssh2_sftp_seek64(handle, offset.toULong())
+                        return memScoped {
+                            val count = minOf(maxBytes.toLong(), 64L * 1024, size - offset).toInt()
+                            val buffer = allocArray<ByteVar>(count)
+                            var retries = 0
+                            while (true) {
+                                val n = libssh2_sftp_read(handle, buffer, count.toULong())
+                                if (n >= 0) return@memScoped buffer.readBytes(n.toInt())
+                                if (n.toInt() != LIBSSH2_ERROR_EAGAIN || retries++ >= 200) {
+                                    throw SshException("SFTP read failed")
+                                }
+                                usleep(30_000u)
+                            }
+                            @Suppress("UNREACHABLE_CODE")
+                            ByteArray(0)
+                        }
+                    }
+
+                    override fun close() {
+                        if (closed) return
+                        closed = true
+                        try {
+                            libssh2_sftp_close_handle(handle)
+                        } finally {
+                            owner.close()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                libssh2_sftp_close_handle(handle)
+                throw e
+            }
+        } catch (e: Exception) {
+            owner.close()
+            throw e
+        }
+    }
 
     override fun list(path: String): List<SftpEntry> {
         val s = sftpOrThrow()

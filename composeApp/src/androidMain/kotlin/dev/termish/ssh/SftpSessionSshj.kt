@@ -1,5 +1,6 @@
 package dev.termish.ssh
 
+import java.io.InputStream
 import net.schmizz.sshj.sftp.FileMode
 import net.schmizz.sshj.sftp.OpenMode
 import net.schmizz.sshj.sftp.SFTPClient
@@ -28,6 +29,58 @@ class SftpSessionSshj(
     private var client: SFTPClient? = null
 
     private fun clientOrThrow(): SFTPClient = client ?: ssh.openSftp().also { client = it }
+
+    override fun openRead(remotePath: String): SftpReadHandle {
+        val owner = SftpSessionSshj(connection, callbacks.forSftpReader())
+        try {
+            val remote = owner.clientOrThrow().open(remotePath)
+            try {
+                val length = remote.length()
+                return object : SftpReadHandle {
+                    override val size = length
+                    private var closed = false
+                    private var input: InputStream? = null
+                    private var nextOffset = -1L
+
+                    @Synchronized
+                    override fun read(
+                        offset: Long,
+                        maxBytes: Int,
+                    ): ByteArray {
+                        check(!closed) { "SFTP reader closed" }
+                        require(offset >= 0 && maxBytes > 0)
+                        if (offset >= size) return ByteArray(0)
+                        val buffer = ByteArray(minOf(maxBytes.toLong(), TRANSFER_BUFFER_SIZE.toLong(), size - offset).toInt())
+                        if (offset != nextOffset) {
+                            input?.close()
+                            // 顺序播放复用 16 包流水线（约 512KB 在途），seek 才重新定位。
+                            input = remote.ReadAheadRemoteFileInputStream(PIPELINE_DEPTH, offset, size - offset)
+                        }
+                        val count = input!!.read(buffer, 0, buffer.size)
+                        nextOffset = offset + count.coerceAtLeast(0)
+                        return if (count <= 0) ByteArray(0) else buffer.copyOf(count)
+                    }
+
+                    @Synchronized
+                    override fun close() {
+                        if (closed) return
+                        closed = true
+                        try {
+                            remote.close()
+                        } finally {
+                            owner.close()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                remote.close()
+                throw e
+            }
+        } catch (e: Exception) {
+            owner.close()
+            throw e
+        }
+    }
 
     override fun list(path: String): List<SftpEntry> {
         val c = clientOrThrow()

@@ -8,7 +8,8 @@
 > search, streaming download (Android straight to Downloads / iOS Files
 > export), recursive folder download, and **text preview**
 > (streams first 512 KB via the download chunk callback, NUL-byte binary
-> detection, truncation hint).
+> detection, truncation hint), plus native video playback backed by independent
+> SFTP range readers (64-bit seeking, bounded reads, lifecycle cleanup).
 
 ## 设计
 
@@ -115,3 +116,27 @@ cinterop 对 `unsigned char*` 生成指针参数，`usePinned` 拿字节地址�
   目录往返（self-detect，sshd 缺席 SKIP）
 - iOS 的 longentry→stat 兜底路径无自动化覆盖——涉及 `SftpSessionLibssh2.kt`
   的改动需真机验证（尤其 Windows OpenSSH 服务器场景）
+
+## 在线视频预览
+
+文件列表点击视频（mp4 / m4v / mov / mkv / webm 等）进入原生播放器，播放、暂停
+和拖动进度均使用平台控件；不先下载完整文件。容器和音视频编码是否可播放取决于
+设备的原生解码能力，iOS 优先使用 MP4 / MOV（例如 H.264 + AAC）。不支持的编码或
+连接异常会显示本地化错误，仍可从预览页更多菜单下载后用其他播放器打开。
+
+`SftpSession.openRead` 返回 `SftpReadHandle`，独占一条 SSH/SFTP 连接，避免与文件
+浏览、下载竞争同一通道。文件大小、请求 offset 均为 `Long`；每次读取最多 64 KB，
+允许短读、EOF 返回空数组。句柄在后台串行调用；关闭父文件会话不会关闭播放句柄。
+播放连接复用认证和主机密钥验证，但不向父会话传播关闭/trace 事件。
+
+- Android：Media3 ExoPlayer / PlayerView，`DataSpec.position/length` 映射 SFTP
+  随机读取；seek 期间复用文件句柄，播放器销毁后才关闭。前向缓冲目标 16 MB。
+- iOS：AVPlayerViewController，AVURLAsset 自定义 scheme + resource loader；
+  content length / byte-range 信息从句柄提供，每 64 KB 让出串行队列，处理取消或
+  新范围请求。前向缓冲目标 15 秒。URL 不携带远端地址或凭据，也不启动 HTTP 服务。
+- 切 tab 会销毁播放器并释放连接，`SftpUiState` 记录远端路径和播放位置，返回时从
+  该位置重新打开；应用进入后台暂停播放，返回后可用原生控件继续。预览关闭不留缓存文件。
+
+回归测试：`SftpVideoDataSourceTest` 验证范围、短读、EOF、损坏/截断、释放和 >4 GB
+偏移；`SftpIntegrationTest.randomReadUsesIndependentConnectionAndLongOffsets` 使用
+本地 sshd 和稀疏文件验证真实随机读取、Unicode 路径、父会话关闭与幂等释放。

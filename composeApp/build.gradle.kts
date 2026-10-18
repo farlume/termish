@@ -99,6 +99,7 @@ kotlin {
             implementation(libs.multiplatform.settings)
             implementation(libs.multiplatform.settings.noarg)
             implementation(libs.androidx.lifecycle.viewmodel)
+            implementation(libs.androidx.lifecycle.runtime)
             implementation(libs.markdown.renderer)
             implementation(libs.markdown.renderer.code)
             implementation(libs.markdown.renderer.m3)
@@ -112,6 +113,8 @@ kotlin {
             implementation(libs.bouncycastle.prov)
             implementation(libs.bouncycastle.pkix)
             implementation(libs.okhttp)
+            implementation(libs.media3.exoplayer)
+            implementation(libs.media3.ui)
         }
 
         commonTest.dependencies {
@@ -182,8 +185,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 50
-        versionName = "1.8.12"
+        versionCode = 51
+        versionName = "1.8.13"
     }
     packaging {
         resources {

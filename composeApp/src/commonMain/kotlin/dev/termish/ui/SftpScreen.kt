@@ -90,6 +90,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -188,6 +189,10 @@ class SftpUiState {
 
     /** 正在预览的文件条目（null = 预览面板关闭）。 */
     var previewEntry by mutableStateOf<SftpEntry?>(null)
+
+    /** 视频预览的稳定远端路径和播放位置，切 tab 后恢复。 */
+    var previewRemotePath by mutableStateOf<String?>(null)
+    var previewVideoPositionMillis by mutableStateOf(0L)
 
     /** 预览加载中。 */
     var previewLoading by mutableStateOf(false)
@@ -414,6 +419,8 @@ fun SftpContent(
         ) {
             SftpBackTarget.CLOSE_PREVIEW -> {
                 previewEntry = null
+                state.previewRemotePath = null
+                state.previewVideoPositionMillis = 0L
                 previewText = null
                 previewImage = null
                 previewError = null
@@ -567,16 +574,20 @@ fun SftpContent(
         }
     }
 
-    /** 预览入口：图片类文件走位图预览，其余走文本预览；结果挂在会话级 uiState。 */
+    /** 预览入口：图片、视频和文本分别加载；结果挂在会话级 uiState。 */
     fun startPreview(entry: SftpEntry) {
         val sc = session ?: return
         previewEntry = entry
+        state.previewRemotePath = joinPath(path, entry.name)
+        state.previewVideoPositionMillis = 0L
         previewText = null
         previewImage = null
         previewError = null
         previewTruncated = false
         previewLoading = true
-        if (isImageName(entry.name)) {
+        if (fileKindOf(entry.name) == SftpFileKind.VIDEO) {
+            previewLoading = false // 原生播放器管理缓冲与按需读取
+        } else if (isImageName(entry.name)) {
             scope.launch {
                 try {
                     val bytes =
@@ -608,6 +619,8 @@ fun SftpContent(
 
     fun closePreview() {
         previewEntry = null
+        state.previewRemotePath = null
+        state.previewVideoPositionMillis = 0L
         previewText = null
         previewImage = null
         previewError = null
@@ -1390,9 +1403,10 @@ fun SftpContent(
             )
         }
 
-        // 文本预览覆盖层：全屏模态盖住列表；标题栏（名称+大小+复制+关闭）+ 等宽文本滚动区。
+        // 文件预览覆盖层：全屏模态盖住列表；标题栏（名称+大小+复制+关闭）+ 等宽文本滚动区。
         // 预览状态挂在会话级 uiState：切 tab 离开再回来，预览面板原样保留。
         previewEntry?.let { entry ->
+            val isVideo = fileKindOf(entry.name) == SftpFileKind.VIDEO
             val lines = remember(previewText) { previewText.orEmpty().lines() }
             val err = previewError // delegated property 不能 smart cast，取局部值
             // 图片预览：true=适配屏幕；false=原始像素（可滚动）
@@ -1580,6 +1594,23 @@ fun SftpContent(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.padding(horizontal = 24.dp),
                                 )
+                            }
+                        isVideo && session != null ->
+                            // 两个文件 tab 可占同一组合位置；独立 key 防止旧播放器的
+                            // onDispose 把播放位置写进刚切入的另一个会话。
+                            key(state, session, state.previewRemotePath) {
+                                SftpVideoPlayer(
+                                    session = session,
+                                    remotePath = state.previewRemotePath ?: joinPath(path, entry.name),
+                                    initialPositionMillis = state.previewVideoPositionMillis,
+                                    onPositionChanged = { if (previewEntry === entry) state.previewVideoPositionMillis = it },
+                                    onError = { if (previewEntry === entry) previewError = s.sftpVideoFailed },
+                                    modifier = Modifier.fillMaxSize().background(Color.Black),
+                                )
+                            }
+                        isVideo ->
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator()
                             }
                         else ->
                             Column(Modifier.fillMaxSize()) {
