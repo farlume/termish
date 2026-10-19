@@ -8,7 +8,8 @@
 > search, streaming download (Android straight to Downloads / iOS Files
 > export), recursive folder download, and **text preview**
 > (streams first 512 KB via the download chunk callback, NUL-byte binary
-> detection, truncation hint), plus native video playback backed by independent
+> detection, truncation hint), static image/SVG preview with bounded raster sizes,
+> plus native video playback backed by independent
 > SFTP range readers (64-bit seeking, bounded reads, lifecycle cleanup).
 
 ## 设计
@@ -116,6 +117,24 @@ cinterop 对 `unsigned char*` 生成指针参数，`usePinned` 拿字节地址�
   目录往返（self-detect，sshd 缺席 SKIP）
 - iOS 的 longentry→stat 兜底路径无自动化覆盖——涉及 `SftpSessionLibssh2.kt`
   的改动需真机验证（尤其 Windows OpenSSH 服务器场景）
+
+## SVG 图片预览
+
+文件列表点击 `.svg`（扩展名大小写不敏感）进入图片预览，沿用适应屏幕 / 原始大小
+切换与下载菜单。与其他图片一致，读取上限为 8 MiB，超过显示现有图片过大提示。
+Android 使用 AndroidSVG，iOS 使用 Skia SVGDOM 静态渲染，透明背景保留；不执行
+脚本，不配置外部图片、字体或样式的资源解析器。
+
+优先采用文档尺寸，缺省尺寸从 `viewBox` 推导，均缺省时使用 300 × 150 画布。
+保留文档坐标系并将输出位图最长边限制在 2048 像素，避免大尺寸 SVG 导致无界
+位图分配。损坏文件沿用图片解码失败提示，仍可下载。预览为静态栅格图，不提供
+SVG 动画、交互或无限缩放；两平台支持的 SVG 特性取决于各自渲染器。当前 iOS
+Skia SVGDOM 的默认字体解析不完整，`<text>` 文字可能缺失；需要完整文字外观时
+应使用文字已转路径的 SVG，或下载后使用其他查看器。
+
+回归测试：`SvgPreviewSizeTest` 覆盖尺寸回退和内存边界；Android `ImageDecodeTest`
+实际栅格化路径、透明背景、百分比尺寸、仅 viewBox 和超大无 viewBox 画布，验证
+缩小时不裁切内容、损坏文件失败以及已有 PNG 解码。
 
 ## 在线视频预览
 

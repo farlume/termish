@@ -595,7 +595,7 @@ fun SftpContent(
                             readSftpPreviewBytes(sc, joinPath(path, entry.name), PREVIEW_IMAGE_MAX_BYTES)
                         }
                     if (previewEntry !== entry) return@launch // 已关闭或切到别的文件：丢弃
-                    val bmp = withContext(ioDispatcher()) { decodeImage(bytes) }
+                    val bmp = withContext(ioDispatcher()) { decodeImage(bytes, isSvg = extensionOf(entry.name) == "svg") }
                     if (previewEntry !== entry) return@launch
                     if (bmp == null) {
                         previewError = s.sftpPreviewFailed("decode")
@@ -2142,7 +2142,7 @@ enum class SftpFileKind {
 internal fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
 
 /** 可在线预览的图片格式（平台解码：Android BitmapFactory / iOS UIImage；gif 显示首帧）。 */
-internal val PREVIEW_IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+internal val PREVIEW_IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg")
 
 /** 图片类文件：走位图预览分支（文本预览的 NUL 检测会误杀图片）。 */
 internal fun isImageName(name: String): Boolean = extensionOf(name) in PREVIEW_IMAGE_EXTENSIONS

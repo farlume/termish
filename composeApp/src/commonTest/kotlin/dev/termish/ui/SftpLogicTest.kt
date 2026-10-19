@@ -382,6 +382,7 @@ class SftpLogicTest {
         assertTrue(isImageName("a.png"))
         assertTrue(isImageName("b.JPG"))
         assertTrue(isImageName("c.webp"))
+        assertTrue(isImageName("图标 空格.SVG"))
         assertFalse(isImageName("a.md"))
         assertFalse(isImageName("Makefile"))
         assertFalse(isImageName("a.tar.gz"))
@@ -390,6 +391,7 @@ class SftpLogicTest {
     @Test
     fun fileKindClassifiesByExtension() {
         assertEquals(SftpFileKind.IMAGE, fileKindOf("screenshot.png"))
+        assertEquals(SftpFileKind.IMAGE, fileKindOf("diagram.svg"))
         assertEquals(SftpFileKind.VIDEO, fileKindOf("clip.mp4"))
         assertEquals(SftpFileKind.AUDIO, fileKindOf("song.mp3"))
         assertEquals(SftpFileKind.ARCHIVE, fileKindOf("backup.tar.gz"))

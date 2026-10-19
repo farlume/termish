@@ -5,6 +5,17 @@
 
 ## [Unreleased]
 
+## [1.8.14] - 2026-10-19
+
+### 新增
+
+- **文件管理 SVG 预览**：Android / iOS 点击 SVG 直接查看图片，支持透明背景、viewBox 尺寸与现有适应屏幕 / 原始大小切换
+- **有界 SVG 渲染**：预览文件上限 8 MiB，栅格化最长边 2048 像素；损坏文件显示预览失败，仍可下载；使用静态渲染器，不执行 SVG 脚本
+
+### 已知限制
+
+- SVG 为静态预览，动画和交互不执行；iOS 默认字体解析不完整，部分 `<text>` 文字可能缺失，可使用文字转路径的 SVG 或下载后查看
+
 ## [1.8.13] - 2026-10-18
 
 ### 新增
@@ -741,7 +752,8 @@
 - 双行功能键工具栏（F1-F12、方向键、sticky CTRL/ALT）
 - 设计系统：zinc 中性色 + emerald 强调色，内置 JetBrains Mono
 
-[Unreleased]: https://github.com/farlume/termish/compare/v1.8.13...HEAD
+[Unreleased]: https://github.com/farlume/termish/compare/v1.8.14...HEAD
+[1.8.14]: https://github.com/farlume/termish/compare/v1.8.13...v1.8.14
 [1.8.13]: https://github.com/farlume/termish/compare/v1.8.12...v1.8.13
 [1.8.12]: https://github.com/farlume/termish/compare/v1.8.11...v1.8.12
 [1.8.11]: https://github.com/farlume/termish/compare/v1.8.10...v1.8.11

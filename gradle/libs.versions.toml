@@ -6,6 +6,7 @@ androidx-activityCompose = "1.10.1"
 androidx-documentfile = "1.0.1"
 androidx-lifecycle = "2.9.0"
 media3 = "1.8.0"
+androidsvg = "1.4"
 # 0.34.0 与 Compose 1.8 对齐，避免 iOS 链接缺少 stableprop getter。
 markdown-renderer = "0.34.0"
 kotlinx-coroutines = "1.10.2"
@@ -37,6 +38,7 @@ androidx-lifecycle-viewmodel = { module = "org.jetbrains.androidx.lifecycle:life
 androidx-lifecycle-runtime = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
+androidsvg = { module = "com.caverock:androidsvg-aar", version.ref = "androidsvg" }
 markdown-renderer = { module = "com.mikepenz:multiplatform-markdown-renderer", version.ref = "markdown-renderer" }
 markdown-renderer-code = { module = "com.mikepenz:multiplatform-markdown-renderer-code", version.ref = "markdown-renderer" }
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }

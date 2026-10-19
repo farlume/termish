@@ -25,9 +25,9 @@
 	<key>CFBundlePackageType</key>
 	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.8.13</string>
+	<string>1.8.14</string>
 	<key>CFBundleVersion</key>
-	<string>51</string>
+	<string>52</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>LSRequiresIPhoneOS</key>

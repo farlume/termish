@@ -70,7 +70,7 @@ you want terminal programs to survive client disconnects.
 | **Mobile development loop** | Give an agent a task, upload a screenshot or file, inspect diffs and remote files, then continue in the same terminal. |
 | **SSH + Mosh sessions** | Open multiple terminal tabs and run tmux, vim, htop or any TUI. Mosh supports network roaming and local echo prediction for typing over slower connections. |
 | **Optional native Agent chat** | Use Codex, Claude Code, Gemini CLI, OpenCode and Pi in a phone-native conversation. Follow streaming replies and tool calls, attach files, stop a task and resume conversations. |
-| **Files and input built for phones** | Upload, download, search and organize files through SFTP; stream videos with native playback controls and seeking. Use a CTRL / ALT / ESC toolbar, touch gestures and Chinese IME support in the terminal. |
+| **Files and input built for phones** | Upload, download, search and organize files through SFTP; preview images including SVG, and stream videos with native playback controls and seeking. Use a CTRL / ALT / ESC toolbar, touch gestures and Chinese IME support in the terminal. |
 | **Your hosts, your credentials** | Connect directly to your servers. Store saved secrets with Android Keystore or iOS Keychain. No Termish account, telemetry or hosted relay is required. |
 
 Also included: Chinese and English UI, light and dark themes, terminal palettes and quick commands.

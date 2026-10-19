@@ -115,6 +115,7 @@ kotlin {
             implementation(libs.okhttp)
             implementation(libs.media3.exoplayer)
             implementation(libs.media3.ui)
+            implementation(libs.androidsvg)
         }
 
         commonTest.dependencies {
@@ -185,8 +186,8 @@ android {
         applicationId = "dev.termish.app"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 51
-        versionName = "1.8.13"
+        versionCode = 52
+        versionName = "1.8.14"
     }
     packaging {
         resources {
