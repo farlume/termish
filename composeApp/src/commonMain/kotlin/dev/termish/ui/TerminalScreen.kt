@@ -1202,7 +1202,7 @@ private fun TerminalBody(
                 // 录音/识别中 = 同位置红按钮 + 浮层（转写/声波/计时），整组可拖动
                 // （向上拖到顶、不进入工具栏）。两态同位，点击后原地切换不跳动。
                 // 屏幕全屏（pipFullscreen）时隐藏，避免盖住远程画面。
-                if (!pipFullscreen && voiceState == VoiceUiState.IDLE) {
+                if (!pipFullscreen && settings.voiceInputEnabled && voiceState == VoiceUiState.IDLE) {
                     var startSize by remember { mutableStateOf(IntSize.Zero) }
                     val density = LocalDensity.current
                     Box(
